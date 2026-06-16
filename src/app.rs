@@ -24,7 +24,7 @@ impl AppContext {
         Ok(Self {
             media: MediaService::new(config.clone(), repository.clone(), events.clone()),
             watch_history: WatchHistoryService::new(repository.clone(), events.clone()),
-            danmaku: DanmakuService::new(events.clone()),
+            danmaku: DanmakuService::new(config.clone(), events.clone())?,
             event_receiver: Arc::new(std::sync::Mutex::new(Some(receiver))),
         })
     }

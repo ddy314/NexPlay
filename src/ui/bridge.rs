@@ -181,17 +181,15 @@ fn bind_load_danmaku(window: Weak<MainWindow>, context: AppContext, state: Arc<M
         .upgrade()
         .expect("window dropped before callback binding")
         .on_load_danmaku(move || {
-            let media = selected_media(&state);
-            match media.and_then(|media| context.danmaku.match_mock(&media).ok()) {
-                Some(result) => append_log(
-                    &weak,
-                    &format!(
-                        "danmaku mock matched: provider={}, title={}, comments={}",
-                        result.provider, result.title, result.comment_count
-                    ),
-                ),
-                None => append_log(&weak, "select a media item before loading danmaku"),
-            }
+            let Some(media) = selected_media(&state) else {
+                append_log(&weak, "select a media item before loading danmaku");
+                return;
+            };
+
+            let danmaku = context.danmaku.clone();
+            thread::spawn(move || {
+                danmaku.load_for_media(&media);
+            });
         });
 }
 
@@ -228,9 +226,10 @@ fn apply_event(window: &MainWindow, state: &BridgeState, event: AppEvent) {
         AppEvent::DanmakuMatched(result) => append_log_to_window(
             window,
             &format!(
-                "danmaku event: {} matched {} comments, episode={}",
+                "danmaku event: {} matched {} comments, title={}, episode={}",
                 result.provider,
                 result.comment_count,
+                result.title,
                 result.episode.as_deref().unwrap_or("(none)")
             ),
         ),

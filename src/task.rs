@@ -1,3 +1,5 @@
+use std::fs::File;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::thread;
@@ -128,6 +130,8 @@ fn media_file_from_path(path: &Path) -> Result<MediaFile, String> {
         .map(|duration| duration.as_millis() as i64)
         .unwrap_or_default();
 
+    let file_hash = hash_first_16mb(path)
+        .map_err(|error| format!("failed to hash {}: {error}", path.display()))?;
     let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     let file_name = path
         .file_name()
@@ -140,8 +144,29 @@ fn media_file_from_path(path: &Path) -> Result<MediaFile, String> {
         file_name,
         file_size: metadata.len(),
         modified_at,
-        file_hash: None,
+        file_hash: Some(file_hash),
     })
+}
+
+fn hash_first_16mb(path: &Path) -> std::io::Result<String> {
+    const HASH_BYTES: u64 = 16 * 1024 * 1024;
+
+    let mut file = File::open(path)?;
+    let mut context = md5::Context::new();
+    let mut remaining = HASH_BYTES;
+    let mut buffer = [0_u8; 64 * 1024];
+
+    while remaining > 0 {
+        let limit = buffer.len().min(remaining as usize);
+        let read = file.read(&mut buffer[..limit])?;
+        if read == 0 {
+            break;
+        }
+        context.consume(&buffer[..read]);
+        remaining -= read as u64;
+    }
+
+    Ok(format!("{:x}", context.compute()))
 }
 
 fn is_video_file(path: &Path) -> bool {

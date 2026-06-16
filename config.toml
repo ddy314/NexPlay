@@ -1,11 +1,11 @@
-media_libraries = []
+media_libraries = ["/mnt/media/entertainment/bangumi/[Nekomoe kissaten&VCB-Studio] THE IDOLM@STER CINDERELLA GIRLS U149 [Ma10p_1080p]"]
 
 [database]
 path = "data/slint-bangumi.sqlite3"
 
 [dandanplay]
-app_id = ""
-app_secret = ""
+app_id = "xjhfp7iqns"
+app_secret = "6JAiLeVgrk2ifsMmqAJygjwSAHQQB6h4"
 api_key = ""
 
 [logging]
