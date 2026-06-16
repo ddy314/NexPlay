@@ -15,6 +15,10 @@ pub enum AppError {
         path: PathBuf,
         source: std::io::Error,
     },
+    #[error("http error: {0}")]
+    Http(#[from] reqwest::Error),
+    #[error("api error: {0}")]
+    Api(String),
     #[error("ui error: {0}")]
     Ui(#[from] slint::PlatformError),
     #[error("media path is not a directory: {0}")]
