@@ -61,6 +61,40 @@ impl Repository {
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
 
+    pub fn needs_hash_update(
+        &self,
+        path: &Path,
+        file_size: u64,
+        modified_at: i64,
+    ) -> AppResult<bool> {
+        let conn = self.connect()?;
+        let path = path.to_string_lossy().to_string();
+        let existing = conn
+            .query_row(
+                "SELECT file_size, modified_at, file_hash, deleted_at FROM media_items WHERE path = ?1",
+                params![path],
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                        row.get::<_, Option<i64>>(3)?,
+                    ))
+                },
+            )
+            .optional()?;
+
+        Ok(match existing {
+            None => true,
+            Some((size, modified, hash, deleted_at)) => {
+                size != file_size as i64
+                    || modified != modified_at
+                    || hash.is_none()
+                    || deleted_at.is_some()
+            }
+        })
+    }
+
     pub fn upsert_scanned_media(&self, file: &MediaFile, now: i64) -> AppResult<ScanUpsertStatus> {
         let conn = self.connect()?;
         let path = file.path.to_string_lossy().to_string();
@@ -100,7 +134,9 @@ impl Repository {
                 Ok(ScanUpsertStatus::Added)
             }
             Some((_id, size, modified_at, deleted_at)) => {
-                let changed = size != file.file_size as i64 || modified_at != file.modified_at;
+                let changed = size != file.file_size as i64
+                    || modified_at != file.modified_at
+                    || file.file_hash.is_some();
                 if changed || deleted_at.is_some() {
                     conn.execute(
                         r#"

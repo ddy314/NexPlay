@@ -25,6 +25,8 @@ pub enum AppError {
     InvalidMediaDirectory(PathBuf),
     #[error("selected media item was not found")]
     MediaNotFound,
+    #[error("failed to open media with default player: {0}")]
+    OpenMedia(String),
 }
 
 pub fn io_error(path: impl Into<PathBuf>, source: std::io::Error) -> AppError {
