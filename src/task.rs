@@ -80,7 +80,7 @@ fn scan_media(
                 continue;
             }
 
-            let media_file = match media_file_from_path(entry.path()) {
+            let media_file = match media_file_from_path(entry.path(), &repository) {
                 Ok(file) => file,
                 Err(error) => {
                     let _ = events.send(AppEvent::Log(error));
@@ -119,7 +119,7 @@ fn scan_media(
     Ok((summary, media))
 }
 
-fn media_file_from_path(path: &Path) -> Result<MediaFile, String> {
+fn media_file_from_path(path: &Path, repository: &Repository) -> Result<MediaFile, String> {
     let metadata = path
         .metadata()
         .map_err(|error| format!("failed to read metadata for {}: {error}", path.display()))?;
@@ -130,9 +130,23 @@ fn media_file_from_path(path: &Path) -> Result<MediaFile, String> {
         .map(|duration| duration.as_millis() as i64)
         .unwrap_or_default();
 
-    let file_hash = hash_first_16mb(path)
-        .map_err(|error| format!("failed to hash {}: {error}", path.display()))?;
     let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let needs_hash = repository
+        .needs_hash_update(&canonical, metadata.len(), modified_at)
+        .map_err(|error| {
+            format!(
+                "failed to inspect media cache for {}: {error}",
+                path.display()
+            )
+        })?;
+    let file_hash = if needs_hash {
+        Some(
+            hash_first_16mb(path)
+                .map_err(|error| format!("failed to hash {}: {error}", path.display()))?,
+        )
+    } else {
+        None
+    };
     let file_name = path
         .file_name()
         .and_then(|name| name.to_str())
@@ -144,7 +158,7 @@ fn media_file_from_path(path: &Path) -> Result<MediaFile, String> {
         file_name,
         file_size: metadata.len(),
         modified_at,
-        file_hash: Some(file_hash),
+        file_hash,
     })
 }
 

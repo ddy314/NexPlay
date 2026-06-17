@@ -8,7 +8,9 @@
 - SQLite 媒体条目索引
 - 重复扫描时识别新增、修改、恢复和删除
 - 观看进度读取、写入、清空测试接口
-- 弹幕匹配接口占位和 mock 返回
+- dandanplay 文件识别与弹幕数量加载
+- 唤起系统默认播放器播放本地媒体
+- 首页、媒体库、设置三个 Slint tab 骨架
 - Slint callback 直连 Rust service 层
 - 后台扫描线程通过事件通知 UI
 
@@ -25,7 +27,7 @@ cargo run
 - `src/domain.rs`: 业务数据结构
 - `src/config.rs`: `config.toml` 读取、生成和更新
 - `src/repository.rs`: SQLite 初始化和数据访问
-- `src/service.rs`: 媒体库、观看历史、弹幕 mock 服务
+- `src/service.rs`: 媒体库、观看历史、dandanplay 弹幕服务和本地播放入口
 - `src/task.rs`: 后台扫描任务和事件
 - `src/ui/bridge.rs`: Slint callback 与 service 层桥接
-- `ui/main.slint`: 最小测试界面
+- `ui/main.slint`: 三 tab 前端骨架

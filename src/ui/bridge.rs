@@ -32,11 +32,13 @@ pub fn bind(window: Weak<MainWindow>, context: AppContext) -> AppResult<BridgeSt
         set_media_items(&window, &media);
         window.set_logs("ready\n".into());
         window.set_scan_progress("idle".into());
+        window.set_settings_summary(context.media.settings_summary(media.len()).into());
     }
 
-    bind_add_path(window.clone(), context.clone());
+    bind_add_path(window.clone(), context.clone(), state.clone());
     bind_scan(window.clone(), context.clone());
     bind_select_media(window.clone(), context.clone(), state.clone());
+    bind_play_selected_media(window.clone(), context.clone(), state.clone());
     bind_save_progress(window.clone(), context.clone(), state.clone());
     bind_clear_progress(window.clone(), context.clone(), state.clone());
     bind_load_danmaku(window, context, state.clone());
@@ -60,9 +62,10 @@ pub fn start_event_pump(
         while let Ok(event) = receiver.recv() {
             let window = window.clone();
             let state = state.clone();
+            let context = context.clone();
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(window) = window.upgrade() {
-                    apply_event(&window, &state, event);
+                    apply_event(&window, &context, &state, event);
                 }
             });
         }
@@ -71,7 +74,7 @@ pub fn start_event_pump(
     Ok(())
 }
 
-fn bind_add_path(window: Weak<MainWindow>, context: AppContext) {
+fn bind_add_path(window: Weak<MainWindow>, context: AppContext, state: Arc<Mutex<UiState>>) {
     let weak = window.clone();
     window
         .upgrade()
@@ -84,11 +87,41 @@ fn bind_add_path(window: Weak<MainWindow>, context: AppContext) {
             }
 
             match context.media.add_library_path(path.into()) {
-                Ok(paths) => append_log(
-                    &weak,
-                    &format!("added media path; total paths: {}", paths.len()),
-                ),
+                Ok(paths) => {
+                    append_log(
+                        &weak,
+                        &format!("added media path; total paths: {}", paths.len()),
+                    );
+                    if let Some(window) = weak.upgrade() {
+                        let media_count =
+                            state.lock().expect("ui state mutex poisoned").media.len();
+                        window.set_settings_summary(
+                            context.media.settings_summary(media_count).into(),
+                        );
+                    }
+                }
                 Err(error) => append_log(&weak, &format!("add path failed: {error}")),
+            }
+        });
+}
+
+fn bind_play_selected_media(
+    window: Weak<MainWindow>,
+    context: AppContext,
+    state: Arc<Mutex<UiState>>,
+) {
+    let weak = window.clone();
+    window
+        .upgrade()
+        .expect("window dropped before callback binding")
+        .on_play_selected_media(move || {
+            let Some(media) = selected_media(&state) else {
+                append_log(&weak, "select a media item before playing");
+                return;
+            };
+
+            if let Err(error) = context.media.open_media(&media) {
+                append_log(&weak, &format!("play failed: {error}"));
             }
         });
 }
@@ -193,7 +226,7 @@ fn bind_load_danmaku(window: Weak<MainWindow>, context: AppContext, state: Arc<M
         });
 }
 
-fn apply_event(window: &MainWindow, state: &BridgeState, event: AppEvent) {
+fn apply_event(window: &MainWindow, context: &AppContext, state: &BridgeState, event: AppEvent) {
     match event {
         AppEvent::Log(message) => append_log_to_window(window, &message),
         AppEvent::ScanStarted => {
@@ -206,6 +239,7 @@ fn apply_event(window: &MainWindow, state: &BridgeState, event: AppEvent) {
         AppEvent::ScanFinished { summary, media } => {
             replace_media_state(state, media.clone());
             set_media_items(window, &media);
+            window.set_settings_summary(context.media.settings_summary(media.len()).into());
             window.set_scan_progress(
                 format!(
                     "done: scanned={}, added={}, modified={}, restored={}, deleted={}",
@@ -268,9 +302,22 @@ fn append_log(window: &Weak<MainWindow>, message: &str) {
 }
 
 fn append_log_to_window(window: &MainWindow, message: &str) {
+    const MAX_LOG_BYTES: usize = 24 * 1024;
+
     let mut logs = window.get_logs().to_string();
     logs.push_str(message);
     logs.push('\n');
+    if logs.len() > MAX_LOG_BYTES {
+        let mut keep_from = logs.len() - MAX_LOG_BYTES;
+        while !logs.is_char_boundary(keep_from) {
+            keep_from += 1;
+        }
+        let keep_from = logs[keep_from..]
+            .find('\n')
+            .map(|offset| keep_from + offset + 1)
+            .unwrap_or(keep_from);
+        logs.replace_range(..keep_from, "");
+    }
     window.set_logs(logs.into());
 }
 

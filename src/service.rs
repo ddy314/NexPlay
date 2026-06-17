@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::process::Command;
 use std::sync::{Arc, mpsc};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -44,6 +45,47 @@ impl MediaService {
         self.repository.list_media(false)
     }
 
+    pub fn settings_summary(&self, indexed_media_count: usize) -> String {
+        let config = self.config.snapshot();
+        let dandanplay_status =
+            if config.dandanplay.app_id.is_empty() || config.dandanplay.app_secret.is_empty() {
+                "not configured"
+            } else {
+                "configured"
+            };
+        let media_libraries = if config.media_libraries.is_empty() {
+            "(none)".to_string()
+        } else {
+            config
+                .media_libraries
+                .iter()
+                .map(|path| format!("- {}", path.display()))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+
+        format!(
+            "database: {}\nindexed media: {}\ndandanplay: {}\nmedia libraries:\n{}",
+            config.database.path.display(),
+            indexed_media_count,
+            dandanplay_status,
+            media_libraries
+        )
+    }
+
+    pub fn open_media(&self, media: &MediaItem) -> AppResult<()> {
+        if media.deleted_at.is_some() || !media.path.is_file() {
+            return Err(AppError::MediaNotFound);
+        }
+
+        open_with_default_player(&media.path)?;
+        self.send_log(format!(
+            "opened media with default player: {}",
+            media.file_name
+        ));
+        Ok(())
+    }
+
     pub fn start_scan(&self) {
         let roots = self.config.snapshot().media_libraries;
         if roots.is_empty() {
@@ -57,6 +99,34 @@ impl MediaService {
     fn send_log(&self, message: String) {
         let _ = self.events.send(AppEvent::Log(message));
     }
+}
+
+fn open_with_default_player(path: &PathBuf) -> AppResult<()> {
+    #[cfg(target_os = "windows")]
+    let mut command = {
+        let mut command = Command::new("cmd");
+        command.arg("/C").arg("start").arg("").arg(path);
+        command
+    };
+
+    #[cfg(target_os = "macos")]
+    let mut command = {
+        let mut command = Command::new("open");
+        command.arg(path);
+        command
+    };
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let mut command = {
+        let mut command = Command::new("xdg-open");
+        command.arg(path);
+        command
+    };
+
+    command
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| AppError::OpenMedia(error.to_string()))
 }
 
 #[derive(Clone)]
