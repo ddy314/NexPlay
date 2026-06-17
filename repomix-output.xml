@@ -63,193 +63,12 @@ ui/
 .gitignore
 build.rs
 Cargo.toml
+config.example.toml
 README.md
 </directory_structure>
 
 <files>
 This section contains the contents of the repository's files.
-
-<file path="src/metadata/bangumi.rs">
-use std::time::Duration;
-
-use reqwest::blocking::Client;
-use serde::{Deserialize, Serialize};
-
-use crate::error::{AppError, AppResult};
-
-use super::provider::{MetadataProvider, SubjectDetail, SubjectImages, SubjectSearchResult};
-
-const BANGUMI_BASE_URL: &str = "https://api.bgm.tv";
-
-#[derive(Clone)]
-pub struct BangumiProvider {
-    client: Client,
-}
-
-impl BangumiProvider {
-    pub fn new() -> AppResult<Self> {
-        let user_agent = format!(
-            "slint-bangumi/{} (https://github.com/ddy314/slint-bangumi)",
-            env!("CARGO_PKG_VERSION")
-        );
-        let client = Client::builder()
-            .timeout(Duration::from_secs(20))
-            .user_agent(user_agent)
-            .build()?;
-        Ok(Self { client })
-    }
-}
-
-impl MetadataProvider for BangumiProvider {
-    fn search_subjects(&self, keyword: &str) -> AppResult<Vec<SubjectSearchResult>> {
-        let keyword = keyword.trim();
-        if keyword.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        let response = self
-            .client
-            .post(format!("{BANGUMI_BASE_URL}/v0/search/subjects"))
-            .json(&SearchRequest {
-                keyword,
-                filter: SearchFilter {
-                    subject_type: vec![2],
-                },
-            })
-            .send()?;
-        let status = response.status();
-        if !status.is_success() {
-            return Err(AppError::Api(format!("bangumi search rejected: {status}")));
-        }
-
-        let response = response.json::<SearchResponse>()?;
-        Ok(response
-            .data
-            .into_iter()
-            .map(|subject| subject.into_search_result())
-            .collect())
-    }
-
-    fn get_subject(&self, provider_subject_id: &str) -> AppResult<SubjectDetail> {
-        let response = self
-            .client
-            .get(format!(
-                "{BANGUMI_BASE_URL}/v0/subjects/{provider_subject_id}"
-            ))
-            .send()?;
-        let status = response.status();
-        if !status.is_success() {
-            return Err(AppError::Api(format!("bangumi subject rejected: {status}")));
-        }
-
-        Ok(response.json::<BangumiSubject>()?.into_detail())
-    }
-
-    fn get_subject_images(&self, provider_subject_id: &str) -> AppResult<SubjectImages> {
-        Ok(self.get_subject(provider_subject_id)?.images)
-    }
-}
-
-#[derive(Debug, Serialize)]
-struct SearchRequest<'a> {
-    keyword: &'a str,
-    filter: SearchFilter,
-}
-
-#[derive(Debug, Serialize)]
-struct SearchFilter {
-    #[serde(rename = "type")]
-    subject_type: Vec<i32>,
-}
-
-#[derive(Debug, Deserialize)]
-struct SearchResponse {
-    data: Vec<BangumiSubject>,
-}
-
-#[derive(Debug, Deserialize)]
-struct BangumiSubject {
-    id: i64,
-    name: String,
-    name_cn: Option<String>,
-    summary: Option<String>,
-    date: Option<String>,
-    rank: Option<i64>,
-    rating: Option<BangumiRating>,
-    images: Option<BangumiImages>,
-    tags: Option<Vec<BangumiTag>>,
-}
-
-impl BangumiSubject {
-    fn into_search_result(self) -> SubjectSearchResult {
-        let images = self.images.unwrap_or_default();
-        SubjectSearchResult {
-            provider: "bangumi".to_string(),
-            provider_subject_id: self.id.to_string(),
-            title: self.name,
-            title_cn: non_empty(self.name_cn),
-            summary: non_empty(self.summary),
-            air_date: non_empty(self.date),
-            rating: self.rating.and_then(|rating| rating.score),
-            rank: self.rank,
-            image_large: non_empty(images.large),
-            image_common: non_empty(images.common),
-        }
-    }
-
-    fn into_detail(self) -> SubjectDetail {
-        let images = self.images.unwrap_or_default();
-        SubjectDetail {
-            provider: "bangumi".to_string(),
-            provider_subject_id: self.id.to_string(),
-            title: self.name,
-            title_cn: non_empty(self.name_cn),
-            summary: non_empty(self.summary),
-            air_date: non_empty(self.date),
-            rating: self.rating.and_then(|rating| rating.score),
-            rank: self.rank,
-            tags: self
-                .tags
-                .unwrap_or_default()
-                .into_iter()
-                .map(|tag| tag.name)
-                .filter(|tag| !tag.trim().is_empty())
-                .collect(),
-            images: SubjectImages {
-                large: non_empty(images.large),
-                common: non_empty(images.common),
-            },
-        }
-    }
-}
-
-#[derive(Debug, Default, Deserialize)]
-struct BangumiImages {
-    large: Option<String>,
-    common: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct BangumiRating {
-    score: Option<f64>,
-}
-
-#[derive(Debug, Deserialize)]
-struct BangumiTag {
-    name: String,
-}
-
-fn non_empty(value: Option<String>) -> Option<String> {
-    value.and_then(|value| {
-        let trimmed = value.trim();
-        if trimmed.is_empty() {
-            None
-        } else {
-            Some(trimmed.to_string())
-        }
-    })
-}
-</file>
 
 <file path="src/metadata/cache.rs">
 use std::fs;
@@ -356,7 +175,359 @@ pub mod matcher;
 pub mod provider;
 </file>
 
+<file path="src/ui/mod.rs">
+pub mod bridge;
+</file>
+
+<file path="build.rs">
+fn main() {
+    slint_build::compile("ui/main.slint").expect("failed to compile Slint UI");
+}
+</file>
+
+<file path="config.example.toml">
+media_libraries = []
+
+[database]
+path = "data/slint-bangumi.sqlite3"
+
+[dandanplay]
+app_id = ""
+app_secret = ""
+api_key = ""
+
+[bangumi]
+enabled = true
+base_url = "https://api.bgm.tv"
+access_token = ""
+user_agent = "slint-bangumi/0.1.0"
+request_timeout_secs = 20
+auto_match = true
+cache_images = true
+
+[logging]
+level = "info"
+</file>
+
+<file path="src/metadata/bangumi.rs">
+use std::time::Duration;
+
+use reqwest::blocking::Client;
+use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue};
+use serde::{Deserialize, Serialize};
+
+use crate::config::BangumiConfig;
+use crate::domain::SubjectEpisode;
+use crate::error::{AppError, AppResult};
+
+use super::provider::{MetadataProvider, SubjectDetail, SubjectImages, SubjectSearchResult};
+
+#[derive(Clone)]
+pub struct BangumiProvider {
+    client: Client,
+    config: BangumiConfig,
+}
+
+impl BangumiProvider {
+    pub fn new(config: BangumiConfig) -> AppResult<Self> {
+        let timeout = Duration::from_secs(config.request_timeout_secs.max(1));
+        let client = Client::builder()
+            .timeout(timeout)
+            .user_agent(config.user_agent.clone())
+            .default_headers(auth_headers(&config)?)
+            .build()?;
+        Ok(Self { client, config })
+    }
+
+    pub fn test_connection(&self) -> AppResult<()> {
+        ensure_enabled(&self.config)?;
+        let response = self
+            .client
+            .get(format!(
+                "{}/v0/subjects/1",
+                self.config.base_url.trim_end_matches('/')
+            ))
+            .send()?;
+        let status = response.status();
+        if status.is_success() {
+            Ok(())
+        } else {
+            Err(AppError::Api(format!(
+                "bangumi connection test rejected: {status}"
+            )))
+        }
+    }
+}
+
+impl MetadataProvider for BangumiProvider {
+    fn search_subjects(&self, keyword: &str) -> AppResult<Vec<SubjectSearchResult>> {
+        ensure_enabled(&self.config)?;
+        let keyword = keyword.trim();
+        if keyword.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let response = self
+            .client
+            .post(format!(
+                "{}/v0/search/subjects",
+                self.config.base_url.trim_end_matches('/')
+            ))
+            .json(&SearchRequest {
+                keyword,
+                filter: SearchFilter {
+                    subject_type: vec![2],
+                },
+            })
+            .send()?;
+        let status = response.status();
+        if !status.is_success() {
+            return Err(AppError::Api(format!("bangumi search rejected: {status}")));
+        }
+
+        let response = response.json::<SearchResponse>()?;
+        Ok(response
+            .data
+            .into_iter()
+            .map(|subject| subject.into_search_result())
+            .collect())
+    }
+
+    fn get_subject(&self, provider_subject_id: &str) -> AppResult<SubjectDetail> {
+        ensure_enabled(&self.config)?;
+        let response = self
+            .client
+            .get(format!(
+                "{}/v0/subjects/{provider_subject_id}",
+                self.config.base_url.trim_end_matches('/')
+            ))
+            .send()?;
+        let status = response.status();
+        if !status.is_success() {
+            return Err(AppError::Api(format!("bangumi subject rejected: {status}")));
+        }
+
+        Ok(response.json::<BangumiSubject>()?.into_detail())
+    }
+
+    fn get_subject_images(&self, provider_subject_id: &str) -> AppResult<SubjectImages> {
+        Ok(self.get_subject(provider_subject_id)?.images)
+    }
+
+    fn get_episodes(&self, provider_subject_id: &str) -> AppResult<Vec<SubjectEpisode>> {
+        ensure_enabled(&self.config)?;
+        let mut offset = 0;
+        let mut episodes = Vec::new();
+        loop {
+            let response = self
+                .client
+                .get(format!(
+                    "{}/v0/episodes",
+                    self.config.base_url.trim_end_matches('/')
+                ))
+                .query(&[
+                    ("subject_id", provider_subject_id),
+                    ("type", "0"),
+                    ("limit", "200"),
+                    ("offset", &offset.to_string()),
+                ])
+                .send()?;
+            let status = response.status();
+            if !status.is_success() {
+                return Err(AppError::Api(format!(
+                    "bangumi episodes rejected: {status}"
+                )));
+            }
+
+            let page = response.json::<EpisodesResponse>()?;
+            let count = page.data.len();
+            episodes.extend(
+                page.data
+                    .into_iter()
+                    .map(BangumiEpisode::into_subject_episode),
+            );
+            offset += count as i64;
+            if count == 0 || offset >= page.total.unwrap_or(offset) {
+                break;
+            }
+        }
+        Ok(episodes)
+    }
+}
+
+fn auth_headers(config: &BangumiConfig) -> AppResult<HeaderMap> {
+    let mut headers = HeaderMap::new();
+    let token = config.access_token.trim();
+    if !token.is_empty() {
+        let value = HeaderValue::from_str(&format!("Bearer {token}"))
+            .map_err(|error| AppError::Config(format!("invalid bangumi access token: {error}")))?;
+        headers.insert(AUTHORIZATION, value);
+    }
+    Ok(headers)
+}
+
+fn ensure_enabled(config: &BangumiConfig) -> AppResult<()> {
+    if config.enabled {
+        Ok(())
+    } else {
+        Err(AppError::Config(
+            "bangumi metadata source is disabled".to_string(),
+        ))
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct SearchRequest<'a> {
+    keyword: &'a str,
+    filter: SearchFilter,
+}
+
+#[derive(Debug, Serialize)]
+struct SearchFilter {
+    #[serde(rename = "type")]
+    subject_type: Vec<i32>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SearchResponse {
+    data: Vec<BangumiSubject>,
+}
+
+#[derive(Debug, Deserialize)]
+struct BangumiSubject {
+    id: i64,
+    name: String,
+    name_cn: Option<String>,
+    summary: Option<String>,
+    date: Option<String>,
+    rank: Option<i64>,
+    rating: Option<BangumiRating>,
+    images: Option<BangumiImages>,
+    tags: Option<Vec<BangumiTag>>,
+}
+
+impl BangumiSubject {
+    fn into_search_result(self) -> SubjectSearchResult {
+        let images = self.images.unwrap_or_default();
+        SubjectSearchResult {
+            provider: "bangumi".to_string(),
+            provider_subject_id: self.id.to_string(),
+            title: self.name,
+            title_cn: non_empty(self.name_cn),
+            summary: non_empty(self.summary),
+            air_date: non_empty(self.date),
+            rating: self.rating.and_then(|rating| rating.score),
+            rank: self.rank,
+            image_large: non_empty(images.large),
+            image_common: non_empty(images.common),
+        }
+    }
+
+    fn into_detail(self) -> SubjectDetail {
+        let images = self.images.unwrap_or_default();
+        SubjectDetail {
+            provider: "bangumi".to_string(),
+            provider_subject_id: self.id.to_string(),
+            title: self.name,
+            title_cn: non_empty(self.name_cn),
+            summary: non_empty(self.summary),
+            air_date: non_empty(self.date),
+            rating: self.rating.and_then(|rating| rating.score),
+            rank: self.rank,
+            tags: self
+                .tags
+                .unwrap_or_default()
+                .into_iter()
+                .map(|tag| tag.name)
+                .filter(|tag| !tag.trim().is_empty())
+                .collect(),
+            images: SubjectImages {
+                large: non_empty(images.large),
+                common: non_empty(images.common),
+            },
+        }
+    }
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct BangumiImages {
+    large: Option<String>,
+    common: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct BangumiRating {
+    score: Option<f64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct BangumiTag {
+    name: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct EpisodesResponse {
+    total: Option<i64>,
+    data: Vec<BangumiEpisode>,
+}
+
+#[derive(Debug, Deserialize)]
+struct BangumiEpisode {
+    id: i64,
+    name: String,
+    name_cn: Option<String>,
+    sort: f64,
+    ep: Option<f64>,
+    airdate: Option<String>,
+    desc: Option<String>,
+}
+
+impl BangumiEpisode {
+    fn into_subject_episode(self) -> SubjectEpisode {
+        SubjectEpisode {
+            provider_episode_id: self.id.to_string(),
+            sort_number: self.sort,
+            ep_number: self.ep,
+            title: self.name,
+            title_cn: non_empty(self.name_cn),
+            air_date: non_empty(self.airdate),
+            summary: non_empty(self.desc),
+        }
+    }
+}
+
+fn non_empty(value: Option<String>) -> Option<String> {
+    value.and_then(|value| {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::config::ConfigStore;
+
+    use super::*;
+
+    #[test]
+    #[ignore = "requires local config.toml and Bangumi network access"]
+    fn connects_with_local_config() {
+        let config = ConfigStore::load_or_create("config.toml")
+            .expect("load config")
+            .snapshot()
+            .bangumi;
+        let provider = BangumiProvider::new(config).expect("create provider");
+        provider.test_connection().expect("connect to Bangumi");
+    }
+}
+</file>
+
 <file path="src/metadata/provider.rs">
+use crate::domain::SubjectEpisode;
 use crate::error::AppResult;
 
 #[derive(Debug, Clone)]
@@ -397,11 +568,8 @@ pub trait MetadataProvider {
     fn search_subjects(&self, keyword: &str) -> AppResult<Vec<SubjectSearchResult>>;
     fn get_subject(&self, provider_subject_id: &str) -> AppResult<SubjectDetail>;
     fn get_subject_images(&self, provider_subject_id: &str) -> AppResult<SubjectImages>;
+    fn get_episodes(&self, provider_subject_id: &str) -> AppResult<Vec<SubjectEpisode>>;
 }
-</file>
-
-<file path="src/ui/mod.rs">
-pub mod bridge;
 </file>
 
 <file path="src/config.rs">
@@ -418,6 +586,8 @@ pub struct AppConfig {
     pub database: DatabaseConfig,
     pub media_libraries: Vec<PathBuf>,
     pub dandanplay: DandanplayConfig,
+    #[serde(default)]
+    pub bangumi: BangumiConfig,
     pub logging: LoggingConfig,
 }
 
@@ -431,6 +601,31 @@ pub struct DandanplayConfig {
     pub app_id: String,
     pub app_secret: String,
     pub api_key: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BangumiConfig {
+    pub enabled: bool,
+    pub base_url: String,
+    pub access_token: String,
+    pub user_agent: String,
+    pub request_timeout_secs: u64,
+    pub auto_match: bool,
+    pub cache_images: bool,
+}
+
+impl Default for BangumiConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            base_url: "https://api.bgm.tv".to_string(),
+            access_token: String::new(),
+            user_agent: format!("slint-bangumi/{}", env!("CARGO_PKG_VERSION")),
+            request_timeout_secs: 20,
+            auto_match: true,
+            cache_images: true,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -450,6 +645,7 @@ impl Default for AppConfig {
                 app_secret: String::new(),
                 api_key: String::new(),
             },
+            bangumi: BangumiConfig::default(),
             logging: LoggingConfig {
                 level: "info".to_string(),
             },
@@ -523,6 +719,15 @@ fn write_config(path: &Path, config: &AppConfig) -> AppResult<()> {
 }
 </file>
 
+<file path=".gitignore">
+/target
+/config.toml
+/data/
+*.sqlite3
+*.sqlite3-shm
+*.sqlite3-wal
+</file>
+
 <file path="src/domain.rs">
 use std::path::PathBuf;
 
@@ -534,6 +739,7 @@ pub struct MediaItem {
     pub file_size: u64,
     pub modified_at: i64,
     pub file_hash: Option<String>,
+    pub match_ignored: bool,
     pub deleted_at: Option<i64>,
 }
 
@@ -576,8 +782,24 @@ pub struct ScanSummary {
 pub struct DanmakuMatch {
     pub provider: String,
     pub title: String,
+    pub anime_id: Option<i64>,
+    pub episode_id: Option<i64>,
+    pub anime_title: Option<String>,
     pub episode: Option<String>,
     pub comment_count: usize,
+    pub exact: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct SubjectEpisode {
+    pub provider_episode_id: String,
+    pub sort_number: f64,
+    pub ep_number: Option<f64>,
+    pub title: String,
+    pub title_cn: Option<String>,
+    pub air_date: Option<String>,
+    #[allow(dead_code)]
+    pub summary: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -604,6 +826,25 @@ pub struct SubjectImageCache {
     #[allow(dead_code)]
     pub source_url: String,
     pub local_path: PathBuf,
+}
+
+#[derive(Debug, Clone)]
+pub struct MetadataCandidate {
+    pub id: i64,
+    pub media_id: i64,
+    pub provider: String,
+    pub provider_subject_id: String,
+    pub title: String,
+    pub title_cn: Option<String>,
+    pub summary: Option<String>,
+    pub air_date: Option<String>,
+    pub rating: Option<f64>,
+    pub rank: Option<i64>,
+    pub image_large: Option<String>,
+    pub image_common: Option<String>,
+    pub confidence: f64,
+    pub source: String,
+    pub selected: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -635,55 +876,57 @@ pub struct UiSubjectDetailData {
     pub match_status: String,
     pub cache_status: String,
     pub files: Vec<String>,
+    pub episodes: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct UiCandidateData {
+    pub candidate_id: i64,
+    pub media_id: i64,
+    pub title: String,
+    pub subtitle: String,
+    pub summary: String,
+    pub score_text: String,
+    pub selected: bool,
 }
 </file>
 
-<file path="build.rs">
-fn main() {
-    slint_build::compile("ui/main.slint").expect("failed to compile Slint UI");
+<file path="src/error.rs">
+use std::path::PathBuf;
+
+use thiserror::Error;
+
+pub type AppResult<T> = Result<T, AppError>;
+
+#[derive(Debug, Error)]
+pub enum AppError {
+    #[error("config error: {0}")]
+    Config(String),
+    #[error("database error: {0}")]
+    Database(#[from] rusqlite::Error),
+    #[error("io error at {path}: {source}")]
+    Io {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    #[error("http error: {0}")]
+    Http(#[from] reqwest::Error),
+    #[error("api error: {0}")]
+    Api(String),
+    #[error("ui error: {0}")]
+    Ui(#[from] slint::PlatformError),
+    #[error("media path is not a directory: {0}")]
+    InvalidMediaDirectory(PathBuf),
+    #[error("selected media item was not found")]
+    MediaNotFound,
+    #[error("failed to open media with default player: {0}")]
+    OpenMedia(String),
 }
-</file>
 
-<file path="src/app.rs">
-use std::sync::{Arc, mpsc};
-
-use crate::config::ConfigStore;
-use crate::error::AppResult;
-use crate::repository::Repository;
-use crate::service::{DanmakuService, MediaService, MetadataService, WatchHistoryService};
-use crate::task::AppEvent;
-
-#[derive(Clone)]
-pub struct AppContext {
-    pub media: MediaService,
-    pub watch_history: WatchHistoryService,
-    pub danmaku: DanmakuService,
-    pub metadata: MetadataService,
-    pub event_receiver: Arc<std::sync::Mutex<Option<mpsc::Receiver<AppEvent>>>>,
-}
-
-impl AppContext {
-    pub fn new(config: ConfigStore) -> AppResult<Self> {
-        let (events, receiver) = mpsc::channel();
-        let config = Arc::new(config);
-        let repository = Repository::new(config.snapshot().database.path);
-        repository.init()?;
-
-        let danmaku = DanmakuService::new(config.clone(), events.clone())?;
-        let database_path = config.snapshot().database.path;
-
-        Ok(Self {
-            media: MediaService::new(config.clone(), repository.clone(), events.clone()),
-            watch_history: WatchHistoryService::new(repository.clone(), events.clone()),
-            metadata: MetadataService::new(
-                repository.clone(),
-                danmaku.clone(),
-                database_path,
-                events.clone(),
-            )?,
-            danmaku,
-            event_receiver: Arc::new(std::sync::Mutex::new(Some(receiver))),
-        })
+pub fn io_error(path: impl Into<PathBuf>, source: std::io::Error) -> AppError {
+    AppError::Io {
+        path: path.into(),
+        source,
     }
 }
 </file>
@@ -719,14 +962,59 @@ fn main() -> AppResult<()> {
 }
 </file>
 
+<file path="src/app.rs">
+use std::sync::{Arc, mpsc};
+
+use crate::config::ConfigStore;
+use crate::error::AppResult;
+use crate::repository::Repository;
+use crate::service::{DanmakuService, MediaService, MetadataService, WatchHistoryService};
+use crate::task::AppEvent;
+
+#[derive(Clone)]
+pub struct AppContext {
+    pub media: MediaService,
+    pub watch_history: WatchHistoryService,
+    pub danmaku: DanmakuService,
+    pub metadata: MetadataService,
+    pub event_receiver: Arc<std::sync::Mutex<Option<mpsc::Receiver<AppEvent>>>>,
+}
+
+impl AppContext {
+    pub fn new(config: ConfigStore) -> AppResult<Self> {
+        let (events, receiver) = mpsc::channel();
+        let config = Arc::new(config);
+        let repository = Repository::new(config.snapshot().database.path);
+        repository.init()?;
+
+        let danmaku = DanmakuService::new(config.clone(), events.clone())?;
+        let database_path = config.snapshot().database.path;
+
+        Ok(Self {
+            media: MediaService::new(config.clone(), repository.clone(), events.clone()),
+            watch_history: WatchHistoryService::new(repository.clone(), events.clone()),
+            metadata: MetadataService::new(
+                config.clone(),
+                repository.clone(),
+                danmaku.clone(),
+                database_path,
+                events.clone(),
+            )?,
+            danmaku,
+            event_receiver: Arc::new(std::sync::Mutex::new(Some(receiver))),
+        })
+    }
+}
+</file>
+
 <file path="src/repository.rs">
 use std::path::{Path, PathBuf};
 
 use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::domain::{
-    MediaFile, MediaItem, ScanUpsertStatus, Subject, SubjectImageCache, UiMediaCardData,
-    UiSubjectDetailData, WatchProgress,
+    MediaFile, MediaItem, MetadataCandidate, ScanUpsertStatus, Subject, SubjectEpisode,
+    SubjectImageCache, UiCandidateData, UiMediaCardData, UiSubjectDetailData, WatchProgress,
 };
 use crate::error::AppResult;
 use crate::metadata::provider::{SubjectDetail, SubjectSearchResult};
@@ -754,6 +1042,7 @@ impl Repository {
                 file_size INTEGER NOT NULL,
                 modified_at INTEGER NOT NULL,
                 file_hash TEXT,
+                match_ignored INTEGER NOT NULL DEFAULT 0,
                 deleted_at INTEGER,
                 created_at INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL
@@ -850,7 +1139,41 @@ impl Repository {
                 created_at INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS metadata_candidates (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                media_id INTEGER NOT NULL,
+                provider TEXT NOT NULL,
+                provider_subject_id TEXT NOT NULL,
+                title TEXT NOT NULL,
+                title_cn TEXT,
+                summary TEXT,
+                air_date TEXT,
+                rating REAL,
+                rank INTEGER,
+                image_large TEXT,
+                image_common TEXT,
+                confidence REAL,
+                source TEXT NOT NULL,
+                selected INTEGER NOT NULL DEFAULT 0,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                UNIQUE(media_id, provider, provider_subject_id),
+                FOREIGN KEY(media_id) REFERENCES media_items(id) ON DELETE CASCADE
+            );
+
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_episodes_subject_provider
+                ON episodes(subject_id, provider_episode_id);
+
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_media_episode_links_media
+                ON media_episode_links(media_id);
             "#,
+        )?;
+        add_column_if_missing(
+            &conn,
+            "media_items",
+            "match_ignored",
+            "INTEGER NOT NULL DEFAULT 0",
         )?;
         Ok(())
     }
@@ -858,9 +1181,9 @@ impl Repository {
     pub fn list_media(&self, include_deleted: bool) -> AppResult<Vec<MediaItem>> {
         let conn = self.connect()?;
         let sql = if include_deleted {
-            "SELECT id, path, file_name, file_size, modified_at, file_hash, deleted_at FROM media_items ORDER BY file_name COLLATE NOCASE"
+            "SELECT id, path, file_name, file_size, modified_at, file_hash, match_ignored, deleted_at FROM media_items ORDER BY file_name COLLATE NOCASE"
         } else {
-            "SELECT id, path, file_name, file_size, modified_at, file_hash, deleted_at FROM media_items WHERE deleted_at IS NULL ORDER BY file_name COLLATE NOCASE"
+            "SELECT id, path, file_name, file_size, modified_at, file_hash, match_ignored, deleted_at FROM media_items WHERE deleted_at IS NULL ORDER BY file_name COLLATE NOCASE"
         };
 
         let mut stmt = conn.prepare(sql)?;
@@ -871,7 +1194,7 @@ impl Repository {
     pub fn get_media(&self, media_id: i64) -> AppResult<Option<MediaItem>> {
         let conn = self.connect()?;
         conn.query_row(
-            "SELECT id, path, file_name, file_size, modified_at, file_hash, deleted_at FROM media_items WHERE id = ?1",
+            "SELECT id, path, file_name, file_size, modified_at, file_hash, match_ignored, deleted_at FROM media_items WHERE id = ?1",
             params![media_id],
             map_media_item,
         )
@@ -889,11 +1212,15 @@ impl Repository {
                 COALESCE(NULLIF(s.title_cn, ''), s.title, m.file_name),
                 m.file_name,
                 CASE
+                    WHEN m.match_ignored = 1 THEN '已忽略'
+                    WHEN s.id IS NULL AND c.id IS NOT NULL THEN '待确认'
                     WHEN s.id IS NULL THEN '未匹配'
                     WHEN l.confirmed = 0 THEN '待确认'
                     ELSE '已匹配'
                 END,
                 CASE
+                    WHEN m.match_ignored = 1 THEN 'ignored'
+                    WHEN s.id IS NULL AND c.id IS NOT NULL THEN 'tentative'
                     WHEN s.id IS NULL THEN 'unmatched'
                     WHEN l.confirmed = 0 THEN 'tentative'
                     ELSE 'matched'
@@ -912,6 +1239,12 @@ impl Repository {
             LEFT JOIN media_episode_links mel ON mel.media_id = m.id
             LEFT JOIN subject_image_cache pic
                 ON pic.subject_id = s.id AND pic.image_kind = 'poster'
+            LEFT JOIN (
+                SELECT media_id, MAX(id) AS id
+                FROM metadata_candidates
+                WHERE selected = 1
+                GROUP BY media_id
+            ) c ON c.media_id = m.id
             WHERE m.deleted_at IS NULL
             ORDER BY title COLLATE NOCASE
             "#,
@@ -954,14 +1287,30 @@ impl Repository {
         Ok((indexed, matched, indexed.saturating_sub(matched)))
     }
 
+    pub fn tentative_count(&self) -> AppResult<usize> {
+        let conn = self.connect()?;
+        let count = conn.query_row(
+            r#"
+            SELECT COUNT(DISTINCT c.media_id)
+            FROM metadata_candidates c
+            LEFT JOIN media_subject_links l ON l.media_id = c.media_id
+            JOIN media_items m ON m.id = c.media_id
+            WHERE c.selected = 1 AND l.media_id IS NULL AND m.deleted_at IS NULL AND m.match_ignored = 0
+            "#,
+            [],
+            |row| row.get::<_, i64>(0),
+        )? as usize;
+        Ok(count)
+    }
+
     pub fn unmatched_media(&self) -> AppResult<Vec<MediaItem>> {
         let conn = self.connect()?;
         let mut stmt = conn.prepare(
             r#"
-            SELECT m.id, m.path, m.file_name, m.file_size, m.modified_at, m.file_hash, m.deleted_at
+            SELECT m.id, m.path, m.file_name, m.file_size, m.modified_at, m.file_hash, m.match_ignored, m.deleted_at
             FROM media_items m
             LEFT JOIN media_subject_links l ON l.media_id = m.id
-            WHERE m.deleted_at IS NULL AND l.media_id IS NULL
+            WHERE m.deleted_at IS NULL AND m.match_ignored = 0 AND l.media_id IS NULL
             ORDER BY m.file_name COLLATE NOCASE
             "#,
         )?;
@@ -1009,6 +1358,145 @@ impl Repository {
         self.find_subject_id(&subject.provider, &subject.provider_subject_id)
     }
 
+    pub fn upsert_metadata_candidates(
+        &self,
+        media_id: i64,
+        candidates: &[SubjectSearchResult],
+        source: &str,
+        now: i64,
+    ) -> AppResult<Vec<MetadataCandidate>> {
+        let conn = self.connect()?;
+        for (index, candidate) in candidates.iter().enumerate() {
+            let confidence = if index == 0 { 0.72 } else { 0.42 };
+            let selected = if index == 0 { 1 } else { 0 };
+            conn.execute(
+                r#"
+                INSERT INTO metadata_candidates
+                    (media_id, provider, provider_subject_id, title, title_cn, summary, air_date,
+                     rating, rank, image_large, image_common, confidence, source, selected,
+                     created_at, updated_at)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?15)
+                ON CONFLICT(media_id, provider, provider_subject_id) DO UPDATE SET
+                    title = excluded.title,
+                    title_cn = excluded.title_cn,
+                    summary = excluded.summary,
+                    air_date = excluded.air_date,
+                    rating = excluded.rating,
+                    rank = excluded.rank,
+                    image_large = excluded.image_large,
+                    image_common = excluded.image_common,
+                    confidence = excluded.confidence,
+                    source = excluded.source,
+                    selected = excluded.selected,
+                    updated_at = excluded.updated_at
+                "#,
+                params![
+                    media_id,
+                    candidate.provider,
+                    candidate.provider_subject_id,
+                    candidate.title,
+                    candidate.title_cn,
+                    candidate.summary,
+                    candidate.air_date,
+                    candidate.rating,
+                    candidate.rank,
+                    candidate.image_large,
+                    candidate.image_common,
+                    confidence,
+                    source,
+                    selected,
+                    now
+                ],
+            )?;
+        }
+        self.list_candidates_for_media(media_id)
+    }
+
+    pub fn list_candidates_for_media(&self, media_id: i64) -> AppResult<Vec<MetadataCandidate>> {
+        let conn = self.connect()?;
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT id, media_id, provider, provider_subject_id, title, title_cn, summary,
+                   air_date, rating, rank, image_large, image_common, confidence, source, selected
+            FROM metadata_candidates
+            WHERE media_id = ?1
+            ORDER BY selected DESC, confidence DESC, updated_at DESC
+            "#,
+        )?;
+        let rows = stmt.query_map(params![media_id], map_candidate)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    pub fn selected_candidate_for_media(
+        &self,
+        media_id: i64,
+    ) -> AppResult<Option<MetadataCandidate>> {
+        let conn = self.connect()?;
+        conn.query_row(
+            r#"
+            SELECT id, media_id, provider, provider_subject_id, title, title_cn, summary,
+                   air_date, rating, rank, image_large, image_common, confidence, source, selected
+            FROM metadata_candidates
+            WHERE media_id = ?1 AND selected = 1
+            ORDER BY confidence DESC, updated_at DESC
+            LIMIT 1
+            "#,
+            params![media_id],
+            map_candidate,
+        )
+        .optional()
+        .map_err(Into::into)
+    }
+
+    pub fn get_candidate(&self, candidate_id: i64) -> AppResult<Option<MetadataCandidate>> {
+        let conn = self.connect()?;
+        conn.query_row(
+            r#"
+            SELECT id, media_id, provider, provider_subject_id, title, title_cn, summary,
+                   air_date, rating, rank, image_large, image_common, confidence, source, selected
+            FROM metadata_candidates
+            WHERE id = ?1
+            "#,
+            params![candidate_id],
+            map_candidate,
+        )
+        .optional()
+        .map_err(Into::into)
+    }
+
+    pub fn select_candidate(&self, media_id: i64, candidate_id: i64, now: i64) -> AppResult<()> {
+        let conn = self.connect()?;
+        conn.execute(
+            "UPDATE metadata_candidates SET selected = 0, updated_at = ?2 WHERE media_id = ?1",
+            params![media_id, now],
+        )?;
+        conn.execute(
+            "UPDATE metadata_candidates SET selected = 1, updated_at = ?3 WHERE media_id = ?1 AND id = ?2",
+            params![media_id, candidate_id, now],
+        )?;
+        Ok(())
+    }
+
+    pub fn upsert_subject_from_candidate(
+        &self,
+        candidate: &MetadataCandidate,
+        now: i64,
+    ) -> AppResult<i64> {
+        let search = SubjectSearchResult {
+            provider: candidate.provider.clone(),
+            provider_subject_id: candidate.provider_subject_id.clone(),
+            title: candidate.title.clone(),
+            title_cn: candidate.title_cn.clone(),
+            summary: candidate.summary.clone(),
+            air_date: candidate.air_date.clone(),
+            rating: candidate.rating,
+            rank: candidate.rank,
+            image_large: candidate.image_large.clone(),
+            image_common: candidate.image_common.clone(),
+        };
+        self.upsert_subject_from_search(&search, now)
+    }
+
     pub fn upsert_subject_detail(&self, detail: &SubjectDetail, now: i64) -> AppResult<i64> {
         let conn = self.connect()?;
         let tags = serde_json::to_string(&detail.tags).unwrap_or_else(|_| "[]".to_string());
@@ -1048,6 +1536,101 @@ impl Repository {
         self.find_subject_id(&detail.provider, &detail.provider_subject_id)
     }
 
+    pub fn upsert_subject_episodes(
+        &self,
+        subject_id: i64,
+        episodes: &[SubjectEpisode],
+    ) -> AppResult<()> {
+        let conn = self.connect()?;
+        for episode in episodes {
+            conn.execute(
+                r#"
+                INSERT INTO episodes
+                    (subject_id, provider_episode_id, sort_number, title, title_cn, air_date)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                ON CONFLICT(subject_id, provider_episode_id) DO UPDATE SET
+                    sort_number = excluded.sort_number,
+                    title = excluded.title,
+                    title_cn = excluded.title_cn,
+                    air_date = excluded.air_date
+                "#,
+                params![
+                    subject_id,
+                    episode.provider_episode_id,
+                    episode.ep_number.unwrap_or(episode.sort_number),
+                    episode.title,
+                    episode.title_cn,
+                    episode.air_date
+                ],
+            )?;
+        }
+        Ok(())
+    }
+
+    pub fn link_media_episode_by_number(
+        &self,
+        media_id: i64,
+        subject_id: i64,
+        episode_number: Option<f64>,
+        episode_title: Option<&str>,
+        confidence: f64,
+        now: i64,
+    ) -> AppResult<()> {
+        let conn = self.connect()?;
+        let episode = episode_number.and_then(|number| {
+            conn.query_row(
+                r#"
+                    SELECT id, COALESCE(NULLIF(title_cn, ''), title), sort_number
+                    FROM episodes
+                    WHERE subject_id = ?1 AND ABS(sort_number - ?2) < 0.001
+                    ORDER BY id
+                    LIMIT 1
+                    "#,
+                params![subject_id, number],
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, Option<f64>>(2)?.unwrap_or(number),
+                    ))
+                },
+            )
+            .optional()
+            .ok()
+            .flatten()
+        });
+
+        let (episode_id, title, number) = match episode {
+            Some((id, title, number)) => (Some(id), Some(title), Some(number)),
+            None => (
+                None,
+                episode_title.map(str::to_string),
+                episode_number.or_else(|| {
+                    infer_episode_number_from_media(media_id, &conn)
+                        .ok()
+                        .flatten()
+                }),
+            ),
+        };
+
+        conn.execute(
+            r#"
+            INSERT INTO media_episode_links
+                (media_id, episode_id, episode_title, episode_number, match_source, confidence)
+            VALUES (?1, ?2, ?3, ?4, 'episode_inference', ?5)
+            ON CONFLICT(media_id) DO UPDATE SET
+                episode_id = excluded.episode_id,
+                episode_title = excluded.episode_title,
+                episode_number = excluded.episode_number,
+                match_source = excluded.match_source,
+                confidence = excluded.confidence
+            "#,
+            params![media_id, episode_id, title, number, confidence],
+        )?;
+        let _ = now;
+        Ok(())
+    }
+
     pub fn link_media_subject(
         &self,
         media_id: i64,
@@ -1077,19 +1660,6 @@ impl Repository {
                 if confirmed { 1 } else { 0 },
                 now
             ],
-        )?;
-        Ok(())
-    }
-
-    pub fn confirm_media_subject(&self, media_id: i64, subject_id: i64, now: i64) -> AppResult<()> {
-        let conn = self.connect()?;
-        conn.execute(
-            r#"
-            UPDATE media_subject_links
-            SET confirmed = 1, updated_at = ?3
-            WHERE media_id = ?1 AND subject_id = ?2
-            "#,
-            params![media_id, subject_id, now],
         )?;
         Ok(())
     }
@@ -1267,6 +1837,36 @@ impl Repository {
                     if hero_cached { "cached" } else { "not cached" }
                 ),
                 files,
+                episodes: self.ui_episodes_for_subject(subject.id, media_id)?,
+            })
+        } else if let Some(candidate) = self.selected_candidate_for_media(media_id)? {
+            Ok(UiSubjectDetailData {
+                media_id,
+                subject_id: 0,
+                title: candidate
+                    .title_cn
+                    .clone()
+                    .filter(|title| !title.is_empty())
+                    .unwrap_or(candidate.title),
+                title_cn: candidate.title_cn.unwrap_or_default(),
+                summary: candidate
+                    .summary
+                    .unwrap_or_else(|| "候选已保存，确认后会拉取完整条目信息和图片。".to_string()),
+                air_date: candidate.air_date.unwrap_or_else(|| "-".to_string()),
+                rating_text: candidate
+                    .rating
+                    .map(|rating| format!("{rating:.1}"))
+                    .unwrap_or_else(|| "-".to_string()),
+                rank_text: candidate
+                    .rank
+                    .map(|rank| format!("#{rank}"))
+                    .unwrap_or_else(|| "-".to_string()),
+                poster_path: String::new(),
+                hero_path: String::new(),
+                match_status: "待确认".to_string(),
+                cache_status: "poster: not cached, hero: not cached".to_string(),
+                files,
+                episodes: Vec::new(),
             })
         } else {
             Ok(UiSubjectDetailData {
@@ -1283,8 +1883,99 @@ impl Repository {
                 match_status: "未匹配".to_string(),
                 cache_status: "poster: not cached, hero: not cached".to_string(),
                 files,
+                episodes: Vec::new(),
             })
         }
+    }
+
+    fn ui_episodes_for_subject(&self, subject_id: i64, media_id: i64) -> AppResult<Vec<String>> {
+        let conn = self.connect()?;
+        let current = conn
+            .query_row(
+                "SELECT episode_id FROM media_episode_links WHERE media_id = ?1",
+                params![media_id],
+                |row| row.get::<_, Option<i64>>(0),
+            )
+            .optional()?
+            .flatten();
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT id, sort_number, COALESCE(NULLIF(title_cn, ''), title), air_date
+            FROM episodes
+            WHERE subject_id = ?1
+            ORDER BY sort_number, id
+            LIMIT 200
+            "#,
+        )?;
+        let rows = stmt.query_map(params![subject_id], |row| {
+            let id = row.get::<_, i64>(0)?;
+            let sort = row.get::<_, Option<f64>>(1)?.unwrap_or_default();
+            let title = row
+                .get::<_, Option<String>>(2)?
+                .unwrap_or_else(|| "-".to_string());
+            let air_date = row.get::<_, Option<String>>(3)?.unwrap_or_default();
+            let marker = if Some(id) == current { "Now  " } else { "" };
+            Ok(format!(
+                "{marker}EP{}  {title}  {air_date}",
+                format_episode_number(sort)
+            ))
+        })?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    pub fn ignore_media_match(&self, media_id: i64, now: i64) -> AppResult<()> {
+        let conn = self.connect()?;
+        conn.execute(
+            "UPDATE media_items SET match_ignored = 1, updated_at = ?2 WHERE id = ?1",
+            params![media_id, now],
+        )?;
+        conn.execute(
+            "UPDATE metadata_candidates SET selected = 0, updated_at = ?2 WHERE media_id = ?1",
+            params![media_id, now],
+        )?;
+        Ok(())
+    }
+
+    pub fn clear_media_match_ignore(&self, media_id: i64, now: i64) -> AppResult<()> {
+        let conn = self.connect()?;
+        conn.execute(
+            "UPDATE media_items SET match_ignored = 0, updated_at = ?2 WHERE id = ?1",
+            params![media_id, now],
+        )?;
+        Ok(())
+    }
+
+    pub fn ui_candidates_for_media(&self, media_id: i64) -> AppResult<Vec<UiCandidateData>> {
+        Ok(self
+            .list_candidates_for_media(media_id)?
+            .into_iter()
+            .map(|candidate| UiCandidateData {
+                candidate_id: candidate.id,
+                media_id: candidate.media_id,
+                title: candidate
+                    .title_cn
+                    .clone()
+                    .filter(|title| !title.is_empty())
+                    .unwrap_or_else(|| candidate.title.clone()),
+                subtitle: format!(
+                    "{}  {}  confidence {:.0}%",
+                    candidate.provider,
+                    candidate
+                        .air_date
+                        .clone()
+                        .unwrap_or_else(|| "date unknown".to_string()),
+                    candidate.confidence * 100.0
+                ),
+                summary: candidate
+                    .summary
+                    .unwrap_or_else(|| "No summary in candidate.".to_string()),
+                score_text: candidate
+                    .rating
+                    .map(|rating| format!("{rating:.1}"))
+                    .unwrap_or_else(|| "-".to_string()),
+                selected: candidate.selected,
+            })
+            .collect())
     }
 
     fn find_subject_id(&self, provider: &str, provider_subject_id: &str) -> AppResult<i64> {
@@ -1517,7 +2208,90 @@ fn map_media_item(row: &rusqlite::Row<'_>) -> rusqlite::Result<MediaItem> {
         file_size: row.get::<_, i64>(3)? as u64,
         modified_at: row.get(4)?,
         file_hash: row.get(5)?,
-        deleted_at: row.get(6)?,
+        match_ignored: row.get::<_, i64>(6)? != 0,
+        deleted_at: row.get(7)?,
+    })
+}
+
+fn add_column_if_missing(
+    conn: &Connection,
+    table: &str,
+    column: &str,
+    definition: &str,
+) -> AppResult<()> {
+    let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})"))?;
+    let columns = stmt
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<Result<Vec<_>, _>>()?;
+    if !columns.iter().any(|existing| existing == column) {
+        conn.execute(
+            &format!("ALTER TABLE {table} ADD COLUMN {column} {definition}"),
+            [],
+        )?;
+    }
+    Ok(())
+}
+
+fn infer_episode_number_from_media(
+    media_id: i64,
+    conn: &Connection,
+) -> rusqlite::Result<Option<f64>> {
+    let file_name = conn.query_row(
+        "SELECT file_name FROM media_items WHERE id = ?1",
+        params![media_id],
+        |row| row.get::<_, String>(0),
+    )?;
+    Ok(infer_episode_number(&file_name))
+}
+
+fn infer_episode_number(file_name: &str) -> Option<f64> {
+    let stem = Path::new(file_name)
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or(file_name);
+    let mut best = None;
+    let mut current = String::new();
+    for ch in stem.chars().chain(std::iter::once(' ')) {
+        if ch.is_ascii_digit() {
+            current.push(ch);
+            continue;
+        }
+        if (1..=3).contains(&current.len())
+            && let Ok(value) = current.parse::<i64>()
+            && (1..=999).contains(&value)
+        {
+            best = Some(value as f64);
+        }
+        current.clear();
+    }
+    best
+}
+
+fn format_episode_number(value: f64) -> String {
+    if (value.fract()).abs() < f64::EPSILON {
+        format!("{}", value as i64)
+    } else {
+        format!("{value:.1}")
+    }
+}
+
+fn map_candidate(row: &rusqlite::Row<'_>) -> rusqlite::Result<MetadataCandidate> {
+    Ok(MetadataCandidate {
+        id: row.get(0)?,
+        media_id: row.get(1)?,
+        provider: row.get(2)?,
+        provider_subject_id: row.get(3)?,
+        title: row.get(4)?,
+        title_cn: row.get(5)?,
+        summary: row.get(6)?,
+        air_date: row.get(7)?,
+        rating: row.get(8)?,
+        rank: row.get(9)?,
+        image_large: row.get(10)?,
+        image_common: row.get(11)?,
+        confidence: row.get::<_, Option<f64>>(12)?.unwrap_or_default(),
+        source: row.get(13)?,
+        selected: row.get::<_, i64>(14)? != 0,
     })
 }
 
@@ -1598,7 +2372,21 @@ export struct UiMediaCard {
     progress_percent: int,
     episode_text: string,
     poster_path: string,
+    poster_image: image,
     has_cached_poster: bool,
+}
+
+export struct UiMediaRow {
+    card0: UiMediaCard,
+    card1: UiMediaCard,
+    card2: UiMediaCard,
+    card3: UiMediaCard,
+    card4: UiMediaCard,
+    show0: bool,
+    show1: bool,
+    show2: bool,
+    show3: bool,
+    show4: bool,
 }
 
 export struct UiSubjectDetail {
@@ -1612,8 +2400,20 @@ export struct UiSubjectDetail {
     rank_text: string,
     poster_path: string,
     hero_path: string,
+    poster_image: image,
+    hero_image: image,
     match_status: string,
     cache_status: string,
+}
+
+export struct UiCandidate {
+    candidate_id: int,
+    media_id: int,
+    title: string,
+    subtitle: string,
+    summary: string,
+    score_text: string,
+    selected: bool,
 }
 
 export struct UiLogLine {
@@ -1622,27 +2422,301 @@ export struct UiLogLine {
     timestamp: string,
 }
 
-component LogList inherits ListView {
-    in property <[UiLogLine]> lines;
-    height: 610px;
-    for line in root.lines : Text {
-        text: "[" + line.timestamp + "] " + line.level + "  " + line.message;
-        color: line.level == "error" ? #a32323 : #2f3a48;
+component TonalButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> primary;
+    in property <bool> danger;
+    callback clicked();
+
+    height: 40px;
+    width: 154px;
+    border-radius: 20px;
+    background: touch.pressed ? #8f6f45 : touch.has-hover ? (primary ? #e7cda5 : danger ? #573239 : #393632) : (primary ? #d8bb8c : danger ? #44282f : #302d29);
+    border-width: primary ? 0px : 1px;
+    border-color: danger ? #a66a75 : #5a5650;
+
+    touch := TouchArea { clicked => { root.clicked(); } }
+
+    Text {
+        text: root.text;
+        color: root.primary ? #251a0d : root.danger ? #ffd9df : #f0ebe4;
+        font-size: 13px;
+        font-weight: root.primary ? 700 : 600;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+}
+
+component Chip inherits Rectangle {
+    in property <string> text;
+    in property <bool> selected;
+    in property <string> tone;
+    callback clicked();
+
+    height: 32px;
+    min-width: 78px;
+    border-radius: 16px;
+    border-width: root.selected ? 0px : 1px;
+    border-color: #68625b;
+    background: root.selected ? (tone == "green" ? #6d8f72 : tone == "blue" ? #7190b5 : #d2ad78) : (touch.has-hover ? #35322e : #282520);
+
+    touch := TouchArea { clicked => { root.clicked(); } }
+
+    Text {
+        x: 16px;
+        width: parent.width - 32px;
+        text: root.text;
+        color: root.selected ? #181512 : #e7dfd5;
+        font-size: 12px;
+        font-weight: 650;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+}
+
+component NavItem inherits Rectangle {
+    in property <string> label;
+    in property <string> mark;
+    in property <bool> active;
+    callback clicked();
+
+    height: 64px;
+    border-radius: 22px;
+    background: root.active ? #d7bd92 : touch.has-hover ? #38342e : #00000000;
+
+    touch := TouchArea { clicked => { root.clicked(); } }
+
+    Text {
+        y: 8px;
+        width: parent.width;
+        text: root.mark;
+        color: root.active ? #21160b : #eee6dd;
+        font-size: 20px;
+        font-weight: 800;
+        horizontal-alignment: center;
+    }
+
+    Text {
+        y: 36px;
+        width: parent.width;
+        text: root.label;
+        color: root.active ? #21160b : #d8d0c7;
+        font-size: 11px;
+        horizontal-alignment: center;
+    }
+}
+
+component StatusBadge inherits Rectangle {
+    in property <string> text;
+    in property <string> status;
+
+    height: 24px;
+    width: 76px;
+    border-radius: 12px;
+    background: status == "matched" ? #6d8f72 : status == "tentative" ? #d2ad78 : status == "ignored" ? #7f756a : #9f5f67;
+
+    Text {
+        text: root.text;
+        color: #16130f;
+        font-size: 11px;
+        font-weight: 700;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+}
+
+component PosterCard inherits Rectangle {
+    in property <UiMediaCard> card;
+    in property <bool> selected;
+    callback clicked(int);
+
+    width: 176px;
+    height: 332px;
+    border-radius: 18px;
+    background: touch.has-hover ? #302d29 : #26231f;
+    border-width: root.selected ? 2px : touch.has-hover ? 1px : 0px;
+    border-color: root.selected ? #d9bb8d : #7b715f;
+
+    touch := TouchArea { clicked => { root.clicked(root.card.media_id); } }
+
+    Rectangle {
+        x: 10px;
+        y: 10px;
+        width: 156px;
+        height: 234px;
+        border-radius: 14px;
+        background: root.card.has_cached_poster ? #211f1d : #3b4642;
+        Image {
+            width: parent.width;
+            height: parent.height;
+            source: root.card.poster_image;
+            image-fit: cover;
+        }
+        Rectangle {
+            y: parent.height - 44px;
+            width: parent.width;
+            height: 44px;
+            background: touch.has-hover ? #00000088 : #00000000;
+        }
+        if !root.card.has_cached_poster : Text {
+            text: "No Poster";
+            color: #d7cec2;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            font-weight: 700;
+        }
+        if touch.has-hover : Text {
+            text: "Play";
+            color: #ffffff;
+            font-size: 14px;
+            font-weight: 800;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+        StatusBadge {
+            x: 72px;
+            y: 10px;
+            text: root.card.status_text;
+            status: root.card.match_status;
+        }
+    }
+
+    Text {
+        x: 12px;
+        y: 254px;
+        width: 152px;
+        height: 34px;
+        text: root.card.title;
+        color: #f4eee8;
+        font-size: 14px;
+        font-weight: 750;
+        overflow: elide;
+    }
+
+    Text {
+        x: 12px;
+        y: 290px;
+        width: 152px;
+        height: 18px;
+        text: root.card.subtitle;
+        color: #b9afa5;
+        font-size: 11px;
+        overflow: elide;
+    }
+
+    Rectangle {
+        x: 12px;
+        y: 316px;
+        width: 152px;
+        height: 5px;
+        border-radius: 3px;
+        background: #4a4640;
+        Rectangle {
+            height: 5px;
+            border-radius: 3px;
+            width: parent.width * root.card.progress_percent / 100;
+            background: #d8bb8c;
+        }
+    }
+}
+
+component StatCard inherits Rectangle {
+    in property <string> label;
+    in property <string> value;
+    in property <string> hint;
+
+    height: 92px;
+    border-radius: 18px;
+    background: #282520;
+    border-width: 1px;
+    border-color: #413c35;
+
+    Text { x: 18px; y: 14px; text: root.label; color: #b8afa4; font-size: 12px; }
+    Text { x: 18px; y: 36px; text: root.value; color: #f5eee6; font-size: 24px; font-weight: 800; }
+    Text { x: 18px; y: 68px; text: root.hint; color: #d2ad78; font-size: 11px; }
+}
+
+component ContinueRow inherits Rectangle {
+    in property <UiMediaCard> card;
+    callback clicked(int);
+
+    height: 104px;
+    border-radius: 18px;
+    background: touch.has-hover ? #302d29 : #25231f;
+    border-width: 1px;
+    border-color: #403b34;
+
+    touch := TouchArea { clicked => { root.clicked(root.card.media_id); } }
+
+    Rectangle {
+        x: 14px; y: 12px; width: 58px; height: 80px; border-radius: 10px; background: #3d4644;
+        Image { width: parent.width; height: parent.height; source: root.card.poster_image; image-fit: cover; }
+    }
+    Text { x: 88px; y: 18px; width: parent.width - 230px; text: root.card.title; color: #f4eee8; font-size: 16px; font-weight: 750; overflow: elide; }
+    Text { x: 88px; y: 45px; width: parent.width - 230px; text: root.card.episode_text == "" ? root.card.subtitle : root.card.episode_text; color: #b8afa4; font-size: 12px; overflow: elide; }
+    Rectangle {
+        x: 88px; y: 76px; width: parent.width - 250px; height: 6px; border-radius: 3px; background: #4c4740;
+        Rectangle { height: 6px; border-radius: 3px; width: parent.width * root.card.progress_percent / 100; background: #86a789; }
+    }
+    TonalButton { x: parent.width - 144px; y: 32px; width: 124px; text: "Continue"; primary: true; clicked => { root.clicked(root.card.media_id); } }
+}
+
+component CandidateRow inherits Rectangle {
+    in property <UiCandidate> candidate;
+    callback clicked(int);
+
+    height: 96px;
+    border-radius: 16px;
+    background: candidate.selected ? #3b3428 : touch.has-hover ? #302d29 : #25231f;
+    border-width: candidate.selected ? 2px : 1px;
+    border-color: candidate.selected ? #d8bb8c : #403b34;
+
+    touch := TouchArea { clicked => { root.clicked(root.candidate.candidate_id); } }
+
+    Text { x: 14px; y: 12px; width: parent.width - 28px; text: root.candidate.title; color: #f4eee8; font-size: 14px; font-weight: 750; overflow: elide; }
+    Text { x: 14px; y: 38px; width: parent.width - 28px; text: root.candidate.subtitle + "    score " + root.candidate.score_text; color: #c6bcb0; font-size: 12px; overflow: elide; }
+    Text { x: 14px; y: 64px; width: parent.width - 28px; text: root.candidate.summary; color: #9f968e; font-size: 11px; overflow: elide; }
+}
+
+component SettingsRow inherits Rectangle {
+    in property <string> title;
+    in property <string> subtitle;
+    in property <bool> enabled;
+
+    height: 72px;
+    border-radius: 16px;
+    background: #282520;
+    border-width: 1px;
+    border-color: #403b34;
+
+    Text { x: 18px; y: 14px; width: parent.width - 112px; text: root.title; color: #f0e9df; font-size: 14px; font-weight: 700; overflow: elide; }
+    Text { x: 18px; y: 40px; width: parent.width - 112px; text: root.subtitle; color: #b9afa5; font-size: 12px; overflow: elide; }
+    Rectangle {
+        x: parent.width - 72px; y: 22px; width: 46px; height: 28px; border-radius: 14px;
+        background: root.enabled ? #86a789 : #57504a;
+        Rectangle { x: root.enabled ? 22px : 4px; y: 4px; width: 20px; height: 20px; border-radius: 10px; background: #f7f1e8; }
     }
 }
 
 export component MainWindow inherits Window {
-    width: 1180px;
-    height: 760px;
+    width: 1320px;
+    height: 860px;
     title: "Slint Bangumi";
+    background: #171512;
 
     in-out property <int> active_page: 0;
+    in-out property <bool> detail_open: false;
     in-out property <string> media_path_input;
     in-out property <string> library_search;
     in property <[UiMediaCard]> media_cards;
+    in property <[UiMediaRow]> media_rows;
+    in property <[UiMediaCard]> recent_cards;
     in property <[UiMediaCard]> match_queue;
+    in property <[UiCandidate]> candidates;
     in property <UiSubjectDetail> subject_detail;
+    in property <UiCandidate> candidate_preview;
     in property <[string]> detail_files;
+    in property <[string]> detail_episodes;
     in property <[UiLogLine]> log_lines;
     in-out property <string> scan_progress;
     in-out property <string> metadata_status;
@@ -1652,6 +2726,7 @@ export component MainWindow inherits Window {
     callback add_media_path(string);
     callback scan_library();
     callback select_media_id(int);
+    callback select_candidate_id(int);
     callback play_selected_media();
     callback save_progress();
     callback clear_progress();
@@ -1659,235 +2734,466 @@ export component MainWindow inherits Window {
     callback match_selected_metadata();
     callback match_all_metadata();
     callback refresh_subject_images();
-    callback confirm_selected_match();
+    callback confirm_selected_candidate();
+    callback ignore_selected_metadata();
+    callback test_bangumi_connection();
 
     HorizontalBox {
         padding: 0px;
         spacing: 0px;
 
         Rectangle {
-            width: 170px;
-            background: #20242b;
+            width: 96px;
+            background: #201d19dd;
+            border-width: 0px;
 
             VerticalBox {
-                padding: 12px;
-                spacing: 8px;
+                padding-left: 14px;
+                padding-right: 14px;
+                padding-top: 22px;
+                spacing: 14px;
 
-                Text {
-                    text: "Slint Bangumi";
-                    color: #f5f7fa;
-                    font-size: 18px;
-                    font-weight: 700;
+                Rectangle {
+                    height: 52px;
+                    border-radius: 18px;
+                    background: #d8bb8c;
+                    Text { text: "SB"; color: #21160b; font-size: 18px; font-weight: 900; horizontal-alignment: center; vertical-alignment: center; }
                 }
-
-                Button { text: root.active_page == 0 ? "Home *" : "Home"; clicked => { root.active_page = 0; } }
-                Button { text: root.active_page == 1 ? "Library *" : "Library"; clicked => { root.active_page = 1; } }
-                Button { text: root.active_page == 2 ? "Subject *" : "Subject"; clicked => { root.active_page = 2; } }
-                Button { text: root.active_page == 3 ? "Metadata *" : "Metadata"; clicked => { root.active_page = 3; } }
-                Button { text: root.active_page == 4 ? "Settings *" : "Settings"; clicked => { root.active_page = 4; } }
-                Button { text: root.active_page == 5 ? "Activity *" : "Activity"; clicked => { root.active_page = 5; } }
+                NavItem { label: "Home"; mark: "H"; active: root.active_page == 0 && !root.detail_open; clicked => { root.active_page = 0; root.detail_open = false; } }
+                NavItem { label: "Library"; mark: "L"; active: root.active_page == 1 && !root.detail_open; clicked => { root.active_page = 1; root.detail_open = false; } }
+                NavItem { label: "Settings"; mark: "S"; active: root.active_page == 3 && !root.detail_open; clicked => { root.active_page = 3; root.detail_open = false; } }
             }
         }
 
         Rectangle {
-            background: #f5f6f8;
+            background: #171512;
 
-            VerticalBox {
-                padding: 14px;
-                spacing: 10px;
+            if root.detail_open : VerticalBox {
+                padding: 24px;
+                spacing: 18px;
 
-                if root.active_page == 0 : VerticalBox {
-                    spacing: 10px;
+                Rectangle {
+                    height: 292px;
+                    border-radius: 28px;
+                    background: root.subject_detail.hero_path == "" ? #2b3230 : #24211d;
+                    Image { width: parent.width; height: parent.height; source: root.subject_detail.hero_image; image-fit: cover; }
+                    Rectangle { width: parent.width; height: parent.height; background: #120f0ab0; }
 
-                    Text { text: "Home"; font-size: 22px; font-weight: 700; color: #1c2430; }
-                    Text { text: root.home_summary; color: #2f3a48; }
-                    Text { text: "Scan: " + root.scan_progress + "    Metadata: " + root.metadata_status; color: #4a5564; }
-
-                    HorizontalBox {
-                        spacing: 8px;
-                        Button { text: "Scan Library"; clicked => { root.scan_library(); } }
-                        Button { text: "Match Metadata"; clicked => { root.match_all_metadata(); } }
-                        Button { text: "Open Library"; clicked => { root.active_page = 1; } }
-                    }
-
-                    Text { text: "Recent activity"; font-weight: 700; color: #1c2430; }
-                    LogList { lines: root.log_lines; }
+                    TonalButton { x: 24px; y: 22px; width: 142px; text: "Back to Library"; clicked => { root.detail_open = false; root.active_page = 1; } }
+                    TonalButton { x: parent.width - 116px; y: 22px; width: 92px; text: "More"; clicked => { } }
+                    Chip { x: 24px; y: 176px; text: root.subject_detail.match_status; selected: true; tone: root.subject_detail.subject_id > 0 ? "green" : "blue"; }
+                    Text { x: 24px; y: 216px; width: parent.width - 48px; text: root.subject_detail.title; color: #fff7ed; font-size: 34px; font-weight: 850; overflow: elide; }
+                    Text { x: 26px; y: 258px; width: parent.width - 52px; text: root.subject_detail.title_cn; color: #d8cfc4; font-size: 15px; overflow: elide; }
                 }
 
-                if root.active_page == 1 : VerticalBox {
-                    spacing: 8px;
-
-                    Text { text: "My Library / 媒体库"; font-size: 22px; font-weight: 700; color: #1c2430; }
-                    Text { text: root.home_summary + "    Scan: " + root.scan_progress; color: #4a5564; }
-
-                    HorizontalBox {
-                        spacing: 8px;
-                        LineEdit { text <=> root.library_search; placeholder-text: "Search title or filename"; }
-                        Button { text: "Title"; }
-                        Button { text: "Date"; }
-                        Button { text: "Status"; }
-                        Button { text: "All"; }
-                        Button { text: "Matched"; }
-                        Button { text: "Unmatched"; }
-                        Button { text: "Grid/List"; }
-                    }
-
-                    ListView {
-                        height: 575px;
-                        for card in root.media_cards : Button {
-                            text: (card.has_cached_poster ? "[poster cached] " : "[poster placeholder] ")
-                                  + card.title + "\n"
-                                  + card.subtitle + "    " + card.status_text
-                                  + "    ep: " + (card.episode_text == "" ? "-" : card.episode_text)
-                                  + "    progress: " + card.progress_percent + "%";
-                            clicked => {
-                                root.select_media_id(card.media_id);
-                                root.active_page = 2;
-                            }
-                        }
-                    }
-                }
-
-                if root.active_page == 2 : VerticalBox {
-                    spacing: 8px;
+                HorizontalBox {
+                    spacing: 22px;
 
                     Rectangle {
-                        height: 92px;
-                        background: root.subject_detail.hero_path == "" ? #d7dde6 : #c6d8ed;
-                        Text {
-                            x: 14px;
-                            y: 14px;
-                            text: root.subject_detail.hero_path == "" ? "hero placeholder" : "hero cached: " + root.subject_detail.hero_path;
-                            color: #1c2430;
-                        }
+                        width: 202px;
+                        height: 304px;
+                        border-radius: 22px;
+                        background: #343b38;
+                        border-width: 1px;
+                        border-color: #554d43;
+                        Image { width: parent.width; height: parent.height; source: root.subject_detail.poster_image; image-fit: cover; }
+                        if root.subject_detail.poster_path == "" : Text { text: "Poster"; color: #d8d0c7; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; }
                     }
 
-                    HorizontalBox {
+                    VerticalBox {
                         spacing: 14px;
 
-                        Rectangle {
-                            width: 150px;
-                            height: 220px;
-                            background: root.subject_detail.poster_path == "" ? #d8dce3 : #bfd1e5;
-                            Text {
-                                x: 10px;
-                                y: 10px;
-                                width: 130px;
-                                text: root.subject_detail.poster_path == "" ? "poster placeholder" : "poster cached";
-                                color: #1c2430;
+                        HorizontalBox {
+                            spacing: 10px;
+                            Chip { text: root.subject_detail.air_date; selected: false; }
+                            Chip { text: "Rating " + root.subject_detail.rating_text; selected: false; tone: "green"; }
+                            Chip { text: "Rank " + root.subject_detail.rank_text; selected: false; tone: "blue"; }
+                        }
+
+                        TextEdit {
+                            height: 136px;
+                            text: root.subject_detail.summary;
+                            read-only: true;
+                        }
+
+                        HorizontalBox {
+                            spacing: 10px;
+                            TonalButton { text: "Play"; primary: true; clicked => { root.play_selected_media(); } }
+                            TonalButton { text: "Continue"; primary: true; clicked => { root.play_selected_media(); } }
+                            TonalButton { text: "Load Danmaku"; clicked => { root.load_danmaku(); } }
+                            TonalButton { text: "Rematch"; clicked => { root.match_selected_metadata(); root.active_page = 2; } }
+                            TonalButton { text: "Confirm"; clicked => { root.confirm_selected_candidate(); } }
+                            TonalButton { text: "Ignore"; danger: true; clicked => { root.ignore_selected_metadata(); } }
+                        }
+
+                        HorizontalBox {
+                            spacing: 18px;
+                            VerticalBox {
+                                Text { text: "Local Files"; color: #f3ece3; font-size: 18px; font-weight: 800; }
+                                ListView {
+                                    height: 170px;
+                                    for file in root.detail_files : Rectangle {
+                                        height: 42px;
+                                        border-radius: 12px;
+                                        background: #25231f;
+                                        Text { x: 14px; width: parent.width - 100px; text: file; color: #d7cec2; font-size: 12px; overflow: elide; vertical-alignment: center; }
+                                        TonalButton { x: parent.width - 82px; y: 6px; width: 70px; height: 30px; text: "Play"; primary: true; clicked => { root.play_selected_media(); } }
+                                    }
+                                }
                             }
-                        }
-
-                        VerticalBox {
-                            spacing: 6px;
-                            Text { text: root.subject_detail.title; font-size: 22px; font-weight: 700; color: #1c2430; }
-                            Text { text: root.subject_detail.title_cn; color: #4a5564; }
-                            Text { text: "Air date: " + root.subject_detail.air_date + "    Rating: " + root.subject_detail.rating_text + "    Rank: " + root.subject_detail.rank_text; color: #4a5564; }
-                            Text { text: "Match: " + root.subject_detail.match_status + "    Cache: " + root.subject_detail.cache_status; color: #4a5564; }
-                            TextEdit { height: 145px; text: root.subject_detail.summary; read-only: true; }
-                        }
-                    }
-
-                    HorizontalBox {
-                        spacing: 8px;
-                        Button { text: "Play"; clicked => { root.play_selected_media(); } }
-                        Button { text: "Load Danmaku"; clicked => { root.load_danmaku(); } }
-                        Button { text: "Rematch"; clicked => { root.match_selected_metadata(); } }
-                        Button { text: "Confirm Match"; clicked => { root.confirm_selected_match(); } }
-                        Button { text: "Cache Images"; clicked => { root.refresh_subject_images(); } }
-                        Button { text: "Save Test Progress"; clicked => { root.save_progress(); } }
-                        Button { text: "Clear Progress"; clicked => { root.clear_progress(); } }
-                    }
-
-                    HorizontalBox {
-                        spacing: 12px;
-                        VerticalBox {
-                            Text { text: "Local files"; font-weight: 700; color: #1c2430; }
-                            ListView {
-                                height: 190px;
-                                for file in root.detail_files : Text { text: file; color: #2f3a48; }
-                            }
-                        }
-                        VerticalBox {
-                            Text { text: "Episodes / Candidates"; font-weight: 700; color: #1c2430; }
-                            Text { text: root.subject_detail.subject_id == 0 ? "未匹配：使用 Rematch 搜索 Bangumi，并将第一个候选保存为待确认。" : "分集列表和候选切换接口已预留。"; color: #4a5564; }
-                        }
-                    }
-                }
-
-                if root.active_page == 3 : VerticalBox {
-                    spacing: 8px;
-                    Text { text: "Metadata / Match Queue"; font-size: 22px; font-weight: 700; color: #1c2430; }
-                    Text { text: root.metadata_status; color: #4a5564; }
-                    HorizontalBox {
-                        spacing: 8px;
-                        Button { text: "Match All"; clicked => { root.match_all_metadata(); } }
-                        Button { text: "Retry Failed"; clicked => { root.match_all_metadata(); } }
-                        Button { text: "Clear Completed Jobs"; }
-                    }
-                    Text { text: "Unmatched / tentative queue"; font-weight: 700; color: #1c2430; }
-                    ListView {
-                        height: 560px;
-                        for card in root.match_queue : Button {
-                            text: card.title + "\n" + card.subtitle + "    " + card.status_text;
-                            clicked => {
-                                root.select_media_id(card.media_id);
-                                root.active_page = 2;
+                            VerticalBox {
+                                Text { text: "Episodes"; color: #f3ece3; font-size: 18px; font-weight: 800; }
+                                ListView {
+                                    height: 170px;
+                                    for episode in root.detail_episodes : Rectangle {
+                                        height: 38px;
+                                        border-radius: 12px;
+                                        background: #25231f;
+                                        Text { x: 14px; width: parent.width - 28px; text: episode; color: #d7cec2; font-size: 12px; overflow: elide; vertical-alignment: center; }
+                                    }
+                                }
                             }
                         }
                     }
                 }
 
-                if root.active_page == 4 : VerticalBox {
-                    spacing: 8px;
-                    Text { text: "Settings"; font-size: 22px; font-weight: 700; color: #1c2430; }
-                    HorizontalBox {
-                        spacing: 8px;
-                        LineEdit { text <=> root.media_path_input; placeholder-text: "Add local media folder"; }
-                        Button { text: "Add Path"; clicked => { root.add_media_path(root.media_path_input); } }
+                if root.subject_detail.subject_id == 0 : HorizontalBox {
+                    spacing: 16px;
+                    VerticalBox {
+                        Text { text: "Search Bangumi"; color: #f3ece3; font-size: 18px; font-weight: 800; }
+                        LineEdit { height: 40px; text <=> root.library_search; placeholder-text: "Search Bangumi candidates"; }
                     }
-                    TextEdit { height: 340px; text: root.settings_summary; read-only: true; }
-                    HorizontalBox {
-                        spacing: 8px;
-                        Button { text: "Scan Library"; clicked => { root.scan_library(); } }
-                        Button { text: "Clear Image Cache"; }
+                    VerticalBox {
+                        Text { text: "Candidates"; color: #f3ece3; font-size: 18px; font-weight: 800; }
+                        ListView {
+                            height: 180px;
+                            for candidate in root.candidates : CandidateRow { candidate: candidate; clicked(id) => { root.select_candidate_id(id); } }
+                        }
                     }
-                    Text { text: "Scan settings and cache size calculation are placeholders in this skeleton."; color: #4a5564; }
-                }
-
-                if root.active_page == 5 : VerticalBox {
-                    spacing: 8px;
-                    Text { text: "Activity"; font-size: 22px; font-weight: 700; color: #1c2430; }
-                    LogList { lines: root.log_lines; }
                 }
             }
+
+            if !root.detail_open && root.active_page == 0 : VerticalBox {
+                padding: 24px;
+                spacing: 22px;
+
+                Rectangle {
+                    height: 330px;
+                    border-radius: 30px;
+                    background: #2d332f;
+                    Image {
+                        width: parent.width;
+                        height: parent.height;
+                        source: root.recent_cards.length > 0 ? root.recent_cards[0].poster_image : @image-url("");
+                        image-fit: cover;
+                    }
+                    Rectangle { width: parent.width; height: parent.height; background: #17120db8; }
+
+                    HorizontalBox {
+                        x: 28px; y: 28px; spacing: 10px;
+                        Chip { text: "New Episode"; selected: true; tone: "green"; }
+                        Chip { text: "Continue"; selected: true; tone: "blue"; }
+                        Chip { text: "Metadata Ready"; selected: true; }
+                    }
+                    Text { x: 30px; y: 116px; width: parent.width - 420px; text: root.recent_cards.length > 0 ? root.recent_cards[0].title : "Slint Bangumi"; color: #fff8ef; font-size: 42px; font-weight: 850; overflow: elide; }
+                    Text { x: 32px; y: 176px; width: parent.width - 480px; height: 70px; text: "A local anime library focused on fast scanning, reliable metadata matching, cached artwork, and direct playback without a web service layer."; color: #dfd5c9; font-size: 15px; wrap: word-wrap; }
+                    HorizontalBox {
+                        x: 32px; y: 258px; spacing: 12px;
+                        TonalButton { text: "Continue Watching"; primary: true; clicked => { if root.recent_cards.length > 0 { root.select_media_id(root.recent_cards[0].media_id); root.detail_open = true; } } }
+                        TonalButton { text: "Add to Queue"; clicked => { root.active_page = 2; } }
+                        TonalButton { text: "More"; clicked => { root.active_page = 1; } }
+                    }
+                }
+
+                HorizontalBox {
+                    spacing: 18px;
+                    StatCard { label: "Indexed Media"; value: root.home_summary; hint: "local SQLite"; }
+                    StatCard { label: "Scan"; value: root.scan_progress; hint: "background task"; }
+                    StatCard { label: "Metadata"; value: root.metadata_status; hint: "Bangumi + dandanplay"; }
+                }
+
+                HorizontalBox {
+                    spacing: 26px;
+                    VerticalBox {
+                        Text { text: "Recently Added"; color: #f4eee8; font-size: 20px; font-weight: 850; }
+                        HorizontalBox {
+                            spacing: 14px;
+                            for card in root.recent_cards : PosterCard {
+                                card: card;
+                                clicked(id) => { root.select_media_id(id); root.detail_open = true; }
+                            }
+                        }
+                    }
+                }
+
+                VerticalBox {
+                    Text { text: "Continue Watching"; color: #f4eee8; font-size: 20px; font-weight: 850; }
+                    ListView {
+                        height: 136px;
+                        for card in root.recent_cards : ContinueRow {
+                            card: card;
+                            clicked(id) => { root.select_media_id(id); root.detail_open = true; }
+                        }
+                    }
+                }
+            }
+
+            if !root.detail_open && root.active_page == 1 : VerticalBox {
+                padding: 24px;
+                spacing: 18px;
+
+                HorizontalBox {
+                    spacing: 14px;
+                    VerticalBox {
+                        Text { text: "My Library / 媒体库"; color: #f4eee8; font-size: 30px; font-weight: 850; }
+                        Text { text: root.home_summary; color: #b8afa4; font-size: 13px; }
+                    }
+                    TonalButton { text: "Add Folder"; clicked => { root.active_page = 3; } }
+                    TonalButton { text: "Scan"; primary: true; clicked => { root.scan_library(); } }
+                }
+
+                HorizontalBox {
+                    spacing: 10px;
+                    LineEdit { height: 40px; text <=> root.library_search; placeholder-text: "Search title, filename, tag"; }
+                    Chip { text: "All"; selected: true; }
+                    Chip { text: "Watching"; selected: false; }
+                    Chip { text: "Completed"; selected: false; }
+                    Chip { text: "Unmatched"; selected: false; tone: "blue"; }
+                    Chip { text: "Tentative"; selected: false; }
+                    TonalButton { width: 118px; text: "Title"; }
+                    TonalButton { width: 126px; text: "Date Added"; }
+                    TonalButton { width: 126px; text: "Grid/List"; }
+                }
+
+                if root.media_rows.length == 0 : Rectangle {
+                    height: 520px;
+                    border-radius: 24px;
+                    background: #24221f;
+                    Text { y: 190px; width: parent.width; text: "No media indexed"; color: #f4eee8; font-size: 28px; font-weight: 850; horizontal-alignment: center; }
+                    Text { y: 232px; width: parent.width; text: "Add a folder and run Scan to build the local library."; color: #b8afa4; horizontal-alignment: center; }
+                    TonalButton { x: parent.width / 2 - 77px; y: 278px; text: "Add Folder"; primary: true; clicked => { root.active_page = 3; } }
+                }
+
+                if root.media_rows.length > 0 : ListView {
+                    height: 640px;
+                    for row in root.media_rows : HorizontalBox {
+                        height: 350px;
+                        spacing: 16px;
+                        if row.show0 : PosterCard { card: row.card0; clicked(id) => { root.select_media_id(id); root.detail_open = true; } }
+                        if row.show1 : PosterCard { card: row.card1; clicked(id) => { root.select_media_id(id); root.detail_open = true; } }
+                        if row.show2 : PosterCard { card: row.card2; clicked(id) => { root.select_media_id(id); root.detail_open = true; } }
+                        if row.show3 : PosterCard { card: row.card3; clicked(id) => { root.select_media_id(id); root.detail_open = true; } }
+                        if row.show4 : PosterCard { card: row.card4; clicked(id) => { root.select_media_id(id); root.detail_open = true; } }
+                    }
+                }
+            }
+
+            if !root.detail_open && root.active_page == 2 : HorizontalBox {
+                padding: 24px;
+                spacing: 18px;
+
+                VerticalBox {
+                    Text { text: "Match Queue"; color: #f4eee8; font-size: 28px; font-weight: 850; }
+                    HorizontalBox { spacing: 10px; TonalButton { text: "Match Selected"; primary: true; clicked => { root.match_selected_metadata(); } } TonalButton { text: "Match All"; clicked => { root.match_all_metadata(); } } TonalButton { text: "Ignore"; danger: true; clicked => { root.ignore_selected_metadata(); } } }
+                    ListView {
+                        width: 360px;
+                        height: 720px;
+                        for card in root.match_queue : ContinueRow {
+                            card: card;
+                            clicked(id) => { root.select_media_id(id); }
+                        }
+                    }
+                }
+
+                VerticalBox {
+                    Text { text: "Bangumi Candidates"; color: #f4eee8; font-size: 22px; font-weight: 850; }
+                    ListView {
+                        width: 430px;
+                        height: 720px;
+                        for candidate in root.candidates : CandidateRow {
+                            candidate: candidate;
+                            clicked(id) => { root.select_candidate_id(id); }
+                        }
+                    }
+                }
+
+                VerticalBox {
+                    Text { text: "Preview"; color: #f4eee8; font-size: 22px; font-weight: 850; }
+                    Rectangle {
+                        height: 520px;
+                        border-radius: 22px;
+                        background: #25231f;
+                        Text { x: 22px; y: 22px; width: parent.width - 44px; text: root.candidate_preview.title; color: #f8f1e7; font-size: 22px; font-weight: 850; overflow: elide; }
+                        Text { x: 22px; y: 58px; width: parent.width - 44px; text: root.candidate_preview.subtitle + "    score " + root.candidate_preview.score_text; color: #c7bdb1; font-size: 13px; overflow: elide; }
+                        TextEdit { x: 18px; y: 92px; width: parent.width - 36px; height: 340px; text: root.candidate_preview.summary; read-only: true; }
+                        HorizontalBox { x: 18px; y: 454px; spacing: 10px; TonalButton { text: "Confirm"; primary: true; clicked => { root.confirm_selected_candidate(); } } TonalButton { text: "Cache Images"; clicked => { root.refresh_subject_images(); } } }
+                    }
+                }
+            }
+
+            if !root.detail_open && root.active_page == 3 : HorizontalBox {
+                padding: 24px;
+                spacing: 20px;
+
+                VerticalBox {
+                    width: 220px;
+                    Text { text: "Settings"; color: #f4eee8; font-size: 30px; font-weight: 850; }
+                    Chip { text: "Media Libraries"; selected: true; }
+                    Chip { text: "Match"; selected: false; }
+                    Chip { text: "API"; selected: false; }
+                    Chip { text: "About"; selected: false; }
+                    Rectangle { height: 100px; }
+                    Text { text: "Theme swatches"; color: #b8afa4; font-size: 12px; }
+                    HorizontalBox {
+                        spacing: 8px;
+                        Rectangle { width: 44px; height: 44px; border-radius: 14px; background: #f4eee8; }
+                        Rectangle { width: 44px; height: 44px; border-radius: 14px; background: #83796d; }
+                        Rectangle { width: 44px; height: 44px; border-radius: 14px; background: #171512; border-width: 1px; border-color: #5a534a; }
+                    }
+                }
+
+                VerticalBox {
+                    spacing: 14px;
+                    Text { text: "Media Libraries"; color: #f4eee8; font-size: 24px; font-weight: 850; }
+                    HorizontalBox {
+                        spacing: 10px;
+                        LineEdit { height: 42px; text <=> root.media_path_input; placeholder-text: "Add local media folder"; }
+                        TonalButton { text: "Add Folder"; primary: true; clicked => { root.add_media_path(root.media_path_input); } }
+                        TonalButton { text: "Scan Now"; clicked => { root.scan_library(); } }
+                    }
+                    SettingsRow { title: "Auto scan on launch"; subtitle: "Index first, then match metadata in the background."; enabled: true; }
+                    SettingsRow { title: "Bangumi metadata"; subtitle: "Token is stored locally and never displayed in logs."; enabled: true; }
+                    SettingsRow { title: "Cache poster and hero images"; subtitle: "One subject stores one poster and one hero image."; enabled: true; }
+                    SettingsRow { title: "Dandanplay file recognition"; subtitle: "Uses hash and filename when credentials are configured."; enabled: true; }
+                    HorizontalBox { spacing: 10px; TonalButton { text: "Test Bangumi"; clicked => { root.test_bangumi_connection(); } } TonalButton { text: "Match All"; clicked => { root.match_all_metadata(); } } }
+                    TextEdit { height: 250px; text: root.settings_summary; read-only: true; }
+                }
+            }
+
         }
     }
 }
 </file>
 
-<file path=".gitignore">
-/target
-/config.toml
-/data/
-*.sqlite3
-*.sqlite3-shm
-*.sqlite3-wal
+<file path="Cargo.toml">
+[package]
+name = "slint-bangumi"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+base64 = "0.22"
+md5 = "0.7"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+slint = "1"
+thiserror = "2"
+toml = "0.8"
+walkdir = "2"
+
+[build-dependencies]
+slint-build = "1"
+</file>
+
+<file path="README.md">
+# slint-bangumi
+
+这是一个基于 Rust + Slint 的轻量本地看番管理工具骨架。
+
+当前阶段实现媒体库应用骨架和核心数据流：
+
+- 本地媒体库路径配置和递归扫描
+- SQLite 媒体条目索引
+- 重复扫描时识别新增、修改、恢复和删除
+- 观看进度读取、写入、清空测试接口
+- dandanplay 文件识别与弹幕数量加载
+- Bangumi 元数据搜索、候选保存、确认绑定
+- 番剧详情、海报/头图缓存和本地图片显示
+- 唤起系统默认播放器播放本地媒体
+- Home、Library、Settings 桌面应用主框架和内部匹配视图
+- Slint callback 直连 Rust service 层
+- 后台扫描和元数据任务通过事件通知 UI
+
+## 运行
+
+```bash
+cargo run --release
+```
+
+首次启动会自动生成 `config.toml`，默认数据库路径是 `data/slint-bangumi.sqlite3`。
+
+Bangumi 使用官方公共 API，默认可以匿名访问，不需要 token。`access_token` 是可选项；如果填写，程序会发送 `Authorization: Bearer <token>`。设置页只显示 `anonymous` 或 `token configured`，不会显示 token 明文。
+
+`dandanplay` 相关字段只保留空占位，不包含真实密钥。
+
+## Bangumi 配置
+
+```toml
+[bangumi]
+enabled = true
+base_url = "https://api.bgm.tv"
+access_token = ""
+user_agent = "slint-bangumi/0.1.0"
+request_timeout_secs = 20
+auto_match = true
+cache_images = true
+```
+
+官方 API 文档见 <https://bangumi.github.io/api/>。
+
+## 后端运行约定
+
+启动顺序：
+
+1. 读取或生成 `config.toml`，初始化 SQLite schema 和轻量迁移。
+2. 创建 `MediaService`、`DanmakuService`、`MetadataService`、`WatchHistoryService`。
+3. UI 首屏只读取本地缓存数据：媒体卡片、统计、候选和图片路径，不等待网络。
+4. 扫描、dandanplay 识别、Bangumi 搜索、条目详情、章节列表和图片缓存全部在后台线程执行。
+5. 后台任务通过 channel 发出 `AppEvent`，UI 只在 `slint::invoke_from_event_loop` 内刷新模型。
+
+扫描和匹配顺序：
+
+- Scan：递归扫描配置目录，识别视频文件，必要时只哈希文件前 16 MiB，写入新增、修改、恢复、删除状态。
+- Match：未匹配且未忽略的媒体进入匹配队列。优先用 dandanplay 文件识别结果生成 Bangumi 搜索关键词，保存候选但不强行覆盖人工选择。
+- Confirm：确认候选后拉取 Bangumi 条目详情和 `/v0/episodes` 章节列表，绑定本地文件到推断集数，并缓存 poster / hero。
+- Ignore：用户可以把媒体标记为忽略，后续 Match All 不再反复处理；手动 Rematch 会清除忽略状态。
+
+性能约束：
+
+- UI 线程不做文件遍历、哈希、网络请求或图片下载。
+- 网络请求使用超时配置；失败只记录状态，不阻塞页面渲染。
+- 同一 subject 的 poster / hero 只缓存一次，已存在文件不会重复下载。
+- Library 和 Detail 始终先显示本地缓存、候选或占位内容，再由后台事件逐步更新。
+
+## 模块结构
+
+- `src/domain.rs`: 业务数据结构
+- `src/config.rs`: `config.toml` 读取、生成和更新
+- `src/repository.rs`: SQLite 初始化和数据访问
+- `src/metadata/`: Bangumi Provider、图片缓存、匹配关键字处理
+- `src/service.rs`: 媒体库、观看历史、元数据、dandanplay 弹幕服务和本地播放入口
+- `src/task.rs`: 后台扫描、元数据匹配、图片缓存任务和事件
+- `src/ui/bridge.rs`: Slint callback 与 service 层桥接
+- `ui/main.slint`: Fluent / Material 3 混合风格媒体库界面
 </file>
 
 <file path="src/ui/bridge.rs">
 use std::collections::VecDeque;
+use std::path::Path;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-use slint::{ModelRc, SharedString, VecModel, Weak};
+use slint::{Image, ModelRc, SharedString, VecModel, Weak};
 
 use crate::app::AppContext;
-use crate::domain::{MediaItem, UiMediaCardData, UiSubjectDetailData};
+use crate::domain::{MediaItem, UiCandidateData, UiMediaCardData, UiSubjectDetailData};
 use crate::error::{AppError, AppResult};
 use crate::task::AppEvent;
-use crate::{MainWindow, UiLogLine, UiMediaCard, UiSubjectDetail};
+use crate::{MainWindow, UiCandidate, UiLogLine, UiMediaCard, UiMediaRow, UiSubjectDetail};
 
 const MAX_LOG_LINES: usize = 200;
 
@@ -1896,6 +3202,7 @@ struct UiState {
     media: Vec<MediaItem>,
     cards: Vec<UiMediaCardData>,
     selected_media_id: Option<i64>,
+    selected_candidate_id: Option<i64>,
     logs: VecDeque<LogLineData>,
 }
 
@@ -1918,6 +3225,7 @@ pub fn bind(window: Weak<MainWindow>, context: AppContext) -> AppResult<BridgeSt
         media,
         cards,
         selected_media_id: None,
+        selected_candidate_id: None,
         logs: VecDeque::new(),
     }));
 
@@ -2029,6 +3337,7 @@ fn bind_select_media(window: Weak<MainWindow>, context: AppContext, state: Arc<M
             {
                 let mut state = state.lock().expect("ui state mutex poisoned");
                 state.selected_media_id = Some(media_id);
+                state.selected_candidate_id = None;
             }
 
             if let Some(window) = weak.upgrade() {
@@ -2041,6 +3350,7 @@ fn bind_select_media(window: Weak<MainWindow>, context: AppContext, state: Arc<M
                         &format!("load detail failed: {error}"),
                     ),
                 }
+                refresh_candidates(&window, &context, &state, media_id);
             }
 
             match context.watch_history.load(media_id) {
@@ -2201,6 +3511,57 @@ fn bind_metadata_actions(
         });
 
     let weak = window.clone();
+    let context_for_candidate = context.clone();
+    let state_for_candidate = state.clone();
+    window
+        .upgrade()
+        .expect("window dropped before callback binding")
+        .on_select_candidate_id(move |candidate_id| {
+            let Some(media_id) = selected_media_id(&state_for_candidate) else {
+                append_log(
+                    &weak,
+                    &state_for_candidate,
+                    "warn",
+                    "select media before choosing candidate",
+                );
+                return;
+            };
+            let candidate_id = candidate_id as i64;
+            match context_for_candidate
+                .metadata
+                .select_candidate(media_id, candidate_id)
+            {
+                Ok(()) => {
+                    state_for_candidate
+                        .lock()
+                        .expect("ui state mutex poisoned")
+                        .selected_candidate_id = Some(candidate_id);
+                    if let Some(window) = weak.upgrade() {
+                        refresh_candidates(
+                            &window,
+                            &context_for_candidate,
+                            &state_for_candidate,
+                            media_id,
+                        );
+                        refresh_selected_detail(
+                            &window,
+                            &context_for_candidate,
+                            &BridgeState {
+                                inner: state_for_candidate.clone(),
+                            },
+                        );
+                    }
+                }
+                Err(error) => append_log(
+                    &weak,
+                    &state_for_candidate,
+                    "error",
+                    &format!("select candidate failed: {error}"),
+                ),
+            }
+        });
+
+    let weak = window.clone();
     let context_for_images = context.clone();
     let state_for_images = state.clone();
     window
@@ -2234,12 +3595,12 @@ fn bind_metadata_actions(
         });
 
     let weak = window.clone();
-    let context_for_confirm = context;
-    let state_for_confirm = state;
+    let context_for_confirm = context.clone();
+    let state_for_confirm = state.clone();
     window
         .upgrade()
         .expect("window dropped before callback binding")
-        .on_confirm_selected_match(move || {
+        .on_confirm_selected_candidate(move || {
             let Some(media_id) = selected_media_id(&state_for_confirm) else {
                 append_log(
                     &weak,
@@ -2249,13 +3610,14 @@ fn bind_metadata_actions(
                 );
                 return;
             };
-            match context_for_confirm
-                .metadata
-                .subject_detail_for_media(media_id)
-            {
-                Ok(detail) if detail.subject_id > 0 => match context_for_confirm
+            let candidate_id = state_for_confirm
+                .lock()
+                .expect("ui state mutex poisoned")
+                .selected_candidate_id;
+            match candidate_id {
+                Some(candidate_id) => match context_for_confirm
                     .metadata
-                    .confirm_media_subject(media_id, detail.subject_id)
+                    .confirm_media_candidate(media_id, candidate_id)
                 {
                     Ok(()) => append_log(&weak, &state_for_confirm, "info", "match confirmed"),
                     Err(error) => append_log(
@@ -2265,19 +3627,71 @@ fn bind_metadata_actions(
                         &format!("confirm failed: {error}"),
                     ),
                 },
-                Ok(_) => append_log(
+                None => append_log(
                     &weak,
                     &state_for_confirm,
                     "warn",
-                    "no tentative match to confirm",
-                ),
-                Err(error) => append_log(
-                    &weak,
-                    &state_for_confirm,
-                    "error",
-                    &format!("confirm failed: {error}"),
+                    "select a Bangumi candidate before confirming",
                 ),
             }
+        });
+
+    let weak = window.clone();
+    let context_for_ignore = context.clone();
+    let state_for_ignore = state.clone();
+    window
+        .upgrade()
+        .expect("window dropped before callback binding")
+        .on_ignore_selected_metadata(move || {
+            let Some(media_id) = selected_media_id(&state_for_ignore) else {
+                append_log(
+                    &weak,
+                    &state_for_ignore,
+                    "warn",
+                    "select a media item before ignoring metadata",
+                );
+                return;
+            };
+            match context_for_ignore.metadata.ignore_media_match(media_id) {
+                Ok(()) => {
+                    append_log(
+                        &weak,
+                        &state_for_ignore,
+                        "info",
+                        "metadata matching ignored",
+                    );
+                    if let Some(window) = weak.upgrade() {
+                        refresh_window_models(
+                            &window,
+                            &context_for_ignore,
+                            &BridgeState {
+                                inner: state_for_ignore.clone(),
+                            },
+                        );
+                        refresh_selected_detail(
+                            &window,
+                            &context_for_ignore,
+                            &BridgeState {
+                                inner: state_for_ignore.clone(),
+                            },
+                        );
+                    }
+                }
+                Err(error) => append_log(
+                    &weak,
+                    &state_for_ignore,
+                    "error",
+                    &format!("ignore failed: {error}"),
+                ),
+            }
+        });
+
+    let context_for_test = context;
+    window
+        .upgrade()
+        .expect("window dropped before callback binding")
+        .on_test_bangumi_connection(move || {
+            context_for_test.metadata.test_bangumi_connection();
         });
 }
 
@@ -2326,15 +3740,25 @@ fn apply_event(window: &MainWindow, context: &AppContext, state: &BridgeState, e
             &state.inner,
             "info",
             &format!(
-                "danmaku: {} matched {} comments, title={}, episode={}",
+                "danmaku: {} matched {} comments, exact={}, anime_id={}, episode_id={}, title={}, anime={}, episode={}",
                 result.provider,
                 result.comment_count,
+                result.exact,
+                result
+                    .anime_id
+                    .map(|id| id.to_string())
+                    .unwrap_or_else(|| "-".to_string()),
+                result
+                    .episode_id
+                    .map(|id| id.to_string())
+                    .unwrap_or_else(|| "-".to_string()),
                 result.title,
+                result.anime_title.as_deref().unwrap_or("-"),
                 result.episode.as_deref().unwrap_or("(none)")
             ),
         ),
         AppEvent::MetadataMatchStarted { media_id } => {
-            window.set_metadata_status(format!("matching media #{media_id}").into());
+            window.set_metadata_status("Matching selected media".into());
             push_log(
                 window,
                 &state.inner,
@@ -2353,6 +3777,9 @@ fn apply_event(window: &MainWindow, context: &AppContext, state: &BridgeState, e
             window.set_metadata_status("idle".into());
             refresh_window_models(window, context, state);
             refresh_selected_detail(window, context, state);
+            if Some(*media_id) == selected_media_id(&state.inner) {
+                refresh_candidates(window, context, &state.inner, *media_id);
+            }
             let message = match (subject_id, title) {
                 (Some(id), Some(title)) => {
                     format!("media #{media_id} matched subject #{id}: {title}")
@@ -2393,6 +3820,10 @@ fn apply_event(window: &MainWindow, context: &AppContext, state: &BridgeState, e
                 &format!("metadata failed for #{target_id}: {error}"),
             );
         }
+        AppEvent::MetadataStatus(message) => {
+            window.set_metadata_status(message.as_str().into());
+            push_log(window, &state.inner, "info", message);
+        }
     }
 }
 
@@ -2417,6 +3848,8 @@ fn refresh_window_models(window: &MainWindow, context: &AppContext, state: &Brid
     }
 
     set_media_cards(window, &cards);
+    set_media_rows(window, &cards);
+    set_recent_cards(window, &cards.iter().take(8).cloned().collect::<Vec<_>>());
     let queue = cards
         .iter()
         .filter(|card| card.match_status != "matched")
@@ -2428,8 +3861,12 @@ fn refresh_window_models(window: &MainWindow, context: &AppContext, state: &Brid
 
 fn set_home_and_settings(window: &MainWindow, context: &AppContext) {
     let (indexed, matched, unmatched) = context.media.library_counts().unwrap_or_default();
+    let tentative = context.metadata.tentative_count().unwrap_or_default();
     window.set_home_summary(
-        format!("indexed media: {indexed}    matched subjects: {matched}    unmatched media: {unmatched}").into(),
+        format!(
+            "Indexed media {indexed}    Matched subjects {matched}    Unmatched {unmatched}    Tentative {tentative}"
+        )
+        .into(),
     );
     window.set_settings_summary(context.media.settings_summary(indexed).into());
 }
@@ -2438,6 +3875,66 @@ fn set_media_cards(window: &MainWindow, cards: &[UiMediaCardData]) {
     window.set_media_cards(ModelRc::from(Rc::new(VecModel::from(
         cards.iter().map(to_slint_card).collect::<Vec<_>>(),
     ))));
+}
+
+fn set_media_rows(window: &MainWindow, cards: &[UiMediaCardData]) {
+    window.set_media_rows(ModelRc::from(Rc::new(VecModel::from(build_rows(cards)))));
+}
+
+fn build_rows(cards: &[UiMediaCardData]) -> Vec<UiMediaRow> {
+    let empty = empty_slint_card();
+    cards
+        .chunks(5)
+        .map(|chunk| UiMediaRow {
+            card0: chunk
+                .first()
+                .map(to_slint_card)
+                .unwrap_or_else(|| empty.clone()),
+            card1: chunk
+                .get(1)
+                .map(to_slint_card)
+                .unwrap_or_else(|| empty.clone()),
+            card2: chunk
+                .get(2)
+                .map(to_slint_card)
+                .unwrap_or_else(|| empty.clone()),
+            card3: chunk
+                .get(3)
+                .map(to_slint_card)
+                .unwrap_or_else(|| empty.clone()),
+            card4: chunk
+                .get(4)
+                .map(to_slint_card)
+                .unwrap_or_else(|| empty.clone()),
+            show0: !chunk.is_empty(),
+            show1: chunk.len() > 1,
+            show2: chunk.len() > 2,
+            show3: chunk.len() > 3,
+            show4: chunk.len() > 4,
+        })
+        .collect::<Vec<_>>()
+}
+
+fn set_recent_cards(window: &MainWindow, cards: &[UiMediaCardData]) {
+    window.set_recent_cards(ModelRc::from(Rc::new(VecModel::from(
+        cards.iter().map(to_slint_card).collect::<Vec<_>>(),
+    ))));
+}
+
+fn empty_slint_card() -> UiMediaCard {
+    UiMediaCard {
+        media_id: 0,
+        subject_id: 0,
+        title: SharedString::new(),
+        subtitle: SharedString::new(),
+        status_text: SharedString::new(),
+        match_status: SharedString::new(),
+        progress_percent: 0,
+        episode_text: SharedString::new(),
+        poster_path: SharedString::new(),
+        poster_image: Image::default(),
+        has_cached_poster: false,
+    }
 }
 
 fn set_match_queue(window: &MainWindow, cards: &[UiMediaCardData]) {
@@ -2457,6 +3954,7 @@ fn to_slint_card(card: &UiMediaCardData) -> UiMediaCard {
         progress_percent: card.progress_percent,
         episode_text: card.episode_text.as_str().into(),
         poster_path: card.poster_path.as_str().into(),
+        poster_image: load_image(&card.poster_path),
         has_cached_poster: card.has_cached_poster,
     }
 }
@@ -2468,6 +3966,12 @@ fn set_subject_detail(window: &MainWindow, detail: UiSubjectDetailData) {
         .map(|file| SharedString::from(file.as_str()))
         .collect::<Vec<_>>();
     window.set_detail_files(ModelRc::from(Rc::new(VecModel::from(files))));
+    let episodes = detail
+        .episodes
+        .iter()
+        .map(|episode| SharedString::from(episode.as_str()))
+        .collect::<Vec<_>>();
+    window.set_detail_episodes(ModelRc::from(Rc::new(VecModel::from(episodes))));
     window.set_subject_detail(UiSubjectDetail {
         media_id: detail.media_id as i32,
         subject_id: detail.subject_id as i32,
@@ -2479,6 +3983,8 @@ fn set_subject_detail(window: &MainWindow, detail: UiSubjectDetailData) {
         rank_text: detail.rank_text.as_str().into(),
         poster_path: detail.poster_path.as_str().into(),
         hero_path: detail.hero_path.as_str().into(),
+        poster_image: load_image(&detail.poster_path),
+        hero_image: load_image(&detail.hero_path),
         match_status: detail.match_status.as_str().into(),
         cache_status: detail.cache_status.as_str().into(),
     });
@@ -2499,10 +4005,82 @@ fn set_empty_detail(window: &MainWindow) {
             poster_path: String::new(),
             hero_path: String::new(),
             match_status: "idle".to_string(),
-            cache_status: "poster: not cached, hero: not cached".to_string(),
+            cache_status: "Images not cached".to_string(),
             files: Vec::new(),
+            episodes: Vec::new(),
         },
     );
+}
+
+fn refresh_candidates(
+    window: &MainWindow,
+    context: &AppContext,
+    state: &Arc<Mutex<UiState>>,
+    media_id: i64,
+) {
+    match context.metadata.ui_candidates(media_id) {
+        Ok(candidates) => {
+            let selected = candidates
+                .iter()
+                .find(|candidate| candidate.selected)
+                .or_else(|| candidates.first())
+                .cloned()
+                .unwrap_or_else(empty_candidate);
+            state
+                .lock()
+                .expect("ui state mutex poisoned")
+                .selected_candidate_id = if selected.candidate_id > 0 {
+                Some(selected.candidate_id)
+            } else {
+                None
+            };
+            set_candidates(window, &candidates);
+            set_candidate_preview(window, &selected);
+        }
+        Err(error) => push_log(
+            window,
+            state,
+            "error",
+            &format!("load candidates failed: {error}"),
+        ),
+    }
+}
+
+fn set_candidates(window: &MainWindow, candidates: &[UiCandidateData]) {
+    window.set_candidates(ModelRc::from(Rc::new(VecModel::from(
+        candidates
+            .iter()
+            .map(to_slint_candidate)
+            .collect::<Vec<_>>(),
+    ))));
+}
+
+fn set_candidate_preview(window: &MainWindow, candidate: &UiCandidateData) {
+    window.set_candidate_preview(to_slint_candidate(candidate));
+}
+
+fn to_slint_candidate(candidate: &UiCandidateData) -> UiCandidate {
+    UiCandidate {
+        candidate_id: candidate.candidate_id as i32,
+        media_id: candidate.media_id as i32,
+        title: candidate.title.as_str().into(),
+        subtitle: candidate.subtitle.as_str().into(),
+        summary: candidate.summary.as_str().into(),
+        score_text: candidate.score_text.as_str().into(),
+        selected: candidate.selected,
+    }
+}
+
+fn empty_candidate() -> UiCandidateData {
+    UiCandidateData {
+        candidate_id: 0,
+        media_id: 0,
+        title: "No candidate selected".to_string(),
+        subtitle: "Run Match Selected or Match All".to_string(),
+        summary: "Bangumi search results will appear here as metadata candidates.".to_string(),
+        score_text: "-".to_string(),
+        selected: false,
+    }
 }
 
 fn refresh_selected_detail(window: &MainWindow, context: &AppContext, state: &BridgeState) {
@@ -2591,45 +4169,12 @@ fn log_timestamp() -> String {
         seconds % 60
     )
 }
-</file>
 
-<file path="src/error.rs">
-use std::path::PathBuf;
-
-use thiserror::Error;
-
-pub type AppResult<T> = Result<T, AppError>;
-
-#[derive(Debug, Error)]
-pub enum AppError {
-    #[error("config error: {0}")]
-    Config(String),
-    #[error("database error: {0}")]
-    Database(#[from] rusqlite::Error),
-    #[error("io error at {path}: {source}")]
-    Io {
-        path: PathBuf,
-        source: std::io::Error,
-    },
-    #[error("http error: {0}")]
-    Http(#[from] reqwest::Error),
-    #[error("api error: {0}")]
-    Api(String),
-    #[error("ui error: {0}")]
-    Ui(#[from] slint::PlatformError),
-    #[error("media path is not a directory: {0}")]
-    InvalidMediaDirectory(PathBuf),
-    #[error("selected media item was not found")]
-    MediaNotFound,
-    #[error("failed to open media with default player: {0}")]
-    OpenMedia(String),
-}
-
-pub fn io_error(path: impl Into<PathBuf>, source: std::io::Error) -> AppError {
-    AppError::Io {
-        path: path.into(),
-        source,
+fn load_image(path: &str) -> Image {
+    if path.trim().is_empty() {
+        return Image::default();
     }
+    Image::load_from_path(Path::new(path)).unwrap_or_default()
 }
 </file>
 
@@ -2646,7 +4191,9 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::config::{ConfigStore, DandanplayConfig};
-use crate::domain::{DanmakuMatch, MediaItem, UiMediaCardData, UiSubjectDetailData, WatchProgress};
+use crate::domain::{
+    DanmakuMatch, MediaItem, UiCandidateData, UiMediaCardData, UiSubjectDetailData, WatchProgress,
+};
 use crate::error::{AppError, AppResult};
 use crate::metadata::bangumi::BangumiProvider;
 use crate::metadata::cache::ImageCache;
@@ -2710,12 +4257,28 @@ impl MediaService {
                 .join("\n")
         };
 
+        let bangumi_auth = if config.bangumi.access_token.trim().is_empty() {
+            "anonymous"
+        } else {
+            "token configured"
+        };
+        let bangumi_enabled = if config.bangumi.enabled {
+            "enabled"
+        } else {
+            "disabled"
+        };
+
         format!(
-            "database: {}\ncache: {}\nindexed media: {}\ndandanplay: {}\nbangumi: public API\nmedia libraries:\n{}",
+            "database: {}\ncache: {}\nindexed media: {}\ndandanplay: {}\nbangumi: {}\nbangumi base_url: {}\nbangumi auth: {}\nbangumi auto_match: {}\nbangumi cache_images: {}\nmedia libraries:\n{}",
             config.database.path.display(),
             image_cache_root(&config.database.path).display(),
             indexed_media_count,
             dandanplay_status,
+            bangumi_enabled,
+            config.bangumi.base_url,
+            bangumi_auth,
+            config.bangumi.auto_match,
+            config.bangumi.cache_images,
             media_libraries
         )
     }
@@ -2723,6 +4286,12 @@ impl MediaService {
     pub fn open_media(&self, media: &MediaItem) -> AppResult<()> {
         if media.deleted_at.is_some() || !media.path.is_file() {
             return Err(AppError::MediaNotFound);
+        }
+        if media.match_ignored {
+            self.send_log(format!(
+                "opening media with ignored metadata match: {}",
+                media.file_name
+            ));
         }
 
         open_with_default_player(&media.path)?;
@@ -2750,9 +4319,9 @@ impl MediaService {
 
 #[derive(Clone)]
 pub struct MetadataService {
+    config: Arc<ConfigStore>,
     repository: Repository,
     danmaku: DanmakuService,
-    provider: BangumiProvider,
     image_cache: ImageCache,
     events: mpsc::Sender<AppEvent>,
     running: Arc<Mutex<std::collections::HashSet<String>>>,
@@ -2760,15 +4329,16 @@ pub struct MetadataService {
 
 impl MetadataService {
     pub fn new(
+        config: Arc<ConfigStore>,
         repository: Repository,
         danmaku: DanmakuService,
         database_path: PathBuf,
         events: mpsc::Sender<AppEvent>,
     ) -> AppResult<Self> {
         Ok(Self {
+            config,
             repository,
             danmaku,
-            provider: BangumiProvider::new()?,
             image_cache: ImageCache::new(image_cache_root(&database_path))?,
             events,
             running: Arc::new(Mutex::new(std::collections::HashSet::new())),
@@ -2790,21 +4360,19 @@ impl MetadataService {
 
         match self.repository.get_media(media_id) {
             Ok(Some(media)) => {
+                let _ = self
+                    .repository
+                    .clear_media_match_ignore(media_id, task::unix_timestamp_ms());
+                let Some(provider) = self.provider_or_log() else {
+                    self.finish(&key);
+                    return;
+                };
                 let repository = self.repository.clone();
-                let provider = self.provider.clone();
-                let image_cache = self.image_cache.clone();
                 let events = self.events.clone();
                 let danmaku = self.danmaku.clone();
                 std::thread::spawn(move || {
                     let danmaku_hint = danmaku.match_dandanplay(&media).ok();
-                    task::spawn_match_metadata(
-                        repository,
-                        provider,
-                        image_cache,
-                        media,
-                        danmaku_hint,
-                        events,
-                    );
+                    task::spawn_match_metadata(repository, provider, media, danmaku_hint, events);
                 });
             }
             Ok(None) => {
@@ -2833,12 +4401,12 @@ impl MetadataService {
             return;
         }
 
-        task::spawn_match_all_unmatched(
-            self.repository.clone(),
-            self.provider.clone(),
-            self.image_cache.clone(),
-            self.events.clone(),
-        );
+        let Some(provider) = self.provider_or_log() else {
+            self.finish(&key);
+            return;
+        };
+
+        task::spawn_match_all_unmatched(self.repository.clone(), provider, self.events.clone());
     }
 
     pub fn start_download_subject_images(&self, subject_id: i64) {
@@ -2846,20 +4414,74 @@ impl MetadataService {
         if !self.try_start(&key) {
             return;
         }
+        let Some(provider) = self.provider_or_log() else {
+            self.finish(&key);
+            return;
+        };
         task::spawn_download_subject_images(
             self.repository.clone(),
-            self.provider.clone(),
+            provider,
             self.image_cache.clone(),
             subject_id,
             self.events.clone(),
         );
     }
 
-    pub fn confirm_media_subject(&self, media_id: i64, subject_id: i64) -> AppResult<()> {
-        self.repository
-            .confirm_media_subject(media_id, subject_id, task::unix_timestamp_ms())?;
+    pub fn confirm_media_candidate(&self, media_id: i64, candidate_id: i64) -> AppResult<()> {
+        let provider = self.provider()?;
+        let subject_id = task::confirm_candidate_and_fetch(
+            self.repository.clone(),
+            provider,
+            self.image_cache.clone(),
+            media_id,
+            candidate_id,
+        )?;
         let _ = self.events.send(AppEvent::SubjectUpdated { subject_id });
         Ok(())
+    }
+
+    pub fn ui_candidates(&self, media_id: i64) -> AppResult<Vec<UiCandidateData>> {
+        self.repository.ui_candidates_for_media(media_id)
+    }
+
+    pub fn select_candidate(&self, media_id: i64, candidate_id: i64) -> AppResult<()> {
+        self.repository
+            .select_candidate(media_id, candidate_id, task::unix_timestamp_ms())
+    }
+
+    pub fn ignore_media_match(&self, media_id: i64) -> AppResult<()> {
+        self.repository
+            .ignore_media_match(media_id, task::unix_timestamp_ms())?;
+        let _ = self.events.send(AppEvent::MetadataStatus(format!(
+            "media #{media_id} ignored for metadata matching"
+        )));
+        Ok(())
+    }
+
+    pub fn tentative_count(&self) -> AppResult<usize> {
+        self.repository.tentative_count()
+    }
+
+    pub fn test_bangumi_connection(&self) {
+        match self
+            .provider()
+            .and_then(|provider| provider.test_connection())
+        {
+            Ok(()) => {
+                let _ = self.events.send(AppEvent::Log(
+                    "bangumi connection ok; public API is reachable".to_string(),
+                ));
+                let _ = self.events.send(AppEvent::MetadataStatus(
+                    "Bangumi connection ok".to_string(),
+                ));
+            }
+            Err(error) => {
+                let _ = self.events.send(AppEvent::MetadataFailed {
+                    target_id: 0,
+                    error: error.to_string(),
+                });
+            }
+        }
     }
 
     pub fn finish_for_event(&self, event: &AppEvent) {
@@ -2894,6 +4516,24 @@ impl MetadataService {
             .lock()
             .expect("metadata running mutex poisoned")
             .remove(key);
+    }
+
+    fn provider(&self) -> AppResult<BangumiProvider> {
+        let config = self.config.snapshot().bangumi;
+        BangumiProvider::new(config)
+    }
+
+    fn provider_or_log(&self) -> Option<BangumiProvider> {
+        match self.provider() {
+            Ok(provider) => Some(provider),
+            Err(error) => {
+                let _ = self.events.send(AppEvent::MetadataFailed {
+                    target_id: 0,
+                    error: error.to_string(),
+                });
+                None
+            }
+        }
     }
 }
 
@@ -3027,8 +4667,12 @@ impl DanmakuService {
         Ok(DanmakuMatch {
             provider: "dandanplay".to_string(),
             title: match_title(&match_result).unwrap_or_else(|| media.file_name.clone()),
+            anime_id: Some(match_result.anime_id),
+            episode_id: Some(match_result.episode_id),
+            anime_title: match_result.anime_title.clone(),
             episode: match_result.episode_title,
             comment_count,
+            exact: match_result.is_matched,
         })
     }
 
@@ -3079,12 +4723,15 @@ impl DanmakuService {
             response.error_message,
         )?;
 
+        let exact = response.is_matched.unwrap_or(false);
         let mut matches = response.matches.unwrap_or_default();
         if matches.is_empty() {
             return Err(AppError::Api("dandanplay returned no matches".to_string()));
         }
 
-        Ok(matches.remove(0))
+        let mut best = matches.remove(0);
+        best.is_matched = exact;
+        Ok(best)
     }
 
     fn fetch_comment_count(&self, episode_id: i64, config: &DandanplayConfig) -> AppResult<usize> {
@@ -3156,6 +4803,7 @@ struct MatchResponse {
     success: bool,
     error_code: i32,
     error_message: Option<String>,
+    is_matched: Option<bool>,
     matches: Option<Vec<MatchResult>>,
 }
 
@@ -3163,8 +4811,11 @@ struct MatchResponse {
 #[serde(rename_all = "camelCase")]
 struct MatchResult {
     episode_id: i64,
+    anime_id: i64,
     anime_title: Option<String>,
     episode_title: Option<String>,
+    #[serde(default)]
+    is_matched: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -3252,7 +4903,7 @@ use walkdir::WalkDir;
 
 use crate::domain::{DanmakuMatch, MediaFile, MediaItem, ScanSummary, ScanUpsertStatus};
 use crate::metadata::cache::ImageCache;
-use crate::metadata::provider::{MetadataProvider, SubjectSearchResult};
+use crate::metadata::provider::MetadataProvider;
 use crate::repository::Repository;
 
 #[derive(Debug, Clone)]
@@ -3292,6 +4943,7 @@ pub enum AppEvent {
         target_id: i64,
         error: String,
     },
+    MetadataStatus(String),
 }
 
 pub fn spawn_media_scan(
@@ -3470,10 +5122,44 @@ pub fn unix_timestamp_ms() -> i64 {
         .unwrap_or_default()
 }
 
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::sync::mpsc;
+
+    use crate::repository::Repository;
+
+    use super::*;
+
+    #[test]
+    #[ignore = "requires the local /mnt/media bangumi library"]
+    fn scans_real_bangumi_sample_when_available() {
+        let root = PathBuf::from("/mnt/media/entertainment/bangumi/apocalpse");
+        if !root.is_dir() {
+            return;
+        }
+
+        let db_path = std::env::temp_dir().join(format!(
+            "slint-bangumi-real-scan-{}.sqlite3",
+            std::process::id()
+        ));
+        let _ = fs::remove_file(&db_path);
+        let repository = Repository::new(db_path.clone());
+        repository.init().expect("init database");
+        let (events, _receiver) = mpsc::channel();
+
+        let (summary, media) =
+            scan_media(repository, &[root], &events).expect("scan real media sample");
+        assert!(summary.scanned_files > 0);
+        assert_eq!(summary.scanned_files, media.len());
+
+        let _ = fs::remove_file(db_path);
+    }
+}
+
 pub fn spawn_match_metadata<P>(
     repository: Repository,
     provider: P,
-    image_cache: ImageCache,
     media: MediaItem,
     danmaku_hint: Option<DanmakuMatch>,
     events: mpsc::Sender<AppEvent>,
@@ -3482,11 +5168,11 @@ pub fn spawn_match_metadata<P>(
 {
     thread::spawn(move || {
         let _ = events.send(AppEvent::MetadataMatchStarted { media_id: media.id });
-        match match_one_media(&repository, &provider, &image_cache, &media, danmaku_hint) {
-            Ok((subject_id, title)) => {
+        match match_one_media(&repository, &provider, &media, danmaku_hint) {
+            Ok(title) => {
                 let _ = events.send(AppEvent::MetadataMatchFinished {
                     media_id: media.id,
-                    subject_id,
+                    subject_id: None,
                     title,
                 });
             }
@@ -3503,7 +5189,6 @@ pub fn spawn_match_metadata<P>(
 pub fn spawn_match_all_unmatched<P>(
     repository: Repository,
     provider: P,
-    image_cache: ImageCache,
     events: mpsc::Sender<AppEvent>,
 ) where
     P: MetadataProvider + Clone + Send + 'static,
@@ -3526,11 +5211,11 @@ pub fn spawn_match_all_unmatched<P>(
                 processed: index,
                 total,
             });
-            match match_one_media(&repository, &provider, &image_cache, &item, None) {
-                Ok((subject_id, title)) => {
+            match match_one_media(&repository, &provider, &item, None) {
+                Ok(title) => {
                     let _ = events.send(AppEvent::MetadataMatchFinished {
                         media_id: item.id,
-                        subject_id,
+                        subject_id: None,
                         title,
                     });
                 }
@@ -3600,48 +5285,91 @@ pub fn spawn_download_subject_images<P>(
 fn match_one_media<P>(
     repository: &Repository,
     provider: &P,
-    image_cache: &ImageCache,
     media: &MediaItem,
     danmaku_hint: Option<DanmakuMatch>,
-) -> crate::error::AppResult<(Option<i64>, Option<String>)>
+) -> crate::error::AppResult<Option<String>>
 where
     P: MetadataProvider,
 {
     let keyword = crate::metadata::matcher::keyword_for_media(media, danmaku_hint.as_ref());
     let candidates = provider.search_subjects(&keyword)?;
     let Some(candidate) = candidates.first() else {
-        return Ok((None, None));
+        return Ok(None);
     };
+    let title = display_title(candidate);
 
+    repository.upsert_metadata_candidates(
+        media.id,
+        &candidates.into_iter().take(8).collect::<Vec<_>>(),
+        "bangumi_search",
+        unix_timestamp_ms(),
+    )?;
+    Ok(Some(title))
+}
+
+pub fn confirm_candidate_and_fetch<P>(
+    repository: Repository,
+    provider: P,
+    image_cache: ImageCache,
+    media_id: i64,
+    candidate_id: i64,
+) -> crate::error::AppResult<i64>
+where
+    P: MetadataProvider,
+{
     let now = unix_timestamp_ms();
-    let subject_id = repository.upsert_subject_from_search(candidate, now)?;
-    repository.link_media_subject(media.id, subject_id, "bangumi_search", 0.6, false, now)?;
+    repository.select_candidate(media_id, candidate_id, now)?;
+    let candidate = repository
+        .get_candidate(candidate_id)?
+        .ok_or_else(|| crate::error::AppError::Api("metadata candidate not found".to_string()))?;
+    let mut subject_id = repository.upsert_subject_from_candidate(&candidate, now)?;
+    repository.link_media_subject(
+        media_id,
+        subject_id,
+        &candidate.source,
+        candidate.confidence,
+        true,
+        now,
+    )?;
+
     if let Ok(detail) = provider.get_subject(&candidate.provider_subject_id) {
-        let detail_subject_id = repository.upsert_subject_detail(&detail, unix_timestamp_ms())?;
+        subject_id = repository.upsert_subject_detail(&detail, unix_timestamp_ms())?;
+        if let Ok(episodes) = provider.get_episodes(&candidate.provider_subject_id) {
+            repository.upsert_subject_episodes(subject_id, &episodes)?;
+            repository.link_media_episode_by_number(
+                media_id,
+                subject_id,
+                None,
+                None,
+                candidate.confidence,
+                unix_timestamp_ms(),
+            )?;
+        }
         cache_subject_images(
-            repository,
-            image_cache,
-            detail_subject_id,
+            &repository,
+            &image_cache,
+            subject_id,
             &detail.provider,
             [
                 ("poster", detail.images.common.clone()),
+                ("thumb", detail.images.common.clone()),
                 ("hero", detail.images.large.clone()),
             ],
         )?;
-        return Ok((Some(detail_subject_id), Some(display_title(candidate))));
+    } else {
+        cache_subject_images(
+            &repository,
+            &image_cache,
+            subject_id,
+            &candidate.provider,
+            [
+                ("poster", candidate.image_common.clone()),
+                ("thumb", candidate.image_common.clone()),
+                ("hero", candidate.image_large.clone()),
+            ],
+        )?;
     }
-
-    cache_subject_images(
-        repository,
-        image_cache,
-        subject_id,
-        &candidate.provider,
-        [
-            ("poster", candidate.image_common.clone()),
-            ("hero", candidate.image_large.clone()),
-        ],
-    )?;
-    Ok((Some(subject_id), Some(display_title(candidate))))
+    Ok(subject_id)
 }
 
 fn cache_subject_images<'a>(
@@ -3666,7 +5394,7 @@ fn cache_subject_images<'a>(
     Ok(cached)
 }
 
-fn display_title(candidate: &SubjectSearchResult) -> String {
+fn display_title(candidate: &crate::metadata::provider::SubjectSearchResult) -> String {
     candidate
         .title_cn
         .as_ref()
@@ -3674,65 +5402,6 @@ fn display_title(candidate: &SubjectSearchResult) -> String {
         .unwrap_or(&candidate.title)
         .to_string()
 }
-</file>
-
-<file path="Cargo.toml">
-[package]
-name = "slint-bangumi"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-base64 = "0.22"
-md5 = "0.7"
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
-rusqlite = { version = "0.32", features = ["bundled"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-sha2 = "0.10"
-slint = "1"
-thiserror = "2"
-toml = "0.8"
-walkdir = "2"
-
-[build-dependencies]
-slint-build = "1"
-</file>
-
-<file path="README.md">
-# slint-bangumi
-
-这是一个基于 Rust + Slint 的轻量本地看番工具骨架。
-
-当前阶段只实现后端核心和最小可测试前端：
-
-- 本地媒体库路径配置和递归扫描
-- SQLite 媒体条目索引
-- 重复扫描时识别新增、修改、恢复和删除
-- 观看进度读取、写入、清空测试接口
-- dandanplay 文件识别与弹幕数量加载
-- 唤起系统默认播放器播放本地媒体
-- 首页、媒体库、设置三个 Slint tab 骨架
-- Slint callback 直连 Rust service 层
-- 后台扫描线程通过事件通知 UI
-
-## 运行
-
-```bash
-cargo run
-```
-
-首次启动会自动生成 `config.toml`，默认数据库路径是 `data/slint-bangumi.sqlite3`。`dandanplay` 相关字段只保留空占位，不包含真实密钥。
-
-## 模块结构
-
-- `src/domain.rs`: 业务数据结构
-- `src/config.rs`: `config.toml` 读取、生成和更新
-- `src/repository.rs`: SQLite 初始化和数据访问
-- `src/service.rs`: 媒体库、观看历史、dandanplay 弹幕服务和本地播放入口
-- `src/task.rs`: 后台扫描任务和事件
-- `src/ui/bridge.rs`: Slint callback 与 service 层桥接
-- `ui/main.slint`: 三 tab 前端骨架
 </file>
 
 </files>
