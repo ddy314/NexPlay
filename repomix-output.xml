@@ -1,0 +1,1969 @@
+This file is a merged representation of the entire codebase, combined into a single document by Repomix.
+
+<file_summary>
+This section contains a summary of this file.
+
+<purpose>
+This file contains a packed representation of the entire repository's contents.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+</purpose>
+
+<file_format>
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+5. Multiple file entries, each consisting of:
+  - File path as an attribute
+  - Full contents of the file
+</file_format>
+
+<usage_guidelines>
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+</usage_guidelines>
+
+<notes>
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Files are sorted by Git change count (files with more changes are at the bottom)
+</notes>
+
+</file_summary>
+
+<directory_structure>
+data/
+  slint-bangumi.sqlite3
+src/
+  ui/
+    bridge.rs
+    mod.rs
+  app.rs
+  config.rs
+  domain.rs
+  error.rs
+  main.rs
+  repository.rs
+  service.rs
+  task.rs
+ui/
+  main.slint
+.gitignore
+build.rs
+Cargo.toml
+config.toml
+README.md
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path="src/ui/mod.rs">
+pub mod bridge;
+</file>
+
+<file path="src/config.rs">
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+
+use serde::{Deserialize, Serialize};
+
+use crate::error::{AppError, AppResult, io_error};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppConfig {
+    pub database: DatabaseConfig,
+    pub media_libraries: Vec<PathBuf>,
+    pub dandanplay: DandanplayConfig,
+    pub logging: LoggingConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DatabaseConfig {
+    pub path: PathBuf,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DandanplayConfig {
+    pub app_id: String,
+    pub app_secret: String,
+    pub api_key: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LoggingConfig {
+    pub level: String,
+}
+
+impl Default for AppConfig {
+    fn default() -> Self {
+        Self {
+            database: DatabaseConfig {
+                path: PathBuf::from("data/slint-bangumi.sqlite3"),
+            },
+            media_libraries: Vec::new(),
+            dandanplay: DandanplayConfig {
+                app_id: String::new(),
+                app_secret: String::new(),
+                api_key: String::new(),
+            },
+            logging: LoggingConfig {
+                level: "info".to_string(),
+            },
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct ConfigStore {
+    path: PathBuf,
+    config: Mutex<AppConfig>,
+}
+
+impl ConfigStore {
+    pub fn load_or_create(path: impl Into<PathBuf>) -> AppResult<Self> {
+        let path = path.into();
+        if !path.exists() {
+            let default_config = AppConfig::default();
+            write_config(&path, &default_config)?;
+            return Ok(Self {
+                path,
+                config: Mutex::new(default_config),
+            });
+        }
+
+        let raw = fs::read_to_string(&path).map_err(|err| io_error(&path, err))?;
+        let config: AppConfig = toml::from_str(&raw).map_err(|err| {
+            AppError::Config(format!("failed to parse {}: {err}", path.display()))
+        })?;
+
+        Ok(Self {
+            path,
+            config: Mutex::new(config),
+        })
+    }
+
+    pub fn snapshot(&self) -> AppConfig {
+        self.config.lock().expect("config mutex poisoned").clone()
+    }
+
+    pub fn add_media_library(&self, path: PathBuf) -> AppResult<Vec<PathBuf>> {
+        if !path.is_dir() {
+            return Err(AppError::InvalidMediaDirectory(path));
+        }
+
+        let canonical = path
+            .canonicalize()
+            .map_err(|err| io_error(path.clone(), err))?;
+
+        let mut config = self.config.lock().expect("config mutex poisoned");
+        if !config.media_libraries.iter().any(|item| item == &canonical) {
+            config.media_libraries.push(canonical);
+            write_config(&self.path, &config)?;
+        }
+
+        Ok(config.media_libraries.clone())
+    }
+}
+
+fn write_config(path: &Path, config: &AppConfig) -> AppResult<()> {
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        fs::create_dir_all(parent).map_err(|err| io_error(parent, err))?;
+    }
+
+    let raw = toml::to_string_pretty(config)
+        .map_err(|err| AppError::Config(format!("failed to serialize config: {err}")))?;
+    fs::write(path, raw).map_err(|err| io_error(path, err))
+}
+</file>
+
+<file path="src/domain.rs">
+use std::path::PathBuf;
+
+#[derive(Debug, Clone)]
+pub struct MediaItem {
+    pub id: i64,
+    pub path: PathBuf,
+    pub file_name: String,
+    pub file_size: u64,
+    pub modified_at: i64,
+    pub file_hash: Option<String>,
+    pub deleted_at: Option<i64>,
+}
+
+impl MediaItem {
+    pub fn display_label(&self) -> String {
+        let deleted = if self.deleted_at.is_some() {
+            " [missing]"
+        } else {
+            ""
+        };
+        format!(
+            "{}{}  ({} MB)",
+            self.file_name,
+            deleted,
+            self.file_size / 1024 / 1024
+        )
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct MediaFile {
+    pub path: PathBuf,
+    pub file_name: String,
+    pub file_size: u64,
+    pub modified_at: i64,
+    pub file_hash: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct WatchProgress {
+    pub media_id: i64,
+    pub position_ms: i64,
+    pub duration_ms: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScanUpsertStatus {
+    Added,
+    Modified,
+    Restored,
+    Unchanged,
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct ScanSummary {
+    pub scanned_files: usize,
+    pub added: usize,
+    pub modified: usize,
+    pub restored: usize,
+    pub unchanged: usize,
+    pub deleted: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct DanmakuMatch {
+    pub provider: String,
+    pub title: String,
+    pub episode: Option<String>,
+    pub comment_count: usize,
+}
+</file>
+
+<file path=".gitignore">
+/target
+</file>
+
+<file path="build.rs">
+fn main() {
+    slint_build::compile("ui/main.slint").expect("failed to compile Slint UI");
+}
+</file>
+
+<file path="src/app.rs">
+use std::sync::{Arc, mpsc};
+
+use crate::config::ConfigStore;
+use crate::error::AppResult;
+use crate::repository::Repository;
+use crate::service::{DanmakuService, MediaService, WatchHistoryService};
+use crate::task::AppEvent;
+
+#[derive(Clone)]
+pub struct AppContext {
+    pub media: MediaService,
+    pub watch_history: WatchHistoryService,
+    pub danmaku: DanmakuService,
+    pub event_receiver: Arc<std::sync::Mutex<Option<mpsc::Receiver<AppEvent>>>>,
+}
+
+impl AppContext {
+    pub fn new(config: ConfigStore) -> AppResult<Self> {
+        let (events, receiver) = mpsc::channel();
+        let config = Arc::new(config);
+        let repository = Repository::new(config.snapshot().database.path);
+        repository.init()?;
+
+        Ok(Self {
+            media: MediaService::new(config.clone(), repository.clone(), events.clone()),
+            watch_history: WatchHistoryService::new(repository.clone(), events.clone()),
+            danmaku: DanmakuService::new(config.clone(), events.clone())?,
+            event_receiver: Arc::new(std::sync::Mutex::new(Some(receiver))),
+        })
+    }
+}
+</file>
+
+<file path="src/main.rs">
+mod app;
+mod config;
+mod domain;
+mod error;
+mod repository;
+mod service;
+mod task;
+mod ui;
+
+slint::include_modules!();
+
+use crate::app::AppContext;
+use crate::config::ConfigStore;
+use crate::error::AppResult;
+use crate::ui::bridge;
+
+fn main() -> AppResult<()> {
+    let config = ConfigStore::load_or_create("config.toml")?;
+    let context = AppContext::new(config)?;
+    let window = MainWindow::new()?;
+
+    let bridge_state = bridge::bind(window.as_weak(), context.clone())?;
+    bridge::start_event_pump(window.as_weak(), context, bridge_state)?;
+
+    window.run()?;
+    Ok(())
+}
+</file>
+
+<file path="src/repository.rs">
+use std::path::{Path, PathBuf};
+
+use rusqlite::{Connection, OptionalExtension, params};
+
+use crate::domain::{MediaFile, MediaItem, ScanUpsertStatus, WatchProgress};
+use crate::error::AppResult;
+
+#[derive(Debug, Clone)]
+pub struct Repository {
+    db_path: PathBuf,
+}
+
+impl Repository {
+    pub fn new(db_path: PathBuf) -> Self {
+        Self { db_path }
+    }
+
+    pub fn init(&self) -> AppResult<()> {
+        let conn = self.connect()?;
+        conn.execute_batch(
+            r#"
+            PRAGMA foreign_keys = ON;
+
+            CREATE TABLE IF NOT EXISTS media_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                path TEXT NOT NULL UNIQUE,
+                file_name TEXT NOT NULL,
+                file_size INTEGER NOT NULL,
+                modified_at INTEGER NOT NULL,
+                file_hash TEXT,
+                deleted_at INTEGER,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_media_items_deleted_at
+                ON media_items(deleted_at);
+
+            CREATE TABLE IF NOT EXISTS watch_progress (
+                media_id INTEGER PRIMARY KEY,
+                position_ms INTEGER NOT NULL,
+                duration_ms INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                FOREIGN KEY(media_id) REFERENCES media_items(id) ON DELETE CASCADE
+            );
+            "#,
+        )?;
+        Ok(())
+    }
+
+    pub fn list_media(&self, include_deleted: bool) -> AppResult<Vec<MediaItem>> {
+        let conn = self.connect()?;
+        let sql = if include_deleted {
+            "SELECT id, path, file_name, file_size, modified_at, file_hash, deleted_at FROM media_items ORDER BY file_name COLLATE NOCASE"
+        } else {
+            "SELECT id, path, file_name, file_size, modified_at, file_hash, deleted_at FROM media_items WHERE deleted_at IS NULL ORDER BY file_name COLLATE NOCASE"
+        };
+
+        let mut stmt = conn.prepare(sql)?;
+        let rows = stmt.query_map([], map_media_item)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    pub fn needs_hash_update(
+        &self,
+        path: &Path,
+        file_size: u64,
+        modified_at: i64,
+    ) -> AppResult<bool> {
+        let conn = self.connect()?;
+        let path = path.to_string_lossy().to_string();
+        let existing = conn
+            .query_row(
+                "SELECT file_size, modified_at, file_hash, deleted_at FROM media_items WHERE path = ?1",
+                params![path],
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                        row.get::<_, Option<i64>>(3)?,
+                    ))
+                },
+            )
+            .optional()?;
+
+        Ok(match existing {
+            None => true,
+            Some((size, modified, hash, deleted_at)) => {
+                size != file_size as i64
+                    || modified != modified_at
+                    || hash.is_none()
+                    || deleted_at.is_some()
+            }
+        })
+    }
+
+    pub fn upsert_scanned_media(&self, file: &MediaFile, now: i64) -> AppResult<ScanUpsertStatus> {
+        let conn = self.connect()?;
+        let path = file.path.to_string_lossy().to_string();
+
+        let existing = conn
+            .query_row(
+                "SELECT id, file_size, modified_at, deleted_at FROM media_items WHERE path = ?1",
+                params![path],
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, Option<i64>>(3)?,
+                    ))
+                },
+            )
+            .optional()?;
+
+        match existing {
+            None => {
+                conn.execute(
+                    r#"
+                    INSERT INTO media_items
+                        (path, file_name, file_size, modified_at, file_hash, deleted_at, created_at, updated_at)
+                    VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6, ?6)
+                    "#,
+                    params![
+                        file.path.to_string_lossy(),
+                        file.file_name,
+                        file.file_size as i64,
+                        file.modified_at,
+                        file.file_hash,
+                        now
+                    ],
+                )?;
+                Ok(ScanUpsertStatus::Added)
+            }
+            Some((_id, size, modified_at, deleted_at)) => {
+                let changed = size != file.file_size as i64
+                    || modified_at != file.modified_at
+                    || file.file_hash.is_some();
+                if changed || deleted_at.is_some() {
+                    conn.execute(
+                        r#"
+                        UPDATE media_items
+                        SET file_name = ?2,
+                            file_size = ?3,
+                            modified_at = ?4,
+                            file_hash = ?5,
+                            deleted_at = NULL,
+                            updated_at = ?6
+                        WHERE path = ?1
+                        "#,
+                        params![
+                            file.path.to_string_lossy(),
+                            file.file_name,
+                            file.file_size as i64,
+                            file.modified_at,
+                            file.file_hash,
+                            now
+                        ],
+                    )?;
+
+                    if deleted_at.is_some() {
+                        Ok(ScanUpsertStatus::Restored)
+                    } else {
+                        Ok(ScanUpsertStatus::Modified)
+                    }
+                } else {
+                    Ok(ScanUpsertStatus::Unchanged)
+                }
+            }
+        }
+    }
+
+    pub fn mark_missing_under_roots(
+        &self,
+        roots: &[PathBuf],
+        seen_paths: &[PathBuf],
+        now: i64,
+    ) -> AppResult<usize> {
+        let conn = self.connect()?;
+        let active = self.list_media(false)?;
+        let mut deleted = 0;
+
+        for item in active {
+            let under_scan_root = roots.iter().any(|root| item.path.starts_with(root));
+            let still_seen = seen_paths.iter().any(|path| path == &item.path);
+            if under_scan_root && !still_seen {
+                conn.execute(
+                    "UPDATE media_items SET deleted_at = ?2, updated_at = ?2 WHERE id = ?1",
+                    params![item.id, now],
+                )?;
+                deleted += 1;
+            }
+        }
+
+        Ok(deleted)
+    }
+
+    pub fn get_progress(&self, media_id: i64) -> AppResult<Option<WatchProgress>> {
+        let conn = self.connect()?;
+        conn.query_row(
+            "SELECT media_id, position_ms, duration_ms, updated_at FROM watch_progress WHERE media_id = ?1",
+            params![media_id],
+            |row| {
+                Ok(WatchProgress {
+                    media_id: row.get(0)?,
+                    position_ms: row.get(1)?,
+                    duration_ms: row.get(2)?,
+                    updated_at: row.get(3)?,
+                })
+            },
+        )
+        .optional()
+        .map_err(Into::into)
+    }
+
+    pub fn save_progress(
+        &self,
+        media_id: i64,
+        position_ms: i64,
+        duration_ms: i64,
+        now: i64,
+    ) -> AppResult<()> {
+        let conn = self.connect()?;
+        conn.execute(
+            r#"
+            INSERT INTO watch_progress (media_id, position_ms, duration_ms, updated_at)
+            VALUES (?1, ?2, ?3, ?4)
+            ON CONFLICT(media_id) DO UPDATE SET
+                position_ms = excluded.position_ms,
+                duration_ms = excluded.duration_ms,
+                updated_at = excluded.updated_at
+            "#,
+            params![media_id, position_ms, duration_ms, now],
+        )?;
+        Ok(())
+    }
+
+    pub fn clear_progress(&self, media_id: i64) -> AppResult<()> {
+        let conn = self.connect()?;
+        conn.execute(
+            "DELETE FROM watch_progress WHERE media_id = ?1",
+            params![media_id],
+        )?;
+        Ok(())
+    }
+
+    fn connect(&self) -> AppResult<Connection> {
+        if let Some(parent) = self
+            .db_path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+        {
+            std::fs::create_dir_all(parent).map_err(|err| crate::error::io_error(parent, err))?;
+        }
+        let conn = Connection::open(&self.db_path)?;
+        conn.pragma_update(None, "foreign_keys", "ON")?;
+        Ok(conn)
+    }
+}
+
+fn map_media_item(row: &rusqlite::Row<'_>) -> rusqlite::Result<MediaItem> {
+    let path: String = row.get(1)?;
+    Ok(MediaItem {
+        id: row.get(0)?,
+        path: Path::new(&path).to_path_buf(),
+        file_name: row.get(2)?,
+        file_size: row.get::<_, i64>(3)? as u64,
+        modified_at: row.get(4)?,
+        file_hash: row.get(5)?,
+        deleted_at: row.get(6)?,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use super::*;
+
+    #[test]
+    fn upserts_media_and_persists_watch_progress() {
+        let db_path =
+            std::env::temp_dir().join(format!("slint-bangumi-test-{}.sqlite3", std::process::id()));
+        let _ = fs::remove_file(&db_path);
+
+        let repository = Repository::new(db_path.clone());
+        repository.init().expect("init database");
+
+        let file = MediaFile {
+            path: PathBuf::from("/tmp/example/episode01.mkv"),
+            file_name: "episode01.mkv".to_string(),
+            file_size: 1024,
+            modified_at: 100,
+            file_hash: None,
+        };
+
+        let status = repository
+            .upsert_scanned_media(&file, 1)
+            .expect("insert media");
+        assert_eq!(status, ScanUpsertStatus::Added);
+
+        let mut changed = file.clone();
+        changed.file_size = 2048;
+        let status = repository
+            .upsert_scanned_media(&changed, 2)
+            .expect("update media");
+        assert_eq!(status, ScanUpsertStatus::Modified);
+
+        let media = repository.list_media(false).expect("list media");
+        assert_eq!(media.len(), 1);
+        assert_eq!(media[0].file_size, 2048);
+
+        repository
+            .save_progress(media[0].id, 1234, 5678, 9)
+            .expect("save progress");
+        let progress = repository
+            .get_progress(media[0].id)
+            .expect("read progress")
+            .expect("progress exists");
+        assert_eq!(progress.position_ms, 1234);
+        assert_eq!(progress.duration_ms, 5678);
+
+        repository
+            .clear_progress(media[0].id)
+            .expect("clear progress");
+        assert!(
+            repository
+                .get_progress(media[0].id)
+                .expect("read cleared progress")
+                .is_none()
+        );
+
+        let _ = fs::remove_file(db_path);
+    }
+}
+</file>
+
+<file path="ui/main.slint">
+import { Button, LineEdit, ListView, TextEdit, VerticalBox, HorizontalBox } from "std-widgets.slint";
+
+export component MainWindow inherits Window {
+    width: 1000px;
+    height: 720px;
+    title: "Slint Bangumi";
+
+    in-out property <int> active_tab: 0;
+    in-out property <string> media_path_input;
+    in property <[string]> media_items;
+    in-out property <string> selected_info;
+    in-out property <string> logs;
+    in-out property <string> scan_progress;
+    in-out property <string> settings_summary;
+
+    callback add_media_path(string);
+    callback scan_library();
+    callback select_media(int);
+    callback play_selected_media();
+    callback save_progress();
+    callback clear_progress();
+    callback load_danmaku();
+
+    VerticalBox {
+        padding: 12px;
+        spacing: 8px;
+
+        HorizontalBox {
+            spacing: 8px;
+            Button {
+                text: root.active_tab == 0 ? "Home *" : "Home";
+                clicked => { root.active_tab = 0; }
+            }
+            Button {
+                text: root.active_tab == 1 ? "Media Library *" : "Media Library";
+                clicked => { root.active_tab = 1; }
+            }
+            Button {
+                text: root.active_tab == 2 ? "Settings *" : "Settings";
+                clicked => { root.active_tab = 2; }
+            }
+        }
+
+        if root.active_tab == 0 : VerticalBox {
+            spacing: 8px;
+
+            Text {
+                text: "Home";
+                font-size: 20px;
+                font-weight: 700;
+            }
+
+            Text {
+                text: "Scan progress: " + root.scan_progress;
+            }
+
+            HorizontalBox {
+                spacing: 8px;
+                Button {
+                    text: "Scan Library";
+                    clicked => { root.scan_library(); }
+                }
+                Button {
+                    text: "Open Media Library";
+                    clicked => { root.active_tab = 1; }
+                }
+                Button {
+                    text: "Open Settings";
+                    clicked => { root.active_tab = 2; }
+                }
+            }
+
+            Text { text: "Runtime log"; font-weight: 700; }
+            TextEdit {
+                height: 520px;
+                text: root.logs;
+                read-only: true;
+            }
+        }
+
+        if root.active_tab == 1 : VerticalBox {
+            spacing: 8px;
+
+            Text {
+                text: "Media Library";
+                font-size: 20px;
+                font-weight: 700;
+            }
+
+            HorizontalBox {
+                spacing: 8px;
+                LineEdit {
+                    text <=> root.media_path_input;
+                    placeholder-text: "Local media folder path";
+                }
+                Button {
+                    text: "Add Folder";
+                    clicked => { root.add_media_path(root.media_path_input); }
+                }
+                Button {
+                    text: "Scan";
+                    clicked => { root.scan_library(); }
+                }
+            }
+
+            HorizontalBox {
+                spacing: 12px;
+
+                VerticalBox {
+                    Text { text: "Videos"; font-weight: 700; }
+                    ListView {
+                        height: 420px;
+                        for item[index] in root.media_items : Button {
+                            text: item;
+                            clicked => { root.select_media(index); }
+                        }
+                    }
+                }
+
+                VerticalBox {
+                    Text { text: "Selected video"; font-weight: 700; }
+                    TextEdit {
+                        height: 280px;
+                        text: root.selected_info;
+                        read-only: true;
+                    }
+                    HorizontalBox {
+                        spacing: 8px;
+                        Button {
+                            text: "Play";
+                            clicked => { root.play_selected_media(); }
+                        }
+                        Button {
+                            text: "Load Danmaku";
+                            clicked => { root.load_danmaku(); }
+                        }
+                    }
+                    HorizontalBox {
+                        spacing: 8px;
+                        Button {
+                            text: "Save Test Progress";
+                            clicked => { root.save_progress(); }
+                        }
+                        Button {
+                            text: "Clear Progress";
+                            clicked => { root.clear_progress(); }
+                        }
+                    }
+                }
+            }
+
+            Text { text: "Scan progress: " + root.scan_progress; }
+        }
+
+        if root.active_tab == 2 : VerticalBox {
+            spacing: 8px;
+
+            Text {
+                text: "Settings";
+                font-size: 20px;
+                font-weight: 700;
+            }
+
+            Text { text: "Media paths"; font-weight: 700; }
+            HorizontalBox {
+                spacing: 8px;
+                LineEdit {
+                    text <=> root.media_path_input;
+                    placeholder-text: "Add local media folder";
+                }
+                Button {
+                    text: "Add";
+                    clicked => { root.add_media_path(root.media_path_input); }
+                }
+            }
+
+            Text { text: "Current configuration"; font-weight: 700; }
+            TextEdit {
+                height: 220px;
+                text: root.settings_summary;
+                read-only: true;
+            }
+
+            Text { text: "Runtime log"; font-weight: 700; }
+            TextEdit {
+                height: 300px;
+                text: root.logs;
+                read-only: true;
+            }
+        }
+    }
+}
+</file>
+
+<file path="config.toml">
+media_libraries = ["/mnt/media/entertainment/bangumi/[Nekomoe kissaten&VCB-Studio] THE IDOLM@STER CINDERELLA GIRLS U149 [Ma10p_1080p]"]
+
+[database]
+path = "data/slint-bangumi.sqlite3"
+
+[dandanplay]
+app_id = "xjhfp7iqns"
+app_secret = "6JAiLeVgrk2ifsMmqAJygjwSAHQQB6h4"
+api_key = ""
+
+[logging]
+level = "info"
+</file>
+
+<file path="src/ui/bridge.rs">
+use std::rc::Rc;
+use std::sync::{Arc, Mutex};
+use std::thread;
+
+use slint::{ModelRc, SharedString, VecModel, Weak};
+
+use crate::MainWindow;
+use crate::app::AppContext;
+use crate::domain::MediaItem;
+use crate::error::{AppError, AppResult};
+use crate::task::AppEvent;
+
+#[derive(Default)]
+struct UiState {
+    media: Vec<MediaItem>,
+    selected_index: Option<usize>,
+}
+
+#[derive(Clone)]
+pub struct BridgeState {
+    inner: Arc<Mutex<UiState>>,
+}
+
+pub fn bind(window: Weak<MainWindow>, context: AppContext) -> AppResult<BridgeState> {
+    let state = Arc::new(Mutex::new(UiState {
+        media: context.media.list_media()?,
+        selected_index: None,
+    }));
+
+    if let Some(window) = window.upgrade() {
+        let media = state.lock().expect("ui state mutex poisoned").media.clone();
+        set_media_items(&window, &media);
+        window.set_logs("ready\n".into());
+        window.set_scan_progress("idle".into());
+        window.set_settings_summary(context.media.settings_summary(media.len()).into());
+    }
+
+    bind_add_path(window.clone(), context.clone(), state.clone());
+    bind_scan(window.clone(), context.clone());
+    bind_select_media(window.clone(), context.clone(), state.clone());
+    bind_play_selected_media(window.clone(), context.clone(), state.clone());
+    bind_save_progress(window.clone(), context.clone(), state.clone());
+    bind_clear_progress(window.clone(), context.clone(), state.clone());
+    bind_load_danmaku(window, context, state.clone());
+
+    Ok(BridgeState { inner: state })
+}
+
+pub fn start_event_pump(
+    window: Weak<MainWindow>,
+    context: AppContext,
+    state: BridgeState,
+) -> AppResult<()> {
+    let receiver = context
+        .event_receiver
+        .lock()
+        .expect("event receiver mutex poisoned")
+        .take()
+        .ok_or_else(|| AppError::Config("event pump already started".to_string()))?;
+
+    thread::spawn(move || {
+        while let Ok(event) = receiver.recv() {
+            let window = window.clone();
+            let state = state.clone();
+            let context = context.clone();
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(window) = window.upgrade() {
+                    apply_event(&window, &context, &state, event);
+                }
+            });
+        }
+    });
+
+    Ok(())
+}
+
+fn bind_add_path(window: Weak<MainWindow>, context: AppContext, state: Arc<Mutex<UiState>>) {
+    let weak = window.clone();
+    window
+        .upgrade()
+        .expect("window dropped before callback binding")
+        .on_add_media_path(move |path| {
+            let path = path.trim().to_string();
+            if path.is_empty() {
+                append_log(&weak, "media path is empty");
+                return;
+            }
+
+            match context.media.add_library_path(path.into()) {
+                Ok(paths) => {
+                    append_log(
+                        &weak,
+                        &format!("added media path; total paths: {}", paths.len()),
+                    );
+                    if let Some(window) = weak.upgrade() {
+                        let media_count =
+                            state.lock().expect("ui state mutex poisoned").media.len();
+                        window.set_settings_summary(
+                            context.media.settings_summary(media_count).into(),
+                        );
+                    }
+                }
+                Err(error) => append_log(&weak, &format!("add path failed: {error}")),
+            }
+        });
+}
+
+fn bind_play_selected_media(
+    window: Weak<MainWindow>,
+    context: AppContext,
+    state: Arc<Mutex<UiState>>,
+) {
+    let weak = window.clone();
+    window
+        .upgrade()
+        .expect("window dropped before callback binding")
+        .on_play_selected_media(move || {
+            let Some(media) = selected_media(&state) else {
+                append_log(&weak, "select a media item before playing");
+                return;
+            };
+
+            if let Err(error) = context.media.open_media(&media) {
+                append_log(&weak, &format!("play failed: {error}"));
+            }
+        });
+}
+
+fn bind_scan(window: Weak<MainWindow>, context: AppContext) {
+    window
+        .upgrade()
+        .expect("window dropped before callback binding")
+        .on_scan_library(move || {
+            context.media.start_scan();
+        });
+}
+
+fn bind_select_media(window: Weak<MainWindow>, context: AppContext, state: Arc<Mutex<UiState>>) {
+    let weak = window.clone();
+    window
+        .upgrade()
+        .expect("window dropped before callback binding")
+        .on_select_media(move |index| {
+            let selected = {
+                let mut state = state.lock().expect("ui state mutex poisoned");
+                let index = index as usize;
+                state.selected_index = Some(index);
+                state.media.get(index).cloned()
+            };
+
+            match selected {
+                Some(media) => {
+                    if let Some(window) = weak.upgrade() {
+                        window.set_selected_info(media_info(&media).into());
+                    }
+                    match context.watch_history.load(media.id) {
+                        Ok(Some(progress)) => append_log(
+                            &weak,
+                            &format!(
+                                "loaded progress: media #{} {} / {} ms",
+                                progress.media_id, progress.position_ms, progress.duration_ms
+                            ),
+                        ),
+                        Ok(None) => append_log(&weak, "no watch progress for selected media"),
+                        Err(error) => append_log(&weak, &format!("load progress failed: {error}")),
+                    }
+                }
+                None => append_log(&weak, "invalid media selection"),
+            }
+        });
+}
+
+fn bind_save_progress(window: Weak<MainWindow>, context: AppContext, state: Arc<Mutex<UiState>>) {
+    let weak = window.clone();
+    window
+        .upgrade()
+        .expect("window dropped before callback binding")
+        .on_save_progress(move || {
+            let media_id = selected_media_id(&state);
+            match media_id.and_then(|id| context.watch_history.save_test_progress(id).ok()) {
+                Some(progress) => append_log(
+                    &weak,
+                    &format!(
+                        "test progress saved at {} ms, updated_at={}",
+                        progress.position_ms, progress.updated_at
+                    ),
+                ),
+                None => append_log(&weak, "select a media item before saving progress"),
+            }
+        });
+}
+
+fn bind_clear_progress(window: Weak<MainWindow>, context: AppContext, state: Arc<Mutex<UiState>>) {
+    let weak = window.clone();
+    window
+        .upgrade()
+        .expect("window dropped before callback binding")
+        .on_clear_progress(move || {
+            let Some(media_id) = selected_media_id(&state) else {
+                append_log(&weak, "select a media item before clearing progress");
+                return;
+            };
+
+            match context.watch_history.clear(media_id) {
+                Ok(()) => append_log(&weak, "progress cleared"),
+                Err(error) => append_log(&weak, &format!("clear progress failed: {error}")),
+            }
+        });
+}
+
+fn bind_load_danmaku(window: Weak<MainWindow>, context: AppContext, state: Arc<Mutex<UiState>>) {
+    let weak = window.clone();
+    window
+        .upgrade()
+        .expect("window dropped before callback binding")
+        .on_load_danmaku(move || {
+            let Some(media) = selected_media(&state) else {
+                append_log(&weak, "select a media item before loading danmaku");
+                return;
+            };
+
+            let danmaku = context.danmaku.clone();
+            thread::spawn(move || {
+                danmaku.load_for_media(&media);
+            });
+        });
+}
+
+fn apply_event(window: &MainWindow, context: &AppContext, state: &BridgeState, event: AppEvent) {
+    match event {
+        AppEvent::Log(message) => append_log_to_window(window, &message),
+        AppEvent::ScanStarted => {
+            window.set_scan_progress("scan started".into());
+            append_log_to_window(window, "scan started");
+        }
+        AppEvent::ScanProgress { scanned, indexed } => {
+            window.set_scan_progress(format!("scanned {scanned}, indexed {indexed}").into());
+        }
+        AppEvent::ScanFinished { summary, media } => {
+            replace_media_state(state, media.clone());
+            set_media_items(window, &media);
+            window.set_settings_summary(context.media.settings_summary(media.len()).into());
+            window.set_scan_progress(
+                format!(
+                    "done: scanned={}, added={}, modified={}, restored={}, deleted={}",
+                    summary.scanned_files,
+                    summary.added,
+                    summary.modified,
+                    summary.restored,
+                    summary.deleted
+                )
+                .into(),
+            );
+            append_log_to_window(window, "scan finished");
+        }
+        AppEvent::ScanFailed(error) => {
+            window.set_scan_progress("scan failed".into());
+            append_log_to_window(window, &format!("scan failed: {error}"));
+        }
+        AppEvent::DanmakuMatched(result) => append_log_to_window(
+            window,
+            &format!(
+                "danmaku event: {} matched {} comments, title={}, episode={}",
+                result.provider,
+                result.comment_count,
+                result.title,
+                result.episode.as_deref().unwrap_or("(none)")
+            ),
+        ),
+    }
+}
+
+fn replace_media_state(state: &BridgeState, media: Vec<MediaItem>) {
+    let mut state = state.inner.lock().expect("ui state mutex poisoned");
+    state.media = media;
+    state.selected_index = None;
+}
+
+fn set_media_items(window: &MainWindow, media: &[MediaItem]) {
+    let labels = media
+        .iter()
+        .map(|item| SharedString::from(item.display_label()))
+        .collect::<Vec<_>>();
+    window.set_media_items(ModelRc::from(Rc::new(VecModel::from(labels))));
+}
+
+fn selected_media_id(state: &Arc<Mutex<UiState>>) -> Option<i64> {
+    selected_media(state).map(|media| media.id)
+}
+
+fn selected_media(state: &Arc<Mutex<UiState>>) -> Option<MediaItem> {
+    let state = state.lock().expect("ui state mutex poisoned");
+    state
+        .selected_index
+        .and_then(|index| state.media.get(index).cloned())
+}
+
+fn append_log(window: &Weak<MainWindow>, message: &str) {
+    if let Some(window) = window.upgrade() {
+        append_log_to_window(&window, message);
+    }
+}
+
+fn append_log_to_window(window: &MainWindow, message: &str) {
+    const MAX_LOG_BYTES: usize = 24 * 1024;
+
+    let mut logs = window.get_logs().to_string();
+    logs.push_str(message);
+    logs.push('\n');
+    if logs.len() > MAX_LOG_BYTES {
+        let mut keep_from = logs.len() - MAX_LOG_BYTES;
+        while !logs.is_char_boundary(keep_from) {
+            keep_from += 1;
+        }
+        let keep_from = logs[keep_from..]
+            .find('\n')
+            .map(|offset| keep_from + offset + 1)
+            .unwrap_or(keep_from);
+        logs.replace_range(..keep_from, "");
+    }
+    window.set_logs(logs.into());
+}
+
+fn media_info(media: &MediaItem) -> String {
+    format!(
+        "id: {}\nfile: {}\npath: {}\nsize: {} bytes\nmodified_at: {}\nhash: {}",
+        media.id,
+        media.file_name,
+        media.path.display(),
+        media.file_size,
+        media.modified_at,
+        media.file_hash.as_deref().unwrap_or("(not computed)")
+    )
+}
+</file>
+
+<file path="src/error.rs">
+use std::path::PathBuf;
+
+use thiserror::Error;
+
+pub type AppResult<T> = Result<T, AppError>;
+
+#[derive(Debug, Error)]
+pub enum AppError {
+    #[error("config error: {0}")]
+    Config(String),
+    #[error("database error: {0}")]
+    Database(#[from] rusqlite::Error),
+    #[error("io error at {path}: {source}")]
+    Io {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    #[error("http error: {0}")]
+    Http(#[from] reqwest::Error),
+    #[error("api error: {0}")]
+    Api(String),
+    #[error("ui error: {0}")]
+    Ui(#[from] slint::PlatformError),
+    #[error("media path is not a directory: {0}")]
+    InvalidMediaDirectory(PathBuf),
+    #[error("selected media item was not found")]
+    MediaNotFound,
+    #[error("failed to open media with default player: {0}")]
+    OpenMedia(String),
+}
+
+pub fn io_error(path: impl Into<PathBuf>, source: std::io::Error) -> AppError {
+    AppError::Io {
+        path: path.into(),
+        source,
+    }
+}
+</file>
+
+<file path="src/service.rs">
+use std::path::PathBuf;
+use std::process::Command;
+use std::sync::{Arc, mpsc};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use reqwest::blocking::{Client, RequestBuilder};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+
+use crate::config::{ConfigStore, DandanplayConfig};
+use crate::domain::{DanmakuMatch, MediaItem, WatchProgress};
+use crate::error::{AppError, AppResult};
+use crate::repository::Repository;
+use crate::task::{self, AppEvent};
+
+#[derive(Clone)]
+pub struct MediaService {
+    config: Arc<ConfigStore>,
+    repository: Repository,
+    events: mpsc::Sender<AppEvent>,
+}
+
+impl MediaService {
+    pub fn new(
+        config: Arc<ConfigStore>,
+        repository: Repository,
+        events: mpsc::Sender<AppEvent>,
+    ) -> Self {
+        Self {
+            config,
+            repository,
+            events,
+        }
+    }
+
+    pub fn add_library_path(&self, path: PathBuf) -> AppResult<Vec<PathBuf>> {
+        let paths = self.config.add_media_library(path)?;
+        self.send_log(format!("media library paths: {}", paths.len()));
+        Ok(paths)
+    }
+
+    pub fn list_media(&self) -> AppResult<Vec<MediaItem>> {
+        self.repository.list_media(false)
+    }
+
+    pub fn settings_summary(&self, indexed_media_count: usize) -> String {
+        let config = self.config.snapshot();
+        let dandanplay_status =
+            if config.dandanplay.app_id.is_empty() || config.dandanplay.app_secret.is_empty() {
+                "not configured"
+            } else {
+                "configured"
+            };
+        let media_libraries = if config.media_libraries.is_empty() {
+            "(none)".to_string()
+        } else {
+            config
+                .media_libraries
+                .iter()
+                .map(|path| format!("- {}", path.display()))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+
+        format!(
+            "database: {}\nindexed media: {}\ndandanplay: {}\nmedia libraries:\n{}",
+            config.database.path.display(),
+            indexed_media_count,
+            dandanplay_status,
+            media_libraries
+        )
+    }
+
+    pub fn open_media(&self, media: &MediaItem) -> AppResult<()> {
+        if media.deleted_at.is_some() || !media.path.is_file() {
+            return Err(AppError::MediaNotFound);
+        }
+
+        open_with_default_player(&media.path)?;
+        self.send_log(format!(
+            "opened media with default player: {}",
+            media.file_name
+        ));
+        Ok(())
+    }
+
+    pub fn start_scan(&self) {
+        let roots = self.config.snapshot().media_libraries;
+        if roots.is_empty() {
+            self.send_log("no media library paths configured".to_string());
+            return;
+        }
+
+        task::spawn_media_scan(self.repository.clone(), roots, self.events.clone());
+    }
+
+    fn send_log(&self, message: String) {
+        let _ = self.events.send(AppEvent::Log(message));
+    }
+}
+
+fn open_with_default_player(path: &PathBuf) -> AppResult<()> {
+    #[cfg(target_os = "windows")]
+    let mut command = {
+        let mut command = Command::new("cmd");
+        command.arg("/C").arg("start").arg("").arg(path);
+        command
+    };
+
+    #[cfg(target_os = "macos")]
+    let mut command = {
+        let mut command = Command::new("open");
+        command.arg(path);
+        command
+    };
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let mut command = {
+        let mut command = Command::new("xdg-open");
+        command.arg(path);
+        command
+    };
+
+    command
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| AppError::OpenMedia(error.to_string()))
+}
+
+#[derive(Clone)]
+pub struct WatchHistoryService {
+    repository: Repository,
+    events: mpsc::Sender<AppEvent>,
+}
+
+impl WatchHistoryService {
+    pub fn new(repository: Repository, events: mpsc::Sender<AppEvent>) -> Self {
+        Self { repository, events }
+    }
+
+    pub fn load(&self, media_id: i64) -> AppResult<Option<WatchProgress>> {
+        self.repository.get_progress(media_id)
+    }
+
+    pub fn save_test_progress(&self, media_id: i64) -> AppResult<WatchProgress> {
+        let now = task::unix_timestamp_ms();
+        let position_ms = 15 * 60 * 1000;
+        let duration_ms = 24 * 60 * 1000;
+        self.repository
+            .save_progress(media_id, position_ms, duration_ms, now)?;
+
+        let progress = WatchProgress {
+            media_id,
+            position_ms,
+            duration_ms,
+            updated_at: now,
+        };
+        let _ = self.events.send(AppEvent::Log(format!(
+            "saved test progress for media #{media_id}: {position_ms}/{duration_ms} ms"
+        )));
+        Ok(progress)
+    }
+
+    pub fn clear(&self, media_id: i64) -> AppResult<()> {
+        self.repository.clear_progress(media_id)?;
+        let _ = self.events.send(AppEvent::Log(format!(
+            "cleared progress for media #{media_id}"
+        )));
+        Ok(())
+    }
+}
+
+#[derive(Clone)]
+pub struct DanmakuService {
+    config: Arc<ConfigStore>,
+    client: Client,
+    events: mpsc::Sender<AppEvent>,
+}
+
+impl DanmakuService {
+    pub fn new(config: Arc<ConfigStore>, events: mpsc::Sender<AppEvent>) -> AppResult<Self> {
+        let client = Client::builder()
+            .timeout(Duration::from_secs(20))
+            .user_agent(concat!("slint-bangumi/", env!("CARGO_PKG_VERSION")))
+            .build()?;
+        Ok(Self {
+            config,
+            client,
+            events,
+        })
+    }
+
+    pub fn load_for_media(&self, media: &MediaItem) {
+        let _ = self.events.send(AppEvent::Log(format!(
+            "loading danmaku for {}",
+            media.file_name
+        )));
+
+        match self.match_dandanplay(media) {
+            Ok(result) => {
+                let _ = self.events.send(AppEvent::DanmakuMatched(result));
+            }
+            Err(error) => {
+                let _ = self
+                    .events
+                    .send(AppEvent::Log(format!("danmaku load failed: {error}")));
+            }
+        }
+    }
+
+    pub fn match_dandanplay(&self, media: &MediaItem) -> AppResult<DanmakuMatch> {
+        if media.deleted_at.is_some() {
+            return Err(AppError::MediaNotFound);
+        }
+        let config = self.config.snapshot().dandanplay;
+        validate_dandanplay_config(&config)?;
+
+        let match_result = self.match_episode(media, &config)?;
+        let comment_count = self.fetch_comment_count(match_result.episode_id, &config)?;
+
+        Ok(DanmakuMatch {
+            provider: "dandanplay".to_string(),
+            title: match_title(&match_result).unwrap_or_else(|| media.file_name.clone()),
+            episode: match_result.episode_title,
+            comment_count,
+        })
+    }
+
+    fn match_episode(
+        &self,
+        media: &MediaItem,
+        config: &DandanplayConfig,
+    ) -> AppResult<MatchResult> {
+        let path = "/api/v2/match";
+        let url = format!("{DANDANPLAY_BASE_URL}{path}");
+        let file_name = media
+            .path
+            .file_stem()
+            .and_then(|name| name.to_str())
+            .unwrap_or(&media.file_name)
+            .to_string();
+
+        let request = MatchRequest {
+            file_name: Some(file_name),
+            file_hash: media.file_hash.clone(),
+            file_size: media.file_size as i64,
+            video_duration: 0,
+            match_mode: if media.file_hash.is_some() {
+                "hashAndFileName"
+            } else {
+                "fileNameOnly"
+            },
+        };
+
+        let response = self
+            .signed_headers(self.client.post(url).json(&request), path, config)
+            .send()?;
+        let status = response.status();
+        if !status.is_success() {
+            let error = response
+                .headers()
+                .get("X-Error-Message")
+                .and_then(|value| value.to_str().ok())
+                .unwrap_or(status.as_str())
+                .to_string();
+            return Err(AppError::Api(format!("dandanplay match rejected: {error}")));
+        }
+
+        let response = response.json::<MatchResponse>()?;
+        ensure_api_success(
+            response.success,
+            response.error_code,
+            response.error_message,
+        )?;
+
+        let mut matches = response.matches.unwrap_or_default();
+        if matches.is_empty() {
+            return Err(AppError::Api("dandanplay returned no matches".to_string()));
+        }
+
+        Ok(matches.remove(0))
+    }
+
+    fn fetch_comment_count(&self, episode_id: i64, config: &DandanplayConfig) -> AppResult<usize> {
+        let path = format!("/api/v2/comment/{episode_id}");
+        let url = format!("{DANDANPLAY_BASE_URL}{path}");
+        let response = self
+            .signed_headers(
+                self.client.get(url).query(&[
+                    ("from", "0"),
+                    ("withRelated", "true"),
+                    ("chConvert", "1"),
+                ]),
+                &path,
+                config,
+            )
+            .send()?;
+        let status = response.status();
+        if !status.is_success() {
+            let error = response
+                .headers()
+                .get("X-Error-Message")
+                .and_then(|value| value.to_str().ok())
+                .unwrap_or(status.as_str())
+                .to_string();
+            return Err(AppError::Api(format!(
+                "dandanplay comment request rejected: {error}"
+            )));
+        }
+
+        let response = response.json::<CommentResponse>()?;
+        Ok(response
+            .comments
+            .map(|comments| comments.len())
+            .unwrap_or(response.count.max(0) as usize))
+    }
+
+    fn signed_headers(
+        &self,
+        request: RequestBuilder,
+        path: &str,
+        config: &DandanplayConfig,
+    ) -> RequestBuilder {
+        let timestamp = unix_timestamp_secs();
+        request
+            .header("X-AppId", config.app_id.as_str())
+            .header("X-Timestamp", timestamp.to_string())
+            .header(
+                "X-Signature",
+                dandanplay_signature(&config.app_id, timestamp, path, &config.app_secret),
+            )
+    }
+}
+
+const DANDANPLAY_BASE_URL: &str = "https://api.dandanplay.net";
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MatchRequest<'a> {
+    file_name: Option<String>,
+    file_hash: Option<String>,
+    file_size: i64,
+    video_duration: i32,
+    match_mode: &'a str,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MatchResponse {
+    success: bool,
+    error_code: i32,
+    error_message: Option<String>,
+    matches: Option<Vec<MatchResult>>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MatchResult {
+    episode_id: i64,
+    anime_title: Option<String>,
+    episode_title: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CommentResponse {
+    count: i32,
+    comments: Option<Vec<CommentData>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CommentData {
+    #[allow(dead_code)]
+    cid: i64,
+}
+
+fn validate_dandanplay_config(config: &DandanplayConfig) -> AppResult<()> {
+    if config.app_id.trim().is_empty() || config.app_secret.trim().is_empty() {
+        return Err(AppError::Config(
+            "dandanplay app_id and app_secret are required".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn ensure_api_success(
+    success: bool,
+    error_code: i32,
+    error_message: Option<String>,
+) -> AppResult<()> {
+    if success && error_code == 0 {
+        return Ok(());
+    }
+
+    Err(AppError::Api(format!(
+        "dandanplay error {error_code}: {}",
+        error_message.unwrap_or_else(|| "unknown error".to_string())
+    )))
+}
+
+fn match_title(result: &MatchResult) -> Option<String> {
+    match (&result.anime_title, &result.episode_title) {
+        (Some(anime), Some(episode)) if !anime.is_empty() && !episode.is_empty() => {
+            Some(format!("{anime} - {episode}"))
+        }
+        (Some(anime), _) if !anime.is_empty() => Some(anime.clone()),
+        (_, Some(episode)) if !episode.is_empty() => Some(episode.clone()),
+        _ => None,
+    }
+}
+
+fn dandanplay_signature(app_id: &str, timestamp: i64, path: &str, app_secret: &str) -> String {
+    let data = format!("{app_id}{timestamp}{path}{app_secret}");
+    BASE64_STANDARD.encode(Sha256::digest(data.as_bytes()))
+}
+
+fn unix_timestamp_secs() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs() as i64)
+        .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod dandanplay_tests {
+    use super::*;
+
+    #[test]
+    fn signs_request_like_official_algorithm() {
+        assert_eq!(
+            dandanplay_signature("app", 1, "/api/v2/match", "secret"),
+            "bhmxR4cp1CqSfgXiWkbRGGR1QtkhNnR7qvyB1CBFbRA="
+        );
+    }
+}
+</file>
+
+<file path="src/task.rs">
+use std::fs::File;
+use std::io::Read;
+use std::path::{Path, PathBuf};
+use std::sync::mpsc;
+use std::thread;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use walkdir::WalkDir;
+
+use crate::domain::{DanmakuMatch, MediaFile, MediaItem, ScanSummary, ScanUpsertStatus};
+use crate::repository::Repository;
+
+#[derive(Debug, Clone)]
+pub enum AppEvent {
+    Log(String),
+    ScanStarted,
+    ScanProgress {
+        scanned: usize,
+        indexed: usize,
+    },
+    ScanFinished {
+        summary: ScanSummary,
+        media: Vec<MediaItem>,
+    },
+    ScanFailed(String),
+    DanmakuMatched(DanmakuMatch),
+}
+
+pub fn spawn_media_scan(
+    repository: Repository,
+    roots: Vec<PathBuf>,
+    events: mpsc::Sender<AppEvent>,
+) {
+    thread::spawn(move || {
+        let _ = events.send(AppEvent::ScanStarted);
+        let _ = events.send(AppEvent::Log(format!(
+            "scan started for {} folder(s)",
+            roots.len()
+        )));
+
+        match scan_media(repository.clone(), &roots, &events) {
+            Ok((summary, media)) => {
+                let _ = events.send(AppEvent::ScanFinished { summary, media });
+            }
+            Err(error) => {
+                let _ = events.send(AppEvent::ScanFailed(error));
+            }
+        }
+    });
+}
+
+fn scan_media(
+    repository: Repository,
+    roots: &[PathBuf],
+    events: &mpsc::Sender<AppEvent>,
+) -> Result<(ScanSummary, Vec<MediaItem>), String> {
+    let now = unix_timestamp_ms();
+    let mut summary = ScanSummary::default();
+    let mut seen_paths = Vec::new();
+
+    for root in roots {
+        if !root.is_dir() {
+            let _ = events.send(AppEvent::Log(format!(
+                "skip missing folder: {}",
+                root.display()
+            )));
+            continue;
+        }
+
+        for entry in WalkDir::new(root).follow_links(false).into_iter() {
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(error) => {
+                    let _ = events.send(AppEvent::Log(format!("scan warning: {error}")));
+                    continue;
+                }
+            };
+
+            if !entry.file_type().is_file() || !is_video_file(entry.path()) {
+                continue;
+            }
+
+            let media_file = match media_file_from_path(entry.path(), &repository) {
+                Ok(file) => file,
+                Err(error) => {
+                    let _ = events.send(AppEvent::Log(error));
+                    continue;
+                }
+            };
+
+            seen_paths.push(media_file.path.clone());
+            summary.scanned_files += 1;
+            match repository.upsert_scanned_media(&media_file, now) {
+                Ok(ScanUpsertStatus::Added) => summary.added += 1,
+                Ok(ScanUpsertStatus::Modified) => summary.modified += 1,
+                Ok(ScanUpsertStatus::Restored) => summary.restored += 1,
+                Ok(ScanUpsertStatus::Unchanged) => summary.unchanged += 1,
+                Err(error) => return Err(error.to_string()),
+            }
+
+            if summary.scanned_files % 10 == 0 {
+                let indexed =
+                    summary.added + summary.modified + summary.restored + summary.unchanged;
+                let _ = events.send(AppEvent::ScanProgress {
+                    scanned: summary.scanned_files,
+                    indexed,
+                });
+            }
+        }
+    }
+
+    summary.deleted = repository
+        .mark_missing_under_roots(roots, &seen_paths, now)
+        .map_err(|error| error.to_string())?;
+    let media = repository
+        .list_media(false)
+        .map_err(|error| error.to_string())?;
+
+    Ok((summary, media))
+}
+
+fn media_file_from_path(path: &Path, repository: &Repository) -> Result<MediaFile, String> {
+    let metadata = path
+        .metadata()
+        .map_err(|error| format!("failed to read metadata for {}: {error}", path.display()))?;
+    let modified_at = metadata
+        .modified()
+        .ok()
+        .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
+        .map(|duration| duration.as_millis() as i64)
+        .unwrap_or_default();
+
+    let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let needs_hash = repository
+        .needs_hash_update(&canonical, metadata.len(), modified_at)
+        .map_err(|error| {
+            format!(
+                "failed to inspect media cache for {}: {error}",
+                path.display()
+            )
+        })?;
+    let file_hash = if needs_hash {
+        Some(
+            hash_first_16mb(path)
+                .map_err(|error| format!("failed to hash {}: {error}", path.display()))?,
+        )
+    } else {
+        None
+    };
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("unknown")
+        .to_string();
+
+    Ok(MediaFile {
+        path: canonical,
+        file_name,
+        file_size: metadata.len(),
+        modified_at,
+        file_hash,
+    })
+}
+
+fn hash_first_16mb(path: &Path) -> std::io::Result<String> {
+    const HASH_BYTES: u64 = 16 * 1024 * 1024;
+
+    let mut file = File::open(path)?;
+    let mut context = md5::Context::new();
+    let mut remaining = HASH_BYTES;
+    let mut buffer = [0_u8; 64 * 1024];
+
+    while remaining > 0 {
+        let limit = buffer.len().min(remaining as usize);
+        let read = file.read(&mut buffer[..limit])?;
+        if read == 0 {
+            break;
+        }
+        context.consume(&buffer[..read]);
+        remaining -= read as u64;
+    }
+
+    Ok(format!("{:x}", context.compute()))
+}
+
+fn is_video_file(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .map(|extension| {
+            matches!(
+                extension.to_ascii_lowercase().as_str(),
+                "mkv" | "mp4" | "avi" | "mov" | "webm"
+            )
+        })
+        .unwrap_or(false)
+}
+
+pub fn unix_timestamp_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as i64)
+        .unwrap_or_default()
+}
+</file>
+
+<file path="Cargo.toml">
+[package]
+name = "slint-bangumi"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+base64 = "0.22"
+md5 = "0.7"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+sha2 = "0.10"
+slint = "1"
+thiserror = "2"
+toml = "0.8"
+walkdir = "2"
+
+[build-dependencies]
+slint-build = "1"
+</file>
+
+<file path="README.md">
+# slint-bangumi
+
+这是一个基于 Rust + Slint 的轻量本地看番工具骨架。
+
+当前阶段只实现后端核心和最小可测试前端：
+
+- 本地媒体库路径配置和递归扫描
+- SQLite 媒体条目索引
+- 重复扫描时识别新增、修改、恢复和删除
+- 观看进度读取、写入、清空测试接口
+- dandanplay 文件识别与弹幕数量加载
+- 唤起系统默认播放器播放本地媒体
+- 首页、媒体库、设置三个 Slint tab 骨架
+- Slint callback 直连 Rust service 层
+- 后台扫描线程通过事件通知 UI
+
+## 运行
+
+```bash
+cargo run
+```
+
+首次启动会自动生成 `config.toml`，默认数据库路径是 `data/slint-bangumi.sqlite3`。`dandanplay` 相关字段只保留空占位，不包含真实密钥。
+
+## 模块结构
+
+- `src/domain.rs`: 业务数据结构
+- `src/config.rs`: `config.toml` 读取、生成和更新
+- `src/repository.rs`: SQLite 初始化和数据访问
+- `src/service.rs`: 媒体库、观看历史、dandanplay 弹幕服务和本地播放入口
+- `src/task.rs`: 后台扫描任务和事件
+- `src/ui/bridge.rs`: Slint callback 与 service 层桥接
+- `ui/main.slint`: 三 tab 前端骨架
+</file>
+
+</files>
