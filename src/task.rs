@@ -255,10 +255,8 @@ mod tests {
             return;
         }
 
-        let db_path = std::env::temp_dir().join(format!(
-            "nexplay-real-scan-{}.sqlite3",
-            std::process::id()
-        ));
+        let db_path =
+            std::env::temp_dir().join(format!("nexplay-real-scan-{}.sqlite3", std::process::id()));
         let _ = fs::remove_file(&db_path);
         let repository = Repository::new(db_path.clone());
         repository.init().expect("init database");

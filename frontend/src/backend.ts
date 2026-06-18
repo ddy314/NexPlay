@@ -19,6 +19,22 @@ export type BackendSnapshot = {
   };
 };
 
+export type EditableSettings = {
+  mediaLibraries: string[];
+  databasePath: string;
+  bangumiEnabled: boolean;
+  bangumiBaseUrl: string;
+  bangumiAccessToken: string;
+  bangumiUserAgent: string;
+  bangumiRequestTimeoutSecs: number;
+  bangumiAutoMatch: boolean;
+  bangumiCacheImages: boolean;
+  dandanplayAppId: string;
+  dandanplayAppSecret: string;
+  dandanplayApiKey: string;
+  loggingLevel: string;
+};
+
 export type ScanResponse = {
   summary: {
     scannedFiles: number;
@@ -30,6 +46,34 @@ export type ScanResponse = {
   };
   scraped: number;
   snapshot: BackendSnapshot;
+};
+
+export type BackendEvent = {
+  type: string;
+  message?: string;
+  scanned?: number;
+  indexed?: number;
+  processed?: number;
+  total?: number;
+  summary?: Partial<ScanResponse["summary"]> & {
+    scanned_files?: number;
+  };
+};
+
+export type BackendLogEntry = {
+  id: number;
+  text: string;
+  tone?: "neutral" | "success" | "danger";
+};
+
+export type ScanStatus = {
+  running: boolean;
+  stage: "idle" | "scan" | "metadata" | "done" | "failed";
+  message: string;
+  scanned: number;
+  indexed: number;
+  processed: number;
+  total: number;
 };
 
 const fallbackSnapshot: BackendSnapshot = {
@@ -48,15 +92,50 @@ const fallbackSnapshot: BackendSnapshot = {
   },
 };
 
+function normalizeScanSummary(summary: BackendEvent["summary"] | ScanResponse["summary"] | undefined): ScanResponse["summary"] {
+  const raw = summary as
+    | (Partial<ScanResponse["summary"]> & { scanned_files?: number })
+    | undefined;
+  return {
+    scannedFiles: raw?.scannedFiles ?? raw?.scanned_files ?? 0,
+    added: raw?.added ?? 0,
+    modified: raw?.modified ?? 0,
+    restored: raw?.restored ?? 0,
+    unchanged: raw?.unchanged ?? 0,
+    deleted: raw?.deleted ?? 0,
+  };
+}
+
+function normalizeScanResponse(response: ScanResponse): ScanResponse {
+  return {
+    ...response,
+    summary: normalizeScanSummary(response.summary),
+  };
+}
+
 export function useBackendSnapshot() {
   const [snapshot, setSnapshot] = useState<BackendSnapshot>(fallbackSnapshot);
   const [loading, setLoading] = useState(Boolean(window.nexplay));
   const [error, setError] = useState<string | null>(null);
+  const [logs, setLogs] = useState<BackendLogEntry[]>([]);
+  const [scanStatus, setScanStatus] = useState<ScanStatus>({
+    running: false,
+    stage: "idle",
+    message: "",
+    scanned: 0,
+    indexed: 0,
+    processed: 0,
+    total: 0,
+  });
+
+  const appendLog = useCallback((text: string, tone?: BackendLogEntry["tone"]) => {
+    setLogs((current) => [...current.slice(-119), { id: Date.now() + Math.random(), text, tone }]);
+  }, []);
 
   const refresh = useCallback(async () => {
     if (!window.nexplay) {
       setSnapshot(fallbackSnapshot);
-      setError("请从 Electron 窗口使用 NexPlay；浏览器中的 Vite 页面无法访问本地 Rust 后端。");
+      setError("当前页面没有连接到 NexPlay 后端。请从 Electron 应用窗口使用。");
       setLoading(false);
       return fallbackSnapshot;
     }
@@ -82,9 +161,25 @@ export function useBackendSnapshot() {
       return null;
     }
 
-    const response = await window.nexplay.scanLibrary();
+    setLogs([]);
+    setScanStatus({
+      running: true,
+      stage: "scan",
+      message: "正在启动扫描",
+      scanned: 0,
+      indexed: 0,
+      processed: 0,
+      total: 0,
+    });
+    const response = normalizeScanResponse(await window.nexplay.scanLibrary());
     setSnapshot(response.snapshot);
     setError(null);
+    setScanStatus((current) => ({
+      ...current,
+      running: false,
+      stage: "done",
+      message: `扫描完成：${response.summary.scannedFiles} 个文件，整理 ${response.scraped} 个`,
+    }));
     return response;
   }, []);
 
@@ -92,10 +187,78 @@ export function useBackendSnapshot() {
     void refresh();
   }, [refresh]);
 
+  useEffect(() => {
+    if (!window.nexplay?.onBackendEvent) {
+      return;
+    }
+
+    return window.nexplay.onBackendEvent((event) => {
+      if (event.message) {
+        appendLog(event.message, event.type.toLowerCase().includes("failed") ? "danger" : "neutral");
+      }
+
+      switch (event.type) {
+        case "scanStarted":
+          setScanStatus({
+            running: true,
+            stage: "scan",
+            message: event.message || "扫描已开始",
+            scanned: 0,
+            indexed: 0,
+            processed: 0,
+            total: 0,
+          });
+          break;
+        case "scanProgress":
+          setScanStatus((current) => ({
+            ...current,
+            running: true,
+            stage: "scan",
+            message: event.message || "正在扫描文件",
+            scanned: event.scanned ?? current.scanned,
+            indexed: event.indexed ?? current.indexed,
+          }));
+          break;
+        case "scanFinished":
+          const summary = normalizeScanSummary(event.summary);
+          setScanStatus((current) => ({
+            ...current,
+            running: true,
+            stage: "metadata",
+            message: "文件扫描完成，正在整理元数据",
+            scanned: summary.scannedFiles || current.scanned,
+            indexed: summary.scannedFiles || current.indexed,
+          }));
+          break;
+        case "metadataProgress":
+          setScanStatus((current) => ({
+            ...current,
+            running: true,
+            stage: "metadata",
+            message: event.message || "正在整理元数据",
+            processed: event.processed ?? current.processed,
+            total: event.total ?? current.total,
+          }));
+          break;
+        case "scanFailed":
+        case "metadataFailed":
+          setScanStatus((current) => ({
+            ...current,
+            running: false,
+            stage: "failed",
+            message: event.message || "扫描失败",
+          }));
+          break;
+      }
+    });
+  }, [appendLog]);
+
   return {
     ...snapshot,
     loading,
     error,
+    logs,
+    scanStatus,
     refresh,
     scanLibrary,
   };

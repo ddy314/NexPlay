@@ -149,6 +149,28 @@ pub struct UiSeriesCardData {
     pub linked_episode_count: usize,
     pub total_size: u64,
     pub latest_file_name: String,
+    pub local_files: Vec<UiSeriesFileData>,
+    pub episodes: Vec<UiSeriesEpisodeData>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct UiSeriesFileData {
+    pub media_id: i64,
+    pub file_name: String,
+    pub file_size: u64,
+    pub episode_number: Option<f64>,
+    pub modified_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct UiSeriesEpisodeData {
+    pub episode_number: f64,
+    pub title: String,
+    pub title_cn: String,
+    pub air_date: String,
+    pub media_id: Option<i64>,
+    pub file_name: Option<String>,
+    pub file_size: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize)]

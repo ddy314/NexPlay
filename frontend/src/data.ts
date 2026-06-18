@@ -25,6 +25,27 @@ export type Subject = {
   newEpisode?: boolean;
   metadataReady?: boolean;
   fileSummary: string;
+  localFiles?: LocalFile[];
+  episodesDetail?: EpisodeDetail[];
+};
+
+export type LocalFile = {
+  mediaId: number;
+  fileName: string;
+  fileSize: string;
+  episode?: number;
+  modifiedAt: number;
+};
+
+export type EpisodeDetail = {
+  episode: number;
+  title: string;
+  titleCn: string;
+  airDate: string;
+  cached: boolean;
+  mediaId?: number;
+  fileName?: string;
+  fileSize?: string;
 };
 
 export const STATUS_LABEL: Record<MatchStatus, string> = {

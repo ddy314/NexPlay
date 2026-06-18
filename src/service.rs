@@ -9,7 +9,7 @@ use reqwest::blocking::{Client, RequestBuilder};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::config::{ConfigStore, DandanplayConfig};
+use crate::config::{AppConfig, ConfigStore, DandanplayConfig};
 use crate::domain::{
     DanmakuMatch, MediaItem, UiCandidateData, UiMediaCardData, UiSubjectDetailData, WatchProgress,
 };
@@ -19,6 +19,12 @@ use crate::metadata::cache::ImageCache;
 use crate::metadata::provider::{MetadataProvider, SubjectDetail};
 use crate::repository::Repository;
 use crate::task::{self, AppEvent};
+
+#[derive(Debug, Clone, Copy)]
+struct SubjectResolution {
+    subject_id: i64,
+    episode_count: usize,
+}
 
 #[derive(Clone)]
 pub struct MediaService {
@@ -126,6 +132,14 @@ impl MediaService {
         }
     }
 
+    pub fn config_snapshot(&self) -> AppConfig {
+        self.config.snapshot()
+    }
+
+    pub fn replace_config(&self, config: AppConfig) -> AppResult<AppConfig> {
+        self.config.replace(config)
+    }
+
     pub fn open_media(&self, media: &MediaItem) -> AppResult<()> {
         if media.deleted_at.is_some() || !media.path.is_file() {
             return Err(AppError::MediaNotFound);
@@ -145,6 +159,14 @@ impl MediaService {
         Ok(())
     }
 
+    pub fn open_media_by_id(&self, media_id: i64) -> AppResult<()> {
+        let media = self
+            .repository
+            .get_media(media_id)?
+            .ok_or(AppError::MediaNotFound)?;
+        self.open_media(&media)
+    }
+
     pub fn start_scan(&self) {
         let roots = self.config.snapshot().media_libraries;
         if roots.is_empty() {
@@ -162,9 +184,15 @@ impl MediaService {
             return Ok(crate::domain::ScanSummary::default());
         }
 
-        let (summary, _) =
-            task::scan_media_blocking(self.repository.clone(), &roots, &self.events)
-                .map_err(AppError::Api)?;
+        let _ = self.events.send(AppEvent::ScanStarted);
+        self.send_log(format!("scan started for {} folder(s)", roots.len()));
+        let (summary, _) = task::scan_media_blocking(self.repository.clone(), &roots, &self.events)
+            .map_err(AppError::Api)?;
+        let media = self.repository.list_media(false)?;
+        let _ = self.events.send(AppEvent::ScanFinished {
+            summary: summary.clone(),
+            media,
+        });
         Ok(summary)
     }
 
@@ -396,7 +424,7 @@ impl MetadataService {
     }
 
     pub fn scrape_library_blocking(&self) -> AppResult<usize> {
-        let media = self.repository.unmatched_media()?;
+        let media = self.repository.metadata_scrape_targets()?;
         if media.is_empty() {
             return Ok(0);
         }
@@ -404,8 +432,20 @@ impl MetadataService {
         let provider = self.provider()?;
         let mut groups = std::collections::BTreeMap::<i64, Vec<(MediaItem, DanmakuMatch)>>::new();
         let mut scraped = 0;
+        let total = media.len();
 
-        for item in media {
+        for (index, item) in media.into_iter().enumerate() {
+            let _ = self.events.send(AppEvent::MetadataMatchProgress {
+                processed: index,
+                total,
+            });
+            if crate::metadata::matcher::is_supplemental_video(&item.file_name) {
+                let _ = self.events.send(AppEvent::Log(format!(
+                    "skip supplemental video for automatic episode binding: #{} {}",
+                    item.id, item.file_name
+                )));
+                continue;
+            }
             match self.danmaku.cached_or_match_dandanplay(&item) {
                 Ok(Some(match_result)) if match_result.exact => {
                     if let Some(anime_id) = match_result.anime_id {
@@ -416,14 +456,14 @@ impl MetadataService {
                     }
                 }
                 Ok(Some(_)) | Ok(None) => {
-                    return Err(AppError::Api(format!(
-                        "dandanplay did not exact-match media #{} ({})",
+                    let _ = self.events.send(AppEvent::Log(format!(
+                        "skip non-exact dandanplay match for media #{} ({})",
                         item.id, item.file_name
                     )));
                 }
                 Err(error) => {
-                    return Err(AppError::Api(format!(
-                        "dandanplay match failed for {}: {error}",
+                    let _ = self.events.send(AppEvent::Log(format!(
+                        "skip dandanplay match failure for {}: {error}",
                         item.file_name
                     )));
                 }
@@ -431,33 +471,79 @@ impl MetadataService {
         }
 
         for (anime_id, items) in groups {
-            let subject_id = self.resolve_bangumi_subject_for_dandanplay_group(
-                &provider,
-                anime_id,
-                &items,
-            )?;
+            let group_resolution = match self
+                .resolve_bangumi_subject_for_dandanplay_group(&provider, anime_id, &items)
+            {
+                Ok(resolution) => resolution,
+                Err(error) => {
+                    let _ = self.events.send(AppEvent::Log(format!(
+                        "skip bangumi resolution for dandanplay anime #{anime_id}: {error}"
+                    )));
+                    continue;
+                }
+            };
+            let resolve_items_individually =
+                should_resolve_dandanplay_items_individually(&items, group_resolution);
             for (media, danmaku) in items {
+                let subject_id = if resolve_items_individually {
+                    self.resolve_bangumi_subject_for_dandanplay_item(
+                        &provider, anime_id, &media, &danmaku,
+                    )
+                    .map(|resolution| resolution.subject_id)
+                    .unwrap_or_else(|error| {
+                        let _ = self.events.send(AppEvent::Log(format!(
+                            "fallback to grouped subject for {}: {error}",
+                            media.file_name
+                        )));
+                        group_resolution.subject_id
+                    })
+                } else {
+                    group_resolution.subject_id
+                };
                 let now = task::unix_timestamp_ms();
-                self.repository.link_media_subject(
+                if let Err(error) = self.repository.replace_media_subject_link(
                     media.id,
                     subject_id,
-                    "dandanplay_anime_mapping",
+                    if resolve_items_individually {
+                        "dandanplay_episode_mapping"
+                    } else {
+                        "dandanplay_anime_mapping"
+                    },
                     if danmaku.exact { 0.98 } else { 0.78 },
                     true,
                     now,
-                )?;
-                self.repository.link_media_episode_by_number(
+                ) {
+                    let _ = self.events.send(AppEvent::Log(format!(
+                        "failed to link subject for {}: {error}",
+                        media.file_name
+                    )));
+                    continue;
+                }
+                if let Err(error) = self.repository.link_media_episode_by_number(
                     media.id,
                     subject_id,
                     episode_number_from_danmaku(&danmaku),
                     danmaku.episode.as_deref(),
                     if danmaku.exact { 0.98 } else { 0.78 },
                     now,
-                )?;
+                ) {
+                    let _ = self.events.send(AppEvent::Log(format!(
+                        "failed to link episode for {}: {error}",
+                        media.file_name
+                    )));
+                    continue;
+                }
                 scraped += 1;
             }
         }
 
+        let _ = self.events.send(AppEvent::MetadataMatchProgress {
+            processed: total,
+            total,
+        });
+        let _ = self.events.send(AppEvent::Log(format!(
+            "metadata scrape finished: {scraped}/{total} media linked"
+        )));
         Ok(scraped)
     }
 
@@ -466,13 +552,16 @@ impl MetadataService {
         provider: &BangumiProvider,
         anime_id: i64,
         items: &[(MediaItem, DanmakuMatch)],
-    ) -> AppResult<i64> {
+    ) -> AppResult<SubjectResolution> {
         let external_id = anime_id.to_string();
         if let Some(subject_id) = self
             .repository
             .external_subject_mapping("dandanplay", &external_id)?
         {
-            return Ok(subject_id);
+            return Ok(SubjectResolution {
+                subject_id,
+                episode_count: self.repository.subject_episode_count(subject_id)?,
+            });
         }
 
         let keyword = items
@@ -488,26 +577,82 @@ impl MetadataService {
         };
 
         let detail = provider.get_subject(&candidate.provider_subject_id)?;
-        let subject_id = self.upsert_subject_detail_with_children(provider, &detail)?;
+        let resolution = self.upsert_subject_detail_with_children(provider, &detail)?;
         self.repository.upsert_external_subject_mapping(
             "dandanplay",
             &external_id,
-            subject_id,
+            resolution.subject_id,
             detail.title_cn.as_deref().or(Some(detail.title.as_str())),
             task::unix_timestamp_ms(),
         )?;
-        Ok(subject_id)
+        Ok(resolution)
+    }
+
+    fn resolve_bangumi_subject_for_dandanplay_item(
+        &self,
+        provider: &BangumiProvider,
+        anime_id: i64,
+        media: &MediaItem,
+        danmaku: &DanmakuMatch,
+    ) -> AppResult<SubjectResolution> {
+        let external_id = danmaku
+            .episode_id
+            .map(|episode_id| episode_id.to_string())
+            .unwrap_or_else(|| format!("{anime_id}:{}", media.id));
+        if let Some(subject_id) = self
+            .repository
+            .external_subject_mapping("dandanplay_episode_v2", &external_id)?
+        {
+            return Ok(SubjectResolution {
+                subject_id,
+                episode_count: self.repository.subject_episode_count(subject_id)?,
+            });
+        }
+
+        let keywords = keyword_variants_for_dandanplay_item(danmaku).unwrap_or_else(|| {
+            vec![crate::metadata::matcher::keyword_for_media(
+                media,
+                Some(danmaku),
+            )]
+        });
+        let mut selected = None;
+        for keyword in &keywords {
+            let candidates = provider.search_subjects(keyword)?;
+            if let Some(candidate) = choose_bangumi_candidate(keyword, &candidates) {
+                selected = Some(candidate.provider_subject_id.clone());
+                break;
+            }
+        }
+        let Some(provider_subject_id) = selected else {
+            return Err(AppError::Api(format!(
+                "bangumi subject not found for dandanplay episode {external_id}: {}",
+                keywords.join(" | ")
+            )));
+        };
+
+        let detail = provider.get_subject(&provider_subject_id)?;
+        let resolution = self.upsert_subject_detail_with_children(provider, &detail)?;
+        self.repository.upsert_external_subject_mapping(
+            "dandanplay_episode_v2",
+            &external_id,
+            resolution.subject_id,
+            detail.title_cn.as_deref().or(Some(detail.title.as_str())),
+            task::unix_timestamp_ms(),
+        )?;
+        Ok(resolution)
     }
 
     fn upsert_subject_detail_with_children(
         &self,
         provider: &BangumiProvider,
         detail: &SubjectDetail,
-    ) -> AppResult<i64> {
+    ) -> AppResult<SubjectResolution> {
         let subject_id = self
             .repository
             .upsert_subject_detail(detail, task::unix_timestamp_ms())?;
+        let mut episode_count = 0;
         if let Ok(episodes) = provider.get_episodes(&detail.provider_subject_id) {
+            episode_count = episodes.len();
             self.repository
                 .upsert_subject_episodes(subject_id, &episodes)?;
         }
@@ -522,7 +667,10 @@ impl MetadataService {
                 ("hero", detail.images.large.clone()),
             ],
         )?;
-        Ok(subject_id)
+        Ok(SubjectResolution {
+            subject_id,
+            episode_count,
+        })
     }
 
     pub fn test_bangumi_connection(&self) {
@@ -613,23 +761,129 @@ fn image_cache_root(database_path: &std::path::Path) -> PathBuf {
         .join("images")
 }
 
+fn should_resolve_dandanplay_items_individually(
+    items: &[(MediaItem, DanmakuMatch)],
+    group_resolution: SubjectResolution,
+) -> bool {
+    group_resolution.episode_count <= 1
+        && items.len() > 1
+        && items
+            .iter()
+            .filter_map(|(_, danmaku)| danmaku.episode.as_deref())
+            .any(|episode| !strip_episode_prefix(episode).trim().is_empty())
+}
+
+fn keyword_variants_for_dandanplay_item(danmaku: &DanmakuMatch) -> Option<Vec<String>> {
+    let anime_title = danmaku
+        .anime_title
+        .as_deref()
+        .or_else(|| danmaku.title.split(" - ").next())
+        .map(str::trim)
+        .filter(|title| !title.is_empty())?;
+    let episode_title = danmaku
+        .episode
+        .as_deref()
+        .map(strip_episode_prefix)
+        .map(|title| title.replace(['/', '_'], " "))
+        .map(|title| title.split_whitespace().collect::<Vec<_>>().join(" "))
+        .filter(|title| !title.is_empty())?;
+    let primary = format!("{anime_title} {episode_title}");
+    let mut variants = vec![primary.clone()];
+    if primary.contains("空之境界") {
+        variants.push(primary.replace("空之境界", "空の境界"));
+    }
+    if episode_title.contains('の') || episode_title.contains('藍') || episode_title.contains('終')
+    {
+        variants.push(format!("空の境界 {episode_title}"));
+    }
+    if episode_title.contains("伽蓝") || episode_title.contains("终章") {
+        variants.push(format!("空之境界 {episode_title}"));
+    }
+    variants.dedup();
+    Some(variants)
+}
+
+fn strip_episode_prefix(value: &str) -> String {
+    let mut rest = value.trim();
+    if let Some(stripped) = rest.strip_prefix('第') {
+        let digit_count = stripped
+            .chars()
+            .take_while(|ch| ch.is_ascii_digit())
+            .map(char::len_utf8)
+            .sum::<usize>();
+        if digit_count > 0 {
+            let after_digits = &stripped[digit_count..];
+            if let Some(after_marker) = after_digits
+                .strip_prefix('话')
+                .or_else(|| after_digits.strip_prefix('話'))
+            {
+                rest = after_marker;
+            }
+        }
+    } else if let Some(stripped) = rest.strip_prefix('S') {
+        let digit_count = stripped
+            .chars()
+            .take_while(|ch| ch.is_ascii_digit())
+            .map(char::len_utf8)
+            .sum::<usize>();
+        if digit_count > 0 {
+            rest = &stripped[digit_count..];
+        }
+    }
+    rest.trim_start_matches([' ', '\t', '-', ':', '：'])
+        .trim()
+        .to_string()
+}
+
 fn choose_bangumi_candidate<'a>(
     keyword: &str,
     candidates: &'a [crate::metadata::provider::SubjectSearchResult],
 ) -> Option<&'a crate::metadata::provider::SubjectSearchResult> {
     let normalized_keyword = normalize_title(keyword);
+    let tokens = significant_title_tokens(keyword);
+    let keyword_has_3d = normalized_keyword.contains("3d");
+
     candidates
         .iter()
-        .find(|candidate| {
-            candidate
+        .filter_map(|candidate| {
+            let title = normalize_title(&candidate.title);
+            let title_cn = candidate
                 .title_cn
                 .as_deref()
                 .map(normalize_title)
-                .as_deref()
-                == Some(normalized_keyword.as_str())
-                || normalize_title(&candidate.title) == normalized_keyword
+                .unwrap_or_default();
+            let combined = format!("{title}{title_cn}");
+            if title == normalized_keyword || title_cn == normalized_keyword {
+                return Some((candidate, 10_000));
+            }
+
+            let matched = tokens
+                .iter()
+                .filter(|token| combined.contains(token.as_str()))
+                .count();
+            let required = tokens
+                .last()
+                .map(|token| combined.contains(token.as_str()))
+                .unwrap_or(true);
+            if !required || (tokens.len() > 1 && matched < 2) {
+                return None;
+            }
+
+            let mut score = matched as i32 * 100;
+            if combined.contains("3d") && !keyword_has_3d {
+                score -= 250;
+            }
+            Some((candidate, score))
         })
-        .or_else(|| candidates.first())
+        .max_by_key(|(_, score)| *score)
+        .map(|(candidate, _)| candidate)
+        .or_else(|| {
+            if tokens.is_empty() {
+                candidates.first()
+            } else {
+                None
+            }
+        })
 }
 
 fn normalize_title(value: &str) -> String {
@@ -640,12 +894,31 @@ fn normalize_title(value: &str) -> String {
         .to_ascii_lowercase()
 }
 
+fn significant_title_tokens(value: &str) -> Vec<String> {
+    value
+        .split_whitespace()
+        .map(normalize_title)
+        .filter(|token| {
+            !token.is_empty()
+                && !matches!(
+                    token.as_str(),
+                    "剧场版" | "劇場版" | "movie" | "the" | "a" | "an"
+                )
+        })
+        .collect()
+}
+
 fn episode_number_from_danmaku(danmaku: &DanmakuMatch) -> Option<f64> {
     danmaku
         .episode
         .as_deref()
         .and_then(extract_episode_number)
-        .or_else(|| danmaku.episode_id.map(|id| (id % 1000) as f64).filter(|v| *v > 0.0))
+        .or_else(|| {
+            danmaku
+                .episode_id
+                .map(|id| (id % 1000) as f64)
+                .filter(|v| *v > 0.0)
+        })
 }
 
 fn extract_episode_number(value: &str) -> Option<f64> {

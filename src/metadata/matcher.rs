@@ -18,6 +18,33 @@ pub fn keyword_for_media(media: &MediaItem, danmaku: Option<&DanmakuMatch>) -> S
     clean_file_title(&media.file_name)
 }
 
+pub fn is_supplemental_video(file_name: &str) -> bool {
+    let normalized = file_name
+        .to_ascii_lowercase()
+        .replace(['_', '.', '-', '[', ']', '(', ')'], " ");
+    let tokens = normalized.split_whitespace().collect::<Vec<_>>();
+    let joined = tokens.join(" ");
+
+    tokens.iter().any(|token| {
+        matches!(
+            *token,
+            "menu" | "pv" | "cm" | "op" | "ed" | "ncop" | "nced" | "sp" | "sps" | "bonus"
+        ) || token.starts_with("menu")
+            || token.starts_with("pv")
+            || token.starts_with("ncop")
+            || token.starts_with("nced")
+            || token.starts_with("sp")
+    }) || joined.contains("web preview")
+        || joined.contains("creditless")
+        || joined.contains("clean opening")
+        || joined.contains("clean ending")
+        || joined.contains("textless")
+        || joined.contains("trailer")
+        || joined.contains("preview")
+        || joined.contains("drama")
+        || joined.contains("reminder")
+}
+
 fn clean_file_title(file_name: &str) -> String {
     let stem = Path::new(file_name)
         .file_stem()

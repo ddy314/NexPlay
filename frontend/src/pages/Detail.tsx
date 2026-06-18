@@ -1,20 +1,21 @@
 import { useMemo } from "react";
-import { makeEpisodes, STATUS_COLOR, STATUS_LABEL, type Subject } from "../data";
-import { Badge, Button, Card, Chip, Progress, SearchField } from "../ui";
+import { type Subject } from "../data";
+import { Card, Chip, Progress } from "../ui";
 import { Poster } from "../MediaCard";
-import {
-  ArrowLeft,
-  CheckIcon,
-  DanmakuIcon,
-  FileIcon,
-  MoreIcon,
-  PlayIcon,
-  RefreshIcon,
-  ScanIcon,
-  SparkleIcon,
-  StarIcon,
-} from "../icons";
+import { ArrowLeft, CheckIcon, FileIcon, StarIcon } from "../icons";
 import { cn } from "../utils/cn";
+
+type EpisodeRowData = {
+  key: string;
+  episode: number;
+  title: string;
+  titleCn: string;
+  airDate: string;
+  cached: boolean;
+  mediaId?: number;
+  fileName?: string;
+  fileSize?: string;
+};
 
 export function DetailPage({
   subject,
@@ -25,39 +26,55 @@ export function DetailPage({
   onBack: () => void;
   onSnack: (text: string, tone?: "neutral" | "success" | "danger") => void;
 }) {
-  const episodes = useMemo(() => makeEpisodes(subject), [subject]);
+  const rows = useMemo(() => makeEpisodeRows(subject), [subject]);
+  const cachedCount = rows.filter((row) => row.cached).length;
+  const heroAsset = subject.hero || subject.poster;
+  const heroSrc = heroAsset ? window.nexplay?.resolveAssetUrl(heroAsset) ?? heroAsset : "";
   const isUnmatched = subject.status === "unmatched" || subject.status === "failed";
+  const visibleTags = subject.tags.slice(0, 6);
+
+  const openEpisode = async (row: EpisodeRowData) => {
+    if (!row.mediaId) {
+      onSnack(`第 ${row.episode} 集没有对应的本地文件`, "danger");
+      return;
+    }
+    if (!window.nexplay) {
+      onSnack("当前不是 Electron 环境，无法打开本地文件", "danger");
+      return;
+    }
+
+    try {
+      await window.nexplay.openMedia(row.mediaId);
+      onSnack(`已打开第 ${row.episode} 集`, "success");
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : String(caught);
+      onSnack(`打开失败：${message}`, "danger");
+    }
+  };
 
   return (
     <div className="relative pb-20">
-      {/* Hero */}
-      <div className="relative h-[440px] w-full overflow-hidden">
-        {subject.hero ? (
-          <img src={subject.hero} alt={subject.title} className="absolute inset-0 size-full object-cover" />
+      <div className="relative h-[420px] w-full overflow-hidden">
+        {heroSrc ? (
+          <img src={heroSrc} alt={subject.title} className="absolute inset-0 size-full object-cover" />
         ) : (
           <div className="absolute inset-0 bg-gradient-to-br from-[var(--color-surface-3)] via-[var(--color-surface-2)] to-[var(--color-surface)]" />
         )}
-        <div className="absolute inset-0 bg-gradient-to-t from-[var(--color-bg)] via-[var(--color-bg)]/70 to-transparent" />
-        <div className="absolute inset-0 bg-gradient-to-r from-[var(--color-bg)]/70 via-transparent to-[var(--color-bg)]/30" />
+        <div className="absolute inset-0 bg-gradient-to-t from-[var(--color-bg)] via-[var(--color-bg)]/75 to-transparent" />
+        <div className="absolute inset-0 bg-gradient-to-r from-[var(--color-bg)]/75 via-[var(--color-bg)]/20 to-[var(--color-bg)]/20" />
 
-        {/* Top bar */}
-        <div className="absolute top-0 inset-x-0 flex items-center justify-between px-8 py-5">
+        <div className="absolute top-0 inset-x-0 flex items-center px-8 py-5">
           <button
             onClick={onBack}
             className="inline-flex items-center gap-2 h-9 px-3 rounded-full bg-black/40 backdrop-blur-md text-white text-[13px] hover:bg-black/60 transition-colors"
           >
             <ArrowLeft className="size-4" />
-            Back to Library
-          </button>
-          <button className="size-9 grid place-items-center rounded-full bg-black/40 backdrop-blur-md text-white hover:bg-black/60">
-            <MoreIcon className="size-4" />
+            返回媒体库
           </button>
         </div>
       </div>
 
-      {/* Main */}
-      <div className="px-10 -mt-44 relative grid grid-cols-[260px_1fr] gap-10 items-start">
-        {/* Poster */}
+      <div className="px-10 -mt-40 relative grid grid-cols-[240px_1fr] gap-10 items-start">
         <div className="relative">
           <div className="aspect-[2/3] rounded-2xl overflow-hidden ring-1 ring-black/40 shadow-2xl shadow-black/60">
             <Poster src={subject.poster} alt={subject.title} className="size-full" />
@@ -66,112 +83,54 @@ export function DetailPage({
             <Card className="mt-4 p-4">
               <div className="flex items-center gap-1.5 text-amber-300">
                 <StarIcon className="size-4" />
-                <span className="text-[22px] font-semibold tabular-nums">
-                  {subject.rating.toFixed(1)}
-                </span>
-                <span className="text-[12px] text-[var(--color-on-surface-faint)] ml-auto">
-                  #{subject.rank}
-                </span>
+                <span className="text-[22px] font-semibold tabular-nums">{subject.rating.toFixed(1)}</span>
+                {subject.rank > 0 && (
+                  <span className="text-[12px] text-[var(--color-on-surface-faint)] ml-auto">
+                    #{subject.rank}
+                  </span>
+                )}
               </div>
-              <div className="text-[11px] text-[var(--color-on-surface-faint)] mt-1">
-                Bangumi 评分 · 1,243 人
-              </div>
+              <div className="text-[11px] text-[var(--color-on-surface-faint)] mt-1">Bangumi 评分</div>
             </Card>
           )}
         </div>
 
-        {/* Info */}
-        <div className="pt-16">
-          <div className="flex items-center gap-2 mb-4">
-            <span
-              className={cn(
-                "inline-flex items-center px-2 h-6 rounded-full text-[11px] font-medium ring-1 ring-inset",
-                STATUS_COLOR[subject.status]
-              )}
-            >
-              {STATUS_LABEL[subject.status]}
-            </span>
-            {subject.newEpisode && (
-              <Badge tone="primary">
-                <SparkleIcon className="size-3" /> NEW EPISODE
-              </Badge>
-            )}
-            {subject.metadataReady && <Badge tone="success">METADATA READY</Badge>}
-          </div>
-
+        <div className="pt-14 min-w-0">
           <h1 className="text-[44px] font-semibold tracking-tight leading-[1.05]">
             {isUnmatched ? subject.fileSummary.split(".")[0] : subject.title}
           </h1>
           {!isUnmatched && (
             <div className="text-[18px] text-[var(--color-on-surface-muted)] mt-1 font-light">
-              {subject.titleCn} · {subject.year} · {subject.airDate}
+              {subject.titleCn} · {subject.year || "年份未知"} · {subject.airDate || "日期未知"}
             </div>
           )}
 
-          {!isUnmatched && (
+          {!isUnmatched && visibleTags.length > 0 && (
             <div className="mt-5 flex flex-wrap gap-2">
-              {subject.tags.map((t) => (
-                <Chip key={t}>{t}</Chip>
+              {visibleTags.map((tag) => (
+                <Chip key={tag}>{tag}</Chip>
               ))}
             </div>
           )}
 
           {!isUnmatched && subject.summary && (
-            <p className="text-[15px] leading-relaxed text-[var(--color-on-surface-muted)] mt-6 max-w-3xl">
+            <p className="text-[15px] leading-relaxed text-[var(--color-on-surface-muted)] mt-6 max-w-3xl line-clamp-5">
               {subject.summary}
             </p>
           )}
 
-          {/* Primary actions */}
-          <div className="mt-7 flex flex-wrap items-center gap-2">
-            {subject.progress > 0 && subject.progress < 1 ? (
-              <Button size="lg" icon={<PlayIcon className="size-4" />}>
-                继续 EP{subject.currentEpisode}
-              </Button>
-            ) : (
-              <Button size="lg" icon={<PlayIcon className="size-4" />}>
-                Play
-              </Button>
-            )}
-            <Button
-              size="lg"
-              variant="tonal"
-              icon={<DanmakuIcon className="size-4" />}
-              onClick={() => onSnack("弹幕加载 IPC 尚未接入")}
-            >
-              Load Danmaku
-            </Button>
-            <Button
-              size="lg"
-              variant="outlined"
-              icon={<RefreshIcon className="size-4" />}
-              onClick={() => onSnack("正在重新匹配…")}
-            >
-              Rematch
-            </Button>
-            {subject.status === "tentative" && (
-              <Button
-                size="lg"
-                variant="outlined"
-                icon={<CheckIcon className="size-4" />}
-                onClick={() => onSnack("匹配已确认", "success")}
-              >
-                Confirm Match
-              </Button>
-            )}
-            <Button size="lg" variant="text">
-              Refresh Metadata
-            </Button>
-            <Button size="lg" variant="text">
-              Cache Images
-            </Button>
+          <div className="mt-6 flex flex-wrap items-center gap-x-5 gap-y-2 text-[13px] text-[var(--color-on-surface-muted)]">
+            <span className="tabular-nums">{subject.files} 个本地文件</span>
+            <span className="size-1 rounded-full bg-[var(--color-on-surface-faint)]" />
+            <span className="tabular-nums">{subject.totalSize}</span>
+            <span className="size-1 rounded-full bg-[var(--color-on-surface-faint)]" />
+            <span className="tabular-nums">{cachedCount}/{rows.length || subject.episodes || "?"} 集已缓存</span>
           </div>
 
-          {/* Watching progress strip */}
           {subject.progress > 0 && subject.progress < 1 && (
             <div className="mt-6 max-w-lg">
               <div className="flex items-center justify-between text-[12px] text-[var(--color-on-surface-faint)] mb-1.5">
-                <span>EP{subject.currentEpisode} · 进行中</span>
+                <span>{subject.watchedEpisodes}/{subject.episodes || "?"} 集</span>
                 <span className="tabular-nums">{Math.round(subject.progress * 100)}%</span>
               </div>
               <Progress value={subject.progress} />
@@ -180,175 +139,120 @@ export function DetailPage({
         </div>
       </div>
 
-      {/* Unmatched candidate UI */}
-      {isUnmatched && (
-        <div className="px-10 mt-12">
-          <h2 className="text-[20px] font-semibold tracking-tight mb-1">未匹配 · 搜索 Bangumi</h2>
-          <div className="text-[13px] text-[var(--color-on-surface-faint)] mb-4">
-            根据文件名 <code className="px-1 rounded bg-white/5 font-mono">{subject.fileSummary}</code> 查找候选条目
+      <section className="px-10 mt-14">
+        <div className="flex items-end justify-between mb-4">
+          <div>
+            <h2 className="text-[22px] font-semibold tracking-tight">分集与本地缓存</h2>
+            <div className="text-[13px] text-[var(--color-on-surface-faint)] mt-1">
+              {subject.files} 个本地文件 · {subject.totalSize}
+            </div>
           </div>
-          <SearchField value={subject.title} onChange={() => {}} className="max-w-xl" placeholder="搜索 Bangumi…" />
-          <Card className="mt-6 p-5 text-[13px] text-[var(--color-on-surface-muted)]">
-            当前没有后端返回的候选条目。请先扫描媒体库，再执行元数据匹配。
-          </Card>
         </div>
-      )}
 
-      {/* Local files & Episodes */}
-      <div className="px-10 mt-14 grid grid-cols-1 lg:grid-cols-[1.2fr_1fr] gap-8">
-        {/* Files */}
-        <section>
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-[20px] font-semibold tracking-tight">本地文件</h2>
-            <div className="text-[12px] text-[var(--color-on-surface-faint)]">
-              {subject.files} 个文件 · {subject.totalSize}
-            </div>
+        <Card className="overflow-hidden">
+          <div className="grid grid-cols-[88px_1fr_120px_160px] gap-4 px-5 py-3 text-[11px] uppercase tracking-wider text-[var(--color-on-surface-faint)] border-b border-[var(--color-outline-soft)] bg-[var(--color-surface)]">
+            <div>EP</div>
+            <div>Title</div>
+            <div>Cache</div>
+            <div className="text-right">File</div>
           </div>
-          <Card className="overflow-hidden">
-            <div className="grid grid-cols-[1fr_70px_90px_90px_60px] gap-3 px-4 py-2.5 text-[11px] uppercase tracking-wider text-[var(--color-on-surface-faint)] border-b border-[var(--color-outline-soft)] bg-[var(--color-surface)]">
-              <div>Filename</div>
-              <div>EP</div>
-              <div>Size</div>
-              <div>Last</div>
-              <div className="text-right">Play</div>
-            </div>
-            {episodes.slice(0, Math.min(8, subject.files)).map((e, i) => (
-              <FileRow
-                key={e.index}
-                ep={e.index}
-                name={i === 0 ? subject.fileSummary : `${subject.fileSummary} #${e.index}`}
-                size={subject.totalSize}
-                last={e.watched ? "已播放" : "—"}
-                progress={
-                  subject.currentEpisode === e.index ? subject.progress :
-                    e.watched ? 1 : 0
-                }
-                isLast={i === Math.min(8, subject.files) - 1}
-              />
+          <div className="divide-y divide-[var(--color-outline-soft)]">
+            {rows.map((row) => (
+              <EpisodeCacheRow key={row.key} row={row} onOpen={() => void openEpisode(row)} />
             ))}
-          </Card>
-        </section>
-
-        {/* Episodes */}
-        <section>
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-[20px] font-semibold tracking-tight">分集</h2>
-            <div className="flex items-center gap-2">
-              <Chip selected>All</Chip>
-              <Chip>Unwatched</Chip>
-            </div>
           </div>
-          <Card className="divide-y divide-[var(--color-outline-soft)] max-h-[520px] overflow-y-auto">
-            {episodes.map((e) => (
-              <EpisodeRow
-                key={e.index}
-                index={e.index}
-                title={e.title}
-                duration={e.duration}
-                watched={e.watched}
-                current={subject.currentEpisode === e.index}
-                airDate={e.airDate}
-              />
-            ))}
-          </Card>
-        </section>
-      </div>
-
+        </Card>
+      </section>
     </div>
   );
 }
 
-function FileRow({
-  ep,
-  name,
-  size,
-  last,
-  progress,
-  isLast,
-}: {
-  ep: number;
-  name: string;
-  size: string;
-  last: string;
-  progress: number;
-  isLast: boolean;
-}) {
+function EpisodeCacheRow({ row, onOpen }: { row: EpisodeRowData; onOpen: () => void }) {
+  const title = row.titleCn || row.title || `Episode ${row.episode}`;
+
   return (
-    <div
+    <button
+      type="button"
+      onClick={onOpen}
+      disabled={!row.cached}
       className={cn(
-        "grid grid-cols-[1fr_70px_90px_90px_60px] gap-3 px-4 py-3 items-center text-[13px] hover:bg-white/[0.04] transition-colors",
-        !isLast && "border-b border-[var(--color-outline-soft)]"
+        "w-full text-left grid grid-cols-[88px_1fr_120px_160px] gap-4 px-5 py-4 items-center text-[13px] transition-colors",
+        row.cached
+          ? "hover:bg-[var(--color-surface-2)] cursor-pointer"
+          : "cursor-default"
       )}
     >
-      <div className="min-w-0 flex items-center gap-2">
-        <FileIcon className="size-4 shrink-0 text-[var(--color-on-surface-faint)]" />
-        <div className="min-w-0">
-          <div className="truncate font-mono text-[12.5px]">{name}</div>
-          {progress > 0 && progress < 1 && (
-            <div className="mt-1.5"><Progress value={progress} /></div>
-          )}
+      <div className="tabular-nums text-[var(--color-on-surface-muted)]">
+        EP{String(row.episode).padStart(2, "0")}
+      </div>
+      <div className="min-w-0">
+        <div className="text-[15px] font-medium truncate">{title}</div>
+        <div className="text-[12px] text-[var(--color-on-surface-faint)] mt-0.5 truncate">
+          {row.titleCn && row.title && row.titleCn !== row.title ? row.title : row.airDate || "暂无播出日期"}
         </div>
       </div>
-      <div className="tabular-nums">EP{String(ep).padStart(2, "0")}</div>
-      <div className="text-[var(--color-on-surface-muted)] tabular-nums">{size}</div>
-      <div className="text-[var(--color-on-surface-faint)]">{last}</div>
-      <div className="flex justify-end">
-        <button className="size-8 rounded-full bg-[var(--color-primary-soft)] text-[var(--color-primary)] grid place-items-center hover:brightness-110">
-          <PlayIcon className="size-3.5 ml-0.5" />
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function EpisodeRow({
-  index,
-  title,
-  duration,
-  watched,
-  current,
-  airDate,
-}: {
-  index: number;
-  title: string;
-  duration: string;
-  watched: boolean;
-  current: boolean;
-  airDate: string;
-}) {
-  return (
-    <div
-      className={cn(
-        "flex items-center gap-3 px-4 py-3 text-[13px] hover:bg-white/[0.04] transition-colors cursor-pointer",
-        current && "bg-[var(--color-primary-soft)]/60"
-      )}
-    >
-      <div
-        className={cn(
-          "size-7 shrink-0 grid place-items-center rounded-full text-[11px] font-medium tabular-nums",
-          current
-            ? "bg-[var(--color-primary)] text-[var(--color-on-primary)]"
-            : watched
-            ? "bg-emerald-500/15 text-emerald-300 ring-1 ring-inset ring-emerald-400/30"
-            : "bg-white/5 text-[var(--color-on-surface-muted)] ring-1 ring-inset ring-[var(--color-outline-soft)]"
+      <div>
+        {row.cached ? (
+          <span className="inline-flex items-center gap-1.5 h-7 px-2.5 rounded-full bg-emerald-500/15 text-emerald-300 ring-1 ring-inset ring-emerald-400/30">
+            <CheckIcon className="size-3.5" />
+            本地
+          </span>
+        ) : (
+          <span className="inline-flex items-center gap-1.5 h-7 px-2.5 rounded-full bg-white/5 text-[var(--color-on-surface-faint)] ring-1 ring-inset ring-[var(--color-outline-soft)]">
+            <FileIcon className="size-3.5" />
+            缺失
+          </span>
         )}
-      >
-        {watched && !current ? <CheckIcon className="size-3.5" /> : index}
       </div>
-      <div className="flex-1 min-w-0">
-        <div className={cn("truncate", current && "font-medium text-[var(--color-primary)]")}>
-          第 {index} 话 · {title}
+      <div className="min-w-0 text-right">
+        <div className="truncate font-mono text-[12px] text-[var(--color-on-surface-muted)]">
+          {row.fileName || "-"}
         </div>
-        <div className="text-[11px] text-[var(--color-on-surface-faint)] mt-0.5">
-          {airDate} · {duration}
-        </div>
+        {row.fileSize && (
+          <div className="text-[11px] text-[var(--color-on-surface-faint)] mt-0.5 tabular-nums">
+            {row.fileSize}
+          </div>
+        )}
       </div>
-      {current && (
-        <Button size="sm" variant="tonal" icon={<PlayIcon className="size-3.5" />}>继续</Button>
-      )}
-    </div>
+    </button>
   );
 }
 
-// re-export ScanIcon dummy to avoid linter dropping
-export { ScanIcon };
+function makeEpisodeRows(subject: Subject): EpisodeRowData[] {
+  if (subject.episodesDetail?.length) {
+    return subject.episodesDetail.map((episode) => ({
+      key: String(episode.mediaId || `episode-${episode.episode}`),
+      episode: episode.episode,
+      title: episode.title,
+      titleCn: episode.titleCn,
+      airDate: episode.airDate,
+      cached: episode.cached,
+      mediaId: episode.mediaId,
+      fileName: episode.fileName,
+      fileSize: episode.fileSize,
+    }));
+  }
+
+  if (subject.localFiles?.length) {
+    return subject.localFiles.map((file, index) => ({
+      key: String(file.mediaId || `${file.fileName}-${index}`),
+      episode: file.episode || index + 1,
+      title: `Episode ${file.episode || index + 1}`,
+      titleCn: "",
+      airDate: "",
+      cached: true,
+      mediaId: file.mediaId,
+      fileName: file.fileName,
+      fileSize: file.fileSize,
+    }));
+  }
+
+  return Array.from({ length: subject.episodes || subject.files }, (_, index) => ({
+    key: `${subject.id}-${index}`,
+    episode: index + 1,
+    title: `Episode ${index + 1}`,
+    titleCn: "",
+    airDate: "",
+    cached: false,
+  }));
+}

@@ -46,12 +46,13 @@ export default function App() {
               loading={backend.loading}
               error={backend.error}
               onOpen={openDetail}
-              onSnack={snack.show}
             />
           ) : route === "library" ? (
             <LibraryPage
               subjects={backend.subjects}
               stats={backend.stats}
+              scanStatus={backend.scanStatus}
+              logs={backend.logs}
               onOpen={openDetail}
               onSnack={snack.show}
               onScan={async () => {
