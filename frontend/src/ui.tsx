@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode, type ButtonHTMLAttributes } from "react";
+import { useCallback, useEffect, useState, type ReactNode, type ButtonHTMLAttributes } from "react";
 import { cn } from "./utils/cn";
 import { CheckIcon, CloseIcon } from "./icons";
 
@@ -268,11 +268,15 @@ export function Snackbar({ msg, onDismiss }: { msg: SnackMsg | null; onDismiss: 
 
 export function useSnackbar() {
   const [msg, setMsg] = useState<SnackMsg | null>(null);
+  const show = useCallback((text: string, tone?: SnackMsg["tone"]) => {
+    setMsg({ id: Date.now(), text, tone });
+  }, []);
+  const dismiss = useCallback(() => setMsg(null), []);
+
   return {
     msg,
-    show: (text: string, tone?: SnackMsg["tone"]) =>
-      setMsg({ id: Date.now(), text, tone }),
-    dismiss: () => setMsg(null),
+    show,
+    dismiss,
   };
 }
 

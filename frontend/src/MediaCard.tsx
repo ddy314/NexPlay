@@ -1,16 +1,23 @@
-import { useState } from "react";
+import { memo, useState } from "react";
 import { cn } from "./utils/cn";
 import { Badge, Progress } from "./ui";
 import { STATUS_COLOR, STATUS_LABEL, type Subject } from "./data";
 
-export function Poster({
+type ImageLoading = "eager" | "lazy";
+type ImageFetchPriority = "auto" | "high" | "low";
+
+export const Poster = memo(function Poster({
   src,
   alt,
   className,
+  loading = "lazy",
+  fetchPriority = "auto",
 }: {
   src?: string;
   alt: string;
   className?: string;
+  loading?: ImageLoading;
+  fetchPriority?: ImageFetchPriority;
 }) {
   const [loaded, setLoaded] = useState(false);
   const [failed, setFailed] = useState(false);
@@ -38,7 +45,9 @@ export function Poster({
       <img
         src={resolvedSrc}
         alt={alt}
-        loading="lazy"
+        loading={loading}
+        decoding="async"
+        fetchPriority={fetchPriority}
         onLoad={() => setLoaded(true)}
         onError={() => setFailed(true)}
         className={cn(
@@ -48,18 +57,22 @@ export function Poster({
       />
     </div>
   );
-}
+});
 
-export function MediaCard({
+export const MediaCard = memo(function MediaCard({
   subject,
   onClick,
   selected,
   size = "md",
+  imageLoading = "lazy",
+  imageFetchPriority = "auto",
 }: {
   subject: Subject;
   onClick?: () => void;
   selected?: boolean;
   size?: "sm" | "md";
+  imageLoading?: ImageLoading;
+  imageFetchPriority?: ImageFetchPriority;
 }) {
   const sizeCls = size === "sm" ? "w-[150px]" : "w-[180px]";
 
@@ -75,7 +88,13 @@ export function MediaCard({
     >
       {/* Poster */}
       <div className="relative aspect-[2/3] rounded-2xl overflow-hidden bg-[var(--color-surface-2)] ring-1 ring-[var(--color-outline-soft)] group-hover:ring-[var(--color-outline)] transition-all group-hover:scale-[1.025] group-hover:shadow-xl group-hover:shadow-black/40">
-        <Poster src={subject.poster} alt={subject.title} className="absolute inset-0" />
+        <Poster
+          src={subject.poster}
+          alt={subject.title}
+          className="absolute inset-0"
+          loading={imageLoading}
+          fetchPriority={imageFetchPriority}
+        />
 
         {/* gradient bottom for legibility */}
         <div className="absolute inset-x-0 bottom-0 h-1/3 bg-gradient-to-t from-black/70 to-transparent pointer-events-none" />
@@ -117,4 +136,4 @@ export function MediaCard({
       </div>
     </button>
   );
-}
+});

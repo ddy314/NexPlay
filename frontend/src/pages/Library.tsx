@@ -1,8 +1,9 @@
-import { useMemo, useState } from "react";
+import { memo, useCallback, useDeferredValue, useMemo, useState } from "react";
 import { STATUS_LABEL, STATUS_COLOR, type Subject, type MatchStatus } from "../data";
 import type { BackendLogEntry, LibraryStats, ScanStatus } from "../backend";
 import { Badge, Button, Card, Progress, SearchField, Segmented } from "../ui";
 import { MediaCard, Poster } from "../MediaCard";
+import { useIncrementalItems } from "../hooks/useIncrementalItems";
 import {
   FolderPlus,
   GridIcon,
@@ -34,15 +35,17 @@ export function LibraryPage({
   const [sort, setSort] = useState<"title" | "date" | "progress" | "match">("date");
   const [view, setView] = useState<"grid" | "list">("grid");
   const [query, setQuery] = useState("");
+  const deferredQuery = useDeferredValue(query);
 
   const filtered = useMemo(() => {
     let list = subjects.slice();
-    if (query.trim()) {
-      const q = query.toLowerCase();
+    const normalizedQuery = deferredQuery.trim();
+    if (normalizedQuery) {
+      const q = normalizedQuery.toLowerCase();
       list = list.filter(
         (s) =>
           s.title.toLowerCase().includes(q) ||
-          s.titleCn.includes(query) ||
+          s.titleCn.toLowerCase().includes(q) ||
           s.fileSummary.toLowerCase().includes(q)
       );
     }
@@ -59,9 +62,22 @@ export function LibraryPage({
         break;
     }
     return list;
-  }, [sort, query, subjects]);
+  }, [sort, deferredQuery, subjects]);
+
+  const {
+    hasMore,
+    loadMore,
+    sentinelRef,
+    visibleCount,
+    visibleItems,
+  } = useIncrementalItems(filtered, {
+    initialCount: view === "grid" ? 48 : 80,
+    step: view === "grid" ? 36 : 80,
+    resetKey: `${view}:${sort}:${deferredQuery}:${subjects.length}`,
+  });
 
   const showEmpty = filtered.length === 0;
+  const remainingCount = Math.max(0, filtered.length - visibleCount);
 
   return (
     <div className="px-10 py-10 pb-20">
@@ -121,30 +137,114 @@ export function LibraryPage({
             <EmptyState query={query} onClear={() => setQuery("")} />
           ) : view === "grid" ? (
             <div className="grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-x-5 gap-y-8">
-              {filtered.map((s) => (
-                <div key={s.id} className="flex justify-center">
-                  <MediaCard
-                    subject={s}
-                    onClick={() => onOpen(s)}
-                  />
-                </div>
+              {visibleItems.map((s, index) => (
+                <MediaGridItem
+                  key={s.id}
+                  subject={s}
+                  onOpen={onOpen}
+                  priority={index < 8}
+                />
               ))}
+              {hasMore && (
+                <GridLoadMore
+                  remainingCount={remainingCount}
+                  sentinelRef={sentinelRef}
+                  onLoadMore={loadMore}
+                />
+              )}
             </div>
           ) : (
             <Card className="overflow-hidden">
               <ListHeader />
-              {filtered.map((s, i) => (
+              {visibleItems.map((s, i) => (
                 <ListRow
                   key={s.id}
                   subject={s}
-                  isLast={i === filtered.length - 1}
-                  onOpen={() => onOpen(s)}
+                  isLast={!hasMore && i === visibleItems.length - 1}
+                  onOpenSubject={onOpen}
                 />
               ))}
+              {hasMore && (
+                <ListLoadMore
+                  remainingCount={remainingCount}
+                  sentinelRef={sentinelRef}
+                  onLoadMore={loadMore}
+                />
+              )}
             </Card>
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+const MediaGridItem = memo(function MediaGridItem({
+  subject,
+  onOpen,
+  priority,
+}: {
+  subject: Subject;
+  onOpen: (s: Subject) => void;
+  priority: boolean;
+}) {
+  const handleOpen = useCallback(() => onOpen(subject), [onOpen, subject]);
+
+  return (
+    <div className="flex justify-center cv-media-card">
+      <MediaCard
+        subject={subject}
+        onClick={handleOpen}
+        imageLoading={priority ? "eager" : "lazy"}
+        imageFetchPriority={priority ? "high" : "auto"}
+      />
+    </div>
+  );
+});
+
+function GridLoadMore({
+  remainingCount,
+  sentinelRef,
+  onLoadMore,
+}: {
+  remainingCount: number;
+  sentinelRef: (node: HTMLDivElement | null) => void;
+  onLoadMore: () => void;
+}) {
+  return (
+    <div ref={sentinelRef} className="col-span-full flex justify-center py-2">
+      <button
+        type="button"
+        onClick={onLoadMore}
+        className="h-9 rounded-full px-4 text-[12px] text-[var(--color-on-surface-muted)] hover:bg-white/[0.06] hover:text-[var(--color-on-surface)]"
+      >
+        继续加载剩余 {remainingCount} 项
+      </button>
+    </div>
+  );
+}
+
+function ListLoadMore({
+  remainingCount,
+  sentinelRef,
+  onLoadMore,
+}: {
+  remainingCount: number;
+  sentinelRef: (node: HTMLDivElement | null) => void;
+  onLoadMore: () => void;
+}) {
+  return (
+    <div
+      ref={sentinelRef}
+      className="px-5 py-4 text-center bg-[var(--color-surface)]"
+    >
+      <button
+        type="button"
+        onClick={onLoadMore}
+        className="h-8 rounded-full px-3 text-[12px] text-[var(--color-on-surface-muted)] hover:bg-white/[0.06] hover:text-[var(--color-on-surface)]"
+      >
+        继续加载剩余 {remainingCount} 项
+      </button>
     </div>
   );
 }
@@ -210,20 +310,22 @@ function ListHeader() {
   );
 }
 
-function ListRow({
+const ListRow = memo(function ListRow({
   subject,
-  onOpen,
+  onOpenSubject,
   isLast,
 }: {
   subject: Subject;
-  onOpen: () => void;
+  onOpenSubject: (s: Subject) => void;
   isLast: boolean;
 }) {
+  const handleOpen = useCallback(() => onOpenSubject(subject), [onOpenSubject, subject]);
+
   return (
     <div
-      onClick={onOpen}
+      onClick={handleOpen}
       className={cn(
-        "grid grid-cols-[64px_1fr_140px_120px_140px] gap-4 px-5 py-3 items-center cursor-pointer transition-colors hover:bg-white/[0.04]",
+        "grid grid-cols-[64px_1fr_140px_120px_140px] gap-4 px-5 py-3 items-center cursor-pointer transition-colors hover:bg-white/[0.04] cv-list-row",
         !isLast && "border-b border-[var(--color-outline-soft)]"
       )}
     >
@@ -260,7 +362,7 @@ function ListRow({
       </div>
     </div>
   );
-}
+});
 
 function EmptyState({ query, onClear }: { query: string; onClear: () => void }) {
   if (query) {
