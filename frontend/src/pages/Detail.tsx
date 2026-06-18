@@ -1,9 +1,10 @@
-import { useMemo } from "react";
+import { memo, useCallback, useMemo } from "react";
 import { type Subject } from "../data";
 import { Card, Chip, Progress } from "../ui";
 import { Poster } from "../MediaCard";
 import { ArrowLeft, CheckIcon, FileIcon, StarIcon } from "../icons";
 import { cn } from "../utils/cn";
+import { useIncrementalItems } from "../hooks/useIncrementalItems";
 
 type EpisodeRowData = {
   key: string;
@@ -27,13 +28,28 @@ export function DetailPage({
   onSnack: (text: string, tone?: "neutral" | "success" | "danger") => void;
 }) {
   const rows = useMemo(() => makeEpisodeRows(subject), [subject]);
-  const cachedCount = rows.filter((row) => row.cached).length;
+  const cachedCount = useMemo(
+    () => rows.filter((row) => row.cached).length,
+    [rows]
+  );
+  const {
+    hasMore,
+    loadMore,
+    sentinelRef,
+    visibleCount,
+    visibleItems: visibleRows,
+  } = useIncrementalItems(rows, {
+    initialCount: 80,
+    step: 80,
+    resetKey: subject.id,
+  });
   const heroAsset = subject.hero || subject.poster;
   const heroSrc = heroAsset ? window.nexplay?.resolveAssetUrl(heroAsset) ?? heroAsset : "";
   const isUnmatched = subject.status === "unmatched" || subject.status === "failed";
   const visibleTags = subject.tags.slice(0, 6);
+  const remainingRows = Math.max(0, rows.length - visibleCount);
 
-  const openEpisode = async (row: EpisodeRowData) => {
+  const openEpisode = useCallback(async (row: EpisodeRowData) => {
     if (!row.mediaId) {
       onSnack(`第 ${row.episode} 集没有对应的本地文件`, "danger");
       return;
@@ -50,13 +66,20 @@ export function DetailPage({
       const message = caught instanceof Error ? caught.message : String(caught);
       onSnack(`打开失败：${message}`, "danger");
     }
-  };
+  }, [onSnack]);
 
   return (
     <div className="relative pb-20">
       <div className="relative h-[420px] w-full overflow-hidden">
         {heroSrc ? (
-          <img src={heroSrc} alt={subject.title} className="absolute inset-0 size-full object-cover" />
+          <img
+            src={heroSrc}
+            alt={subject.title}
+            loading="eager"
+            decoding="async"
+            fetchPriority="high"
+            className="absolute inset-0 size-full object-cover"
+          />
         ) : (
           <div className="absolute inset-0 bg-gradient-to-br from-[var(--color-surface-3)] via-[var(--color-surface-2)] to-[var(--color-surface)]" />
         )}
@@ -77,7 +100,13 @@ export function DetailPage({
       <div className="px-10 -mt-40 relative grid grid-cols-[240px_1fr] gap-10 items-start">
         <div className="relative">
           <div className="aspect-[2/3] rounded-2xl overflow-hidden ring-1 ring-black/40 shadow-2xl shadow-black/60">
-            <Poster src={subject.poster} alt={subject.title} className="size-full" />
+            <Poster
+              src={subject.poster}
+              alt={subject.title}
+              className="size-full"
+              loading="eager"
+              fetchPriority="high"
+            />
           </div>
           {subject.rating > 0 && (
             <Card className="mt-4 p-4">
@@ -157,9 +186,16 @@ export function DetailPage({
             <div className="text-right">File</div>
           </div>
           <div className="divide-y divide-[var(--color-outline-soft)]">
-            {rows.map((row) => (
-              <EpisodeCacheRow key={row.key} row={row} onOpen={() => void openEpisode(row)} />
+            {visibleRows.map((row) => (
+              <EpisodeCacheRow key={row.key} row={row} onOpenEpisode={openEpisode} />
             ))}
+            {hasMore && (
+              <EpisodeLoadMore
+                remainingCount={remainingRows}
+                sentinelRef={sentinelRef}
+                onLoadMore={loadMore}
+              />
+            )}
           </div>
         </Card>
       </section>
@@ -167,16 +203,25 @@ export function DetailPage({
   );
 }
 
-function EpisodeCacheRow({ row, onOpen }: { row: EpisodeRowData; onOpen: () => void }) {
+const EpisodeCacheRow = memo(function EpisodeCacheRow({
+  row,
+  onOpenEpisode,
+}: {
+  row: EpisodeRowData;
+  onOpenEpisode: (row: EpisodeRowData) => void;
+}) {
   const title = row.titleCn || row.title || `Episode ${row.episode}`;
+  const handleOpen = useCallback(() => {
+    void onOpenEpisode(row);
+  }, [onOpenEpisode, row]);
 
   return (
     <button
       type="button"
-      onClick={onOpen}
+      onClick={handleOpen}
       disabled={!row.cached}
       className={cn(
-        "w-full text-left grid grid-cols-[88px_1fr_120px_160px] gap-4 px-5 py-4 items-center text-[13px] transition-colors",
+        "w-full text-left grid grid-cols-[88px_1fr_120px_160px] gap-4 px-5 py-4 items-center text-[13px] transition-colors cv-episode-row",
         row.cached
           ? "hover:bg-[var(--color-surface-2)] cursor-pointer"
           : "cursor-default"
@@ -215,6 +260,31 @@ function EpisodeCacheRow({ row, onOpen }: { row: EpisodeRowData; onOpen: () => v
         )}
       </div>
     </button>
+  );
+});
+
+function EpisodeLoadMore({
+  remainingCount,
+  sentinelRef,
+  onLoadMore,
+}: {
+  remainingCount: number;
+  sentinelRef: (node: HTMLDivElement | null) => void;
+  onLoadMore: () => void;
+}) {
+  return (
+    <div
+      ref={sentinelRef}
+      className="px-5 py-4 text-center bg-[var(--color-surface)]"
+    >
+      <button
+        type="button"
+        onClick={onLoadMore}
+        className="h-8 rounded-full px-3 text-[12px] text-[var(--color-on-surface-muted)] hover:bg-white/[0.06] hover:text-[var(--color-on-surface)]"
+      >
+        继续加载剩余 {remainingCount} 集
+      </button>
+    </div>
   );
 }
 

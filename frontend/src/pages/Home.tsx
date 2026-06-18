@@ -113,6 +113,9 @@ function HeroSection({
         <img
           src={resolvedImageSrc}
           alt={featured.title}
+          loading="eager"
+          decoding="async"
+          fetchPriority="high"
           className="absolute inset-0 size-full object-cover"
         />
       ) : (
