@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { NavRail, type Route } from "./NavRail";
 import { HomePage } from "./pages/Home";
 import { LibraryPage } from "./pages/Library";
@@ -15,21 +15,27 @@ export default function App() {
   const snack = useSnackbar();
   const backend = useBackendSnapshot();
 
-  const openDetail = (s: Subject) => {
+  const openDetail = useCallback((s: Subject) => {
     setDetail(s);
     window.scrollTo({ top: 0, behavior: "instant" as ScrollBehavior });
-  };
+  }, []);
+
+  const handleRoute = useCallback((r: Route) => {
+    setDetail(null);
+    setRoute(r);
+  }, []);
+
+  const toggleCollapsed = useCallback(() => {
+    setCollapsed((value) => !value);
+  }, []);
 
   return (
     <div className="h-full w-full flex bg-[var(--color-bg)] text-[var(--color-on-surface)]">
       <NavRail
         route={route}
-        onRoute={(r) => {
-          setDetail(null);
-          setRoute(r);
-        }}
+        onRoute={handleRoute}
         collapsed={collapsed}
-        onToggleCollapsed={() => setCollapsed((v) => !v)}
+        onToggleCollapsed={toggleCollapsed}
       />
 
       <main className="flex-1 min-w-0 h-full overflow-y-auto mica">
