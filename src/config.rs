@@ -128,6 +128,28 @@ impl ConfigStore {
 
         Ok(config.media_libraries.clone())
     }
+
+    pub fn replace(&self, mut next: AppConfig) -> AppResult<AppConfig> {
+        let mut canonical_libraries = Vec::new();
+        for path in next.media_libraries {
+            if path.as_os_str().is_empty() {
+                continue;
+            }
+            if !path.is_dir() {
+                return Err(AppError::InvalidMediaDirectory(path));
+            }
+            let canonical = path.canonicalize().map_err(|err| io_error(path, err))?;
+            if !canonical_libraries.iter().any(|item| item == &canonical) {
+                canonical_libraries.push(canonical);
+            }
+        }
+        next.media_libraries = canonical_libraries;
+
+        let mut config = self.config.lock().expect("config mutex poisoned");
+        *config = next;
+        write_config(&self.path, &config)?;
+        Ok(config.clone())
+    }
 }
 
 fn write_config(path: &Path, config: &AppConfig) -> AppResult<()> {

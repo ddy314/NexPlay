@@ -88,7 +88,7 @@ export function NavRail({
       <div className={cn("p-3 border-t border-[var(--color-outline-soft)]", collapsed && "flex flex-col items-center gap-1")}>
         {!collapsed ? (
           <div className="flex items-center gap-2 mb-2 px-2 py-2 rounded-xl hover:bg-white/[0.05] transition-colors cursor-pointer">
-            <div className="size-7 rounded-full bg-gradient-to-br from-orange-300 to-violet-400 grid place-items-center text-[11px] font-semibold text-stone-900">
+            <div className="size-7 rounded-full bg-gradient-to-br from-[var(--color-primary)] to-[var(--color-accent)] grid place-items-center text-[11px] font-semibold text-[var(--color-on-primary)]">
               茉
             </div>
             <div className="min-w-0 flex-1">

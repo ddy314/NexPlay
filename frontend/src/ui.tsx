@@ -30,9 +30,9 @@ export function Button({
   };
   const variants: Record<BtnVariant, string> = {
     filled:
-      "bg-[var(--color-primary)] text-[var(--color-on-primary)] hover:brightness-110 active:brightness-95 shadow-sm shadow-orange-900/40",
+      "bg-[var(--color-primary)] text-[var(--color-on-primary)] hover:brightness-110 active:brightness-95 shadow-sm shadow-black/10",
     tonal:
-      "bg-[var(--color-primary-soft)] text-[var(--color-primary)] hover:bg-[#5a3527] active:bg-[#4f2e22]",
+      "bg-[var(--color-primary-soft)] text-[var(--color-primary)] hover:brightness-95 active:brightness-90",
     outlined:
       "bg-transparent text-[var(--color-on-surface)] ring-1 ring-inset ring-[var(--color-outline)] hover:bg-white/5",
     text: "bg-transparent text-[var(--color-on-surface)] hover:bg-white/[0.06]",
@@ -130,12 +130,12 @@ export function Badge({
   className?: string;
 }) {
   const tones = {
-    neutral: "bg-white/10 text-white/90 ring-white/15",
+    neutral: "bg-[var(--color-surface-3)] text-[var(--color-on-surface)] ring-[var(--color-outline-soft)]",
     primary: "bg-[var(--color-primary)]/20 text-[var(--color-primary)] ring-[var(--color-primary)]/30",
-    success: "bg-emerald-500/15 text-emerald-300 ring-emerald-400/30",
-    warning: "bg-amber-500/15 text-amber-300 ring-amber-400/30",
-    danger: "bg-rose-500/15 text-rose-300 ring-rose-400/30",
-    accent: "bg-violet-500/15 text-violet-300 ring-violet-400/30",
+    success: "bg-[var(--color-success)]/15 text-[var(--color-success)] ring-[var(--color-success)]/30",
+    warning: "bg-[var(--color-warning)]/15 text-[var(--color-warning)] ring-[var(--color-warning)]/30",
+    danger: "bg-[var(--color-danger)]/15 text-[var(--color-danger)] ring-[var(--color-danger)]/30",
+    accent: "bg-[var(--color-accent)]/15 text-[var(--color-accent)] ring-[var(--color-accent)]/30",
   };
   return (
     <span

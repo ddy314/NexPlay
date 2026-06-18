@@ -5,7 +5,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 use crate::domain::{
     DanmakuMatch, MediaFile, MediaItem, MetadataCandidate, ScanUpsertStatus, Subject,
     SubjectEpisode, SubjectImageCache, UiCandidateData, UiMediaCardData, UiSeriesCardData,
-    UiSubjectDetailData, WatchProgress,
+    UiSeriesEpisodeData, UiSeriesFileData, UiSubjectDetailData, WatchProgress,
 };
 use crate::error::AppResult;
 use crate::metadata::provider::{SubjectDetail, SubjectSearchResult};
@@ -198,6 +198,33 @@ impl Repository {
         let conn = self.connect()?;
         let mut stmt = conn.prepare(
             r#"
+            WITH file_stats AS (
+                SELECT
+                    l.subject_id,
+                    COUNT(DISTINCT m.id) AS file_count,
+                    COALESCE(SUM(m.file_size), 0) AS total_size,
+                    COALESCE(MAX(m.file_name), '') AS latest_file_name
+                FROM media_subject_links l
+                JOIN media_items m ON m.id = l.media_id AND m.deleted_at IS NULL
+                GROUP BY l.subject_id
+            ),
+            episode_stats AS (
+                SELECT
+                    e.subject_id,
+                    COUNT(DISTINCT e.id) AS episode_count
+                FROM episodes e
+                GROUP BY e.subject_id
+            ),
+            linked_stats AS (
+                SELECT
+                    l.subject_id,
+                    COUNT(DISTINCT mel.episode_id) AS linked_episode_count
+                FROM media_subject_links l
+                JOIN media_items m ON m.id = l.media_id AND m.deleted_at IS NULL
+                JOIN media_episode_links mel ON mel.media_id = m.id
+                WHERE mel.episode_id IS NOT NULL
+                GROUP BY l.subject_id
+            )
             SELECT
                 s.id,
                 s.title,
@@ -209,16 +236,15 @@ impl Repository {
                 COALESCE(s.tags, '[]'),
                 COALESCE(poster.local_path, ''),
                 COALESCE(hero.local_path, ''),
-                COUNT(DISTINCT m.id),
-                COUNT(DISTINCT e.id),
-                COUNT(DISTINCT mel.episode_id),
-                COALESCE(SUM(m.file_size), 0),
-                COALESCE(MAX(m.file_name), '')
+                COALESCE(fs.file_count, 0),
+                COALESCE(es.episode_count, 0),
+                COALESCE(ls.linked_episode_count, 0),
+                COALESCE(fs.total_size, 0),
+                COALESCE(fs.latest_file_name, '')
             FROM subjects s
-            JOIN media_subject_links l ON l.subject_id = s.id
-            JOIN media_items m ON m.id = l.media_id AND m.deleted_at IS NULL
-            LEFT JOIN episodes e ON e.subject_id = s.id
-            LEFT JOIN media_episode_links mel ON mel.media_id = m.id
+            JOIN file_stats fs ON fs.subject_id = s.id
+            LEFT JOIN episode_stats es ON es.subject_id = s.id
+            LEFT JOIN linked_stats ls ON ls.subject_id = s.id
             LEFT JOIN subject_image_cache poster
                 ON poster.subject_id = s.id AND poster.image_kind = 'poster'
             LEFT JOIN subject_image_cache hero
@@ -246,6 +272,78 @@ impl Repository {
                 linked_episode_count: row.get::<_, i64>(12)? as usize,
                 total_size: row.get::<_, i64>(13)? as u64,
                 latest_file_name: row.get(14)?,
+                local_files: Vec::new(),
+                episodes: Vec::new(),
+            })
+        })?;
+        let mut cards = rows.collect::<Result<Vec<_>, _>>()?;
+        for card in &mut cards {
+            card.local_files = self.list_series_files(card.subject_id)?;
+            card.episodes = self.list_series_episodes(card.subject_id)?;
+        }
+        Ok(cards)
+    }
+
+    fn list_series_files(&self, subject_id: i64) -> AppResult<Vec<UiSeriesFileData>> {
+        let conn = self.connect()?;
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT
+                m.id,
+                m.file_name,
+                m.file_size,
+                mel.episode_number,
+                m.modified_at
+            FROM media_items m
+            JOIN media_subject_links l ON l.media_id = m.id
+            LEFT JOIN media_episode_links mel ON mel.media_id = m.id
+            WHERE l.subject_id = ?1 AND m.deleted_at IS NULL
+            ORDER BY
+                mel.episode_number IS NULL,
+                mel.episode_number,
+                m.file_name COLLATE NOCASE
+            "#,
+        )?;
+        let rows = stmt.query_map(params![subject_id], |row| {
+            Ok(UiSeriesFileData {
+                media_id: row.get(0)?,
+                file_name: row.get(1)?,
+                file_size: row.get::<_, i64>(2)? as u64,
+                episode_number: row.get(3)?,
+                modified_at: row.get(4)?,
+            })
+        })?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    fn list_series_episodes(&self, subject_id: i64) -> AppResult<Vec<UiSeriesEpisodeData>> {
+        let conn = self.connect()?;
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT
+                e.sort_number,
+                COALESCE(e.title, ''),
+                COALESCE(e.title_cn, ''),
+                COALESCE(e.air_date, ''),
+                m.id,
+                m.file_name,
+                m.file_size
+            FROM episodes e
+            LEFT JOIN media_episode_links mel ON mel.episode_id = e.id
+            LEFT JOIN media_items m ON m.id = mel.media_id AND m.deleted_at IS NULL
+            WHERE e.subject_id = ?1
+            ORDER BY e.sort_number, m.file_name COLLATE NOCASE
+            "#,
+        )?;
+        let rows = stmt.query_map(params![subject_id], |row| {
+            Ok(UiSeriesEpisodeData {
+                episode_number: row.get(0)?,
+                title: row.get(1)?,
+                title_cn: row.get(2)?,
+                air_date: row.get(3)?,
+                media_id: row.get(4)?,
+                file_name: row.get(5)?,
+                file_size: row.get::<_, Option<i64>>(6)?.map(|size| size as u64),
             })
         })?;
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
@@ -384,6 +482,43 @@ impl Repository {
             FROM media_items m
             LEFT JOIN media_subject_links l ON l.media_id = m.id
             WHERE m.deleted_at IS NULL AND m.match_ignored = 0 AND l.media_id IS NULL
+            ORDER BY m.file_name COLLATE NOCASE
+            "#,
+        )?;
+        let rows = stmt.query_map([], map_media_item)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    pub fn metadata_scrape_targets(&self) -> AppResult<Vec<MediaItem>> {
+        let conn = self.connect()?;
+        let mut stmt = conn.prepare(
+            r#"
+            WITH suspicious_anime AS (
+                SELECT dm.anime_id
+                FROM danmaku_matches dm
+                JOIN media_items m ON m.id = dm.media_id AND m.deleted_at IS NULL
+                JOIN media_subject_links l ON l.media_id = m.id
+                LEFT JOIN episodes e ON e.subject_id = l.subject_id
+                WHERE dm.exact = 1 AND dm.anime_id IS NOT NULL
+                GROUP BY dm.anime_id
+                HAVING COUNT(DISTINCT m.id) > 1
+                    AND (
+                        (COUNT(DISTINCT l.subject_id) = 1 AND COUNT(DISTINCT e.id) <= 1)
+                        OR COUNT(DISTINCT l.subject_id) > 1
+                    )
+            )
+            SELECT DISTINCT
+                m.id, m.path, m.file_name, m.file_size, m.modified_at,
+                m.file_hash, m.match_ignored, m.deleted_at
+            FROM media_items m
+            LEFT JOIN media_subject_links l ON l.media_id = m.id
+            LEFT JOIN danmaku_matches dm ON dm.media_id = m.id
+            WHERE m.deleted_at IS NULL
+                AND m.match_ignored = 0
+                AND (
+                    l.media_id IS NULL
+                    OR dm.anime_id IN (SELECT anime_id FROM suspicious_anime)
+                )
             ORDER BY m.file_name COLLATE NOCASE
             "#,
         )?;
@@ -739,6 +874,41 @@ impl Repository {
             ],
         )?;
         Ok(())
+    }
+
+    pub fn replace_media_subject_link(
+        &self,
+        media_id: i64,
+        subject_id: i64,
+        match_source: &str,
+        confidence: f64,
+        confirmed: bool,
+        now: i64,
+    ) -> AppResult<()> {
+        let conn = self.connect()?;
+        conn.execute(
+            "DELETE FROM media_subject_links WHERE media_id = ?1 AND subject_id <> ?2",
+            params![media_id, subject_id],
+        )?;
+        drop(conn);
+        self.link_media_subject(
+            media_id,
+            subject_id,
+            match_source,
+            confidence,
+            confirmed,
+            now,
+        )
+    }
+
+    pub fn subject_episode_count(&self, subject_id: i64) -> AppResult<usize> {
+        let conn = self.connect()?;
+        let count = conn.query_row(
+            "SELECT COUNT(*) FROM episodes WHERE subject_id = ?1",
+            params![subject_id],
+            |row| row.get::<_, i64>(0),
+        )?;
+        Ok(count as usize)
     }
 
     pub fn get_subject(&self, subject_id: i64) -> AppResult<Option<Subject>> {

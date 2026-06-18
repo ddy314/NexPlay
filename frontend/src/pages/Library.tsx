@@ -1,41 +1,39 @@
 import { useMemo, useState } from "react";
 import { STATUS_LABEL, STATUS_COLOR, type Subject, type MatchStatus } from "../data";
-import type { LibraryStats } from "../backend";
-import { Badge, Button, Card, Chip, Progress, SearchField, Segmented } from "../ui";
+import type { BackendLogEntry, LibraryStats, ScanStatus } from "../backend";
+import { Badge, Button, Card, Progress, SearchField, Segmented } from "../ui";
 import { MediaCard, Poster } from "../MediaCard";
 import {
   FolderPlus,
   GridIcon,
   ListIcon,
-  PlayIcon,
   ScanIcon,
   SortIcon,
-  MoreIcon,
   ChevronDown,
   CheckIcon,
 } from "../icons";
 import { cn } from "../utils/cn";
 
-type FilterKey = "all" | "watching" | "completed" | "unmatched" | "tentative";
-
 export function LibraryPage({
   subjects,
   stats,
+  scanStatus,
+  logs,
   onOpen,
   onSnack,
   onScan,
 }: {
   subjects: Subject[];
   stats: LibraryStats;
+  scanStatus: ScanStatus;
+  logs: BackendLogEntry[];
   onOpen: (s: Subject) => void;
   onSnack: (text: string, tone?: "neutral" | "success" | "danger") => void;
   onScan: () => void | Promise<void>;
 }) {
-  const [filter, setFilter] = useState<FilterKey>("all");
   const [sort, setSort] = useState<"title" | "date" | "progress" | "match">("date");
   const [view, setView] = useState<"grid" | "list">("grid");
   const [query, setQuery] = useState("");
-  const [selectedId, setSelectedId] = useState<string | null>(null);
 
   const filtered = useMemo(() => {
     let list = subjects.slice();
@@ -47,20 +45,6 @@ export function LibraryPage({
           s.titleCn.includes(query) ||
           s.fileSummary.toLowerCase().includes(q)
       );
-    }
-    switch (filter) {
-      case "watching":
-        list = list.filter((s) => s.progress > 0 && s.progress < 1);
-        break;
-      case "completed":
-        list = list.filter((s) => s.progress >= 1);
-        break;
-      case "unmatched":
-        list = list.filter((s) => s.status === "unmatched" || s.status === "failed");
-        break;
-      case "tentative":
-        list = list.filter((s) => s.status === "tentative");
-        break;
     }
     switch (sort) {
       case "title":
@@ -75,17 +59,8 @@ export function LibraryPage({
         break;
     }
     return list;
-  }, [filter, sort, query, subjects]);
+  }, [sort, query, subjects]);
 
-  const filters: { key: FilterKey; label: string }[] = [
-    { key: "all", label: "All" },
-    { key: "watching", label: "Watching" },
-    { key: "completed", label: "Completed" },
-    { key: "unmatched", label: "Unmatched" },
-    { key: "tentative", label: "Tentative" },
-  ];
-
-  const selected = selectedId ? subjects.find((s) => s.id === selectedId) : null;
   const showEmpty = filtered.length === 0;
 
   return (
@@ -102,20 +77,14 @@ export function LibraryPage({
         </div>
         <div className="flex items-center gap-2">
           <Button
-            variant="outlined"
-            icon={<FolderPlus className="size-4" />}
-            onClick={() => onSnack("目录选择尚未接入。请先编辑 config.toml 的 media_libraries。")}
-          >
-            Add Folder
-          </Button>
-          <Button
             icon={<ScanIcon className="size-4" />}
+            loading={scanStatus.running}
             onClick={() => {
               onSnack("已开始扫描媒体目录…");
               void onScan();
             }}
           >
-            Scan Now
+            {scanStatus.running ? "Scanning" : "Scan Now"}
           </Button>
         </div>
       </div>
@@ -128,19 +97,6 @@ export function LibraryPage({
           placeholder="搜索标题、文件名、标签…"
           className="min-w-[280px] flex-1 max-w-md"
         />
-        <div className="h-6 w-px bg-[var(--color-outline-soft)]" />
-        <div className="flex items-center gap-2 flex-wrap">
-          {filters.map((f) => (
-            <Chip
-              key={f.key}
-              selected={filter === f.key}
-              onClick={() => setFilter(f.key)}
-            >
-              {f.label}
-            </Chip>
-          ))}
-        </div>
-
         <div className="ml-auto flex items-center gap-2">
           <SortMenu sort={sort} onChange={setSort} />
           <Segmented
@@ -154,8 +110,12 @@ export function LibraryPage({
         </div>
       </Card>
 
+      {(scanStatus.running || logs.length > 0) && (
+        <ScanPanel status={scanStatus} logs={logs} />
+      )}
+
       {/* Body */}
-      <div className={cn("mt-8 grid gap-8", selected ? "grid-cols-[1fr_320px]" : "grid-cols-1")}>
+      <div className="mt-8">
         <div>
           {showEmpty ? (
             <EmptyState query={query} onClear={() => setQuery("")} />
@@ -165,11 +125,7 @@ export function LibraryPage({
                 <div key={s.id} className="flex justify-center">
                   <MediaCard
                     subject={s}
-                    selected={selectedId === s.id}
-                    onClick={() => {
-                      if (selectedId === s.id) onOpen(s);
-                      else setSelectedId(s.id);
-                    }}
+                    onClick={() => onOpen(s)}
                   />
                 </div>
               ))}
@@ -188,14 +144,6 @@ export function LibraryPage({
             </Card>
           )}
         </div>
-
-        {selected && (
-          <PreviewPanel
-            subject={selected}
-            onClose={() => setSelectedId(null)}
-            onOpen={() => onOpen(selected)}
-          />
-        )}
       </div>
     </div>
   );
@@ -252,13 +200,12 @@ function SortMenu({
 
 function ListHeader() {
   return (
-    <div className="grid grid-cols-[64px_1fr_140px_120px_140px_80px] gap-4 px-5 py-3 text-[11px] uppercase tracking-wider text-[var(--color-on-surface-faint)] border-b border-[var(--color-outline-soft)] bg-[var(--color-surface)]">
+    <div className="grid grid-cols-[64px_1fr_140px_120px_140px] gap-4 px-5 py-3 text-[11px] uppercase tracking-wider text-[var(--color-on-surface-faint)] border-b border-[var(--color-outline-soft)] bg-[var(--color-surface)]">
       <div></div>
       <div>Title</div>
       <div>Status</div>
       <div>Progress</div>
       <div>Last Played</div>
-      <div className="text-right">Action</div>
     </div>
   );
 }
@@ -276,7 +223,7 @@ function ListRow({
     <div
       onClick={onOpen}
       className={cn(
-        "grid grid-cols-[64px_1fr_140px_120px_140px_80px] gap-4 px-5 py-3 items-center cursor-pointer transition-colors hover:bg-white/[0.04]",
+        "grid grid-cols-[64px_1fr_140px_120px_140px] gap-4 px-5 py-3 items-center cursor-pointer transition-colors hover:bg-white/[0.04]",
         !isLast && "border-b border-[var(--color-outline-soft)]"
       )}
     >
@@ -311,86 +258,6 @@ function ListRow({
       <div className="text-[12px] text-[var(--color-on-surface-muted)]">
         {subject.lastPlayed ?? "—"}
       </div>
-      <div className="flex justify-end">
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            onOpen();
-          }}
-          className="size-9 rounded-full bg-[var(--color-primary-soft)] text-[var(--color-primary)] hover:brightness-110 grid place-items-center"
-        >
-          <PlayIcon className="size-4 ml-0.5" />
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function PreviewPanel({
-  subject,
-  onClose,
-  onOpen,
-}: {
-  subject: Subject;
-  onClose: () => void;
-  onOpen: () => void;
-}) {
-  return (
-    <Card className="sticky top-6 p-5 self-start">
-      <div className="flex items-start gap-3">
-        <div className="w-[88px] aspect-[2/3] rounded-lg overflow-hidden ring-1 ring-black/40 shrink-0">
-          <Poster src={subject.poster} alt={subject.title} className="size-full" />
-        </div>
-        <div className="flex-1 min-w-0">
-          <div className="text-[15px] font-medium leading-tight truncate">{subject.title}</div>
-          <div className="text-[12px] text-[var(--color-on-surface-faint)] mt-1 truncate">
-            {subject.titleCn}
-          </div>
-          <div className="mt-3 flex flex-wrap gap-1">
-            {subject.tags.slice(0, 3).map((t) => (
-              <span
-                key={t}
-                className="px-2 h-5 inline-flex items-center text-[10px] rounded-full bg-white/5 text-[var(--color-on-surface-muted)] ring-1 ring-inset ring-[var(--color-outline-soft)]"
-              >
-                {t}
-              </span>
-            ))}
-          </div>
-        </div>
-        <button
-          onClick={onClose}
-          className="size-7 rounded-full grid place-items-center hover:bg-white/[0.08] text-[var(--color-on-surface-faint)]"
-        >
-          <MoreIcon className="size-4" />
-        </button>
-      </div>
-
-      <p className="text-[13px] leading-relaxed text-[var(--color-on-surface-muted)] mt-4 line-clamp-4">
-        {subject.summary || "暂无简介。"}
-      </p>
-
-      <div className="mt-4 space-y-2 text-[12px]">
-        <Row k="文件" v={`${subject.files} · ${subject.totalSize}`} />
-        <Row k="集数" v={`${subject.watchedEpisodes}/${subject.episodes || "?"}`} />
-        <Row k="评分" v={subject.rating ? subject.rating.toFixed(1) : "—"} />
-        <Row k="最近播放" v={subject.lastPlayed ?? "—"} />
-      </div>
-
-      <div className="mt-5 flex flex-col gap-2">
-        <Button icon={<PlayIcon className="size-4" />} onClick={onOpen}>
-          打开详情
-        </Button>
-        <Button variant="tonal">查看文件</Button>
-      </div>
-    </Card>
-  );
-}
-
-function Row({ k, v }: { k: string; v: string }) {
-  return (
-    <div className="flex items-center justify-between">
-      <span className="text-[var(--color-on-surface-faint)]">{k}</span>
-      <span className="text-[var(--color-on-surface)]">{v}</span>
     </div>
   );
 }
@@ -422,11 +289,58 @@ function EmptyState({ query, onClear }: { query: string; onClear: () => void }) 
       </div>
       <div className="text-[18px] font-medium">媒体库为空</div>
       <div className="text-[13px] text-[var(--color-on-surface-faint)] mt-1 max-w-sm">
-        当前后端没有返回媒体。请先编辑 config.toml 的 media_libraries，然后点击 Scan Now。
+        当前没有可显示的媒体。检查设置里的媒体目录后点击 Scan Now。
       </div>
-      <Button className="mt-5" variant="outlined" icon={<FolderPlus className="size-4" />}>
-        Add Folder
-      </Button>
+    </Card>
+  );
+}
+
+function ScanPanel({ status, logs }: { status: ScanStatus; logs: BackendLogEntry[] }) {
+  const progress =
+    status.stage === "done"
+      ? 1
+      : status.stage === "metadata" && status.total > 0
+      ? status.processed / status.total
+      : status.scanned > 0
+      ? Math.min(0.95, status.indexed / Math.max(status.scanned, 1))
+      : 0;
+
+  return (
+    <Card className="mt-4 overflow-hidden">
+      <div className="px-4 py-3 border-b border-[var(--color-outline-soft)]">
+        <div className="flex items-center justify-between gap-4">
+          <div className="min-w-0">
+            <div className="text-[14px] font-medium truncate">
+              {status.message || "扫描状态"}
+            </div>
+            <div className="text-[12px] text-[var(--color-on-surface-faint)] mt-0.5 tabular-nums">
+              文件 {status.indexed}/{status.scanned}
+              {status.total > 0 ? ` · 元数据 ${status.processed}/${status.total}` : ""}
+            </div>
+          </div>
+          <div className="text-[12px] text-[var(--color-on-surface-muted)]">
+            {status.running ? "运行中" : status.stage === "failed" ? "失败" : "空闲"}
+          </div>
+        </div>
+        <Progress value={progress} className="mt-3" />
+      </div>
+      {logs.length > 0 && (
+        <div className="max-h-52 overflow-y-auto px-4 py-3 space-y-1 bg-[var(--color-surface)]">
+          {logs.slice(-80).map((entry) => (
+            <div
+              key={entry.id}
+              className={cn(
+                "font-mono text-[11.5px] leading-relaxed",
+                entry.tone === "danger"
+                  ? "text-[var(--color-danger)]"
+                  : "text-[var(--color-on-surface-muted)]"
+              )}
+            >
+              {entry.text}
+            </div>
+          ))}
+        </div>
+      )}
     </Card>
   );
 }

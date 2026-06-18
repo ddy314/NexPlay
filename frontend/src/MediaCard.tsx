@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { cn } from "./utils/cn";
-import { PlayIcon, InfoIcon } from "./icons";
 import { Badge, Progress } from "./ui";
 import { STATUS_COLOR, STATUS_LABEL, type Subject } from "./data";
 
@@ -15,6 +14,7 @@ export function Poster({
 }) {
   const [loaded, setLoaded] = useState(false);
   const [failed, setFailed] = useState(false);
+  const resolvedSrc = src ? window.nexplay?.resolveAssetUrl(src) ?? src : src;
   if (!src || failed) {
     return (
       <div
@@ -36,7 +36,7 @@ export function Poster({
     <div className={cn("relative overflow-hidden", className)}>
       {!loaded && <div className="absolute inset-0 skeleton" />}
       <img
-        src={src}
+        src={resolvedSrc}
         alt={alt}
         loading="lazy"
         onLoad={() => setLoaded(true)}
@@ -67,7 +67,7 @@ export function MediaCard({
     <button
       onClick={onClick}
       className={cn(
-        "group relative text-left rounded-2xl transition-all duration-200",
+        "group relative shrink-0 text-left rounded-2xl transition-all duration-200",
         "focus:outline-none",
         sizeCls,
         selected && "ring-2 ring-[var(--color-primary)] ring-offset-2 ring-offset-[var(--color-bg)]"
@@ -96,18 +96,6 @@ export function MediaCard({
               {STATUS_LABEL[subject.status]}
             </span>
           )}
-        </div>
-
-        {/* hover overlay */}
-        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity duration-200 grid place-items-center">
-          <div className="flex items-center gap-2">
-            <div className="size-12 rounded-full bg-[var(--color-primary)] grid place-items-center text-[var(--color-on-primary)] shadow-lg shadow-black/40 scale-90 group-hover:scale-100 transition-transform">
-              <PlayIcon className="size-5 ml-0.5" />
-            </div>
-            <div className="size-10 rounded-full bg-white/15 backdrop-blur-md grid place-items-center text-white scale-90 group-hover:scale-100 transition-transform delay-50">
-              <InfoIcon className="size-4" />
-            </div>
-          </div>
         </div>
 
         {/* progress */}
