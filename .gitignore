@@ -1,6 +1,7 @@
 /target
 /node_modules
 /dist
+/native/*/build
 /config.toml
 /data/
 *.sqlite3

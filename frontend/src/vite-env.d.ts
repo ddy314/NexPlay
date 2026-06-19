@@ -8,6 +8,16 @@ interface Window {
     getSettings: () => Promise<import("./backend").EditableSettings>;
     saveSettings: (settings: import("./backend").EditableSettings) => Promise<import("./backend").EditableSettings>;
     openMedia: (mediaId: number) => Promise<{ opened: boolean }>;
+    getMediaSource: (mediaId: number) => Promise<import("./backend").MediaSource>;
+    mpvLoad: (mediaId: number) => Promise<import("./backend").MpvState>;
+    mpvSetTrack: (kind: "audio" | "subtitle", id: number | null) => Promise<import("./backend").MpvState>;
+    mpvSetPause: (paused: boolean) => Promise<import("./backend").MpvState>;
+    mpvSeek: (position: number) => Promise<import("./backend").MpvState>;
+    mpvSetVolume: (volume: number) => Promise<import("./backend").MpvState>;
+    mpvStop: () => Promise<import("./backend").MpvState>;
+    mpvState: () => Promise<import("./backend").MpvState>;
+    mpvRenderInfo: () => Promise<import("./backend").MpvRenderInfo>;
+    mpvRenderFrame: (width: number, height: number) => Promise<import("./backend").MpvFrame>;
     onBackendEvent: (callback: (event: import("./backend").BackendEvent) => void) => () => void;
     resolveAssetUrl: (value: string) => string;
   };

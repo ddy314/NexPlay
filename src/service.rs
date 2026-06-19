@@ -167,6 +167,17 @@ impl MediaService {
         self.open_media(&media)
     }
 
+    pub fn playback_media_by_id(&self, media_id: i64) -> AppResult<MediaItem> {
+        let media = self
+            .repository
+            .get_media(media_id)?
+            .ok_or(AppError::MediaNotFound)?;
+        if media.deleted_at.is_some() || !media.path.is_file() {
+            return Err(AppError::MediaNotFound);
+        }
+        Ok(media)
+    }
+
     pub fn start_scan(&self) {
         let roots = self.config.snapshot().media_libraries;
         if roots.is_empty() {

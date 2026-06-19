@@ -3,15 +3,22 @@ import { AnimatePresence, motion } from "framer-motion";
 import { NavRail, type Route } from "./NavRail";
 import { LibraryPage } from "./pages/Library";
 import { DetailPage } from "./pages/Detail";
+import { PlayerPage } from "./pages/Player";
 import { SettingsPage } from "./pages/Settings";
 import { useBackendSnapshot } from "./backend";
 import { appleSpringSoft } from "./motion";
 import { Snackbar, useSnackbar } from "./ui";
-import type { Subject } from "./data";
+import type { PlaybackEpisode, Subject } from "./data";
+
+type PlaybackState = {
+  subject: Subject;
+  episode: PlaybackEpisode;
+};
 
 export default function App() {
   const [route, setRoute] = useState<Route>("home");
   const [detail, setDetail] = useState<Subject | null>(null);
+  const [playback, setPlayback] = useState<PlaybackState | null>(null);
   const [theme, setTheme] = useState<"light" | "dark">("light");
   const snack = useSnackbar();
   const backend = useBackendSnapshot();
@@ -22,6 +29,7 @@ export default function App() {
   }, []);
 
   const handleRoute = useCallback((r: Route) => {
+    setPlayback(null);
     setDetail(null);
     setRoute(r);
   }, []);
@@ -41,17 +49,28 @@ export default function App() {
       <main className="app-main absolute inset-0 z-10 min-w-0 overflow-hidden pl-[var(--nav-width)]">
         <AnimatePresence mode="wait">
           <motion.div
-            key={detail ? `detail-${detail.id}` : `route-${route}`}
+            key={playback ? `playback-${playback.subject.id}-${playback.episode.key}` : detail ? `detail-${detail.id}` : `route-${route}`}
             className="h-full"
-            initial={{ opacity: 0, scale: detail ? 0.985 : 0.995 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: detail ? 0.995 : 0.985 }}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
             transition={appleSpringSoft}
           >
-            {detail ? (
+            {playback ? (
+              <PlayerPage
+                subject={playback.subject}
+                initialEpisode={playback.episode}
+                onBack={() => {
+                  setDetail(playback.subject);
+                  setPlayback(null);
+                }}
+                onSnack={snack.show}
+              />
+            ) : detail ? (
               <DetailPage
                 subject={detail}
                 onBack={() => setDetail(null)}
+                onPlay={(subject, episode) => setPlayback({ subject, episode })}
                 onSnack={snack.show}
               />
             ) : route === "settings" ? (

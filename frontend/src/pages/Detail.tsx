@@ -1,35 +1,25 @@
 import { memo, useCallback, useMemo } from "react";
 import { motion } from "framer-motion";
 import { ArrowLeft, Calendar, Check, CirclePlay, Film, HardDrive, Star, Tv } from "lucide-react";
-import { type Subject } from "../data";
+import { makePlaybackEpisodes, type PlaybackEpisode, type Subject } from "../data";
 import { Poster } from "../MediaCard";
 import { useIncrementalItems } from "../hooks/useIncrementalItems";
 import { usePosterPalette } from "../hooks/usePosterPalette";
 import { appleSpring, appleSpringBouncy, appleSpringSoft } from "../motion";
 import { cn } from "../utils/cn";
 
-type EpisodeRowData = {
-  key: string;
-  episode: number;
-  title: string;
-  titleCn: string;
-  airDate: string;
-  cached: boolean;
-  mediaId?: number;
-  fileName?: string;
-  fileSize?: string;
-};
-
 export function DetailPage({
   subject,
   onBack,
+  onPlay,
   onSnack,
 }: {
   subject: Subject;
   onBack: () => void;
+  onPlay: (subject: Subject, episode: PlaybackEpisode) => void;
   onSnack: (text: string, tone?: "neutral" | "success" | "danger") => void;
 }) {
-  const rows = useMemo(() => makeEpisodeRows(subject), [subject]);
+  const rows = useMemo(() => makePlaybackEpisodes(subject), [subject]);
   const cachedCount = useMemo(() => rows.filter((row) => row.cached).length, [rows]);
   const nextPlayableRow = useMemo(
     () => rows.find((row) => row.cached && row.episode > subject.watchedEpisodes) ?? rows.find((row) => row.cached),
@@ -54,24 +44,13 @@ export function DetailPage({
   const remainingRows = Math.max(0, rows.length - visibleCount);
   const detailFrame = "mx-auto w-full max-w-[1120px] px-6 sm:px-8";
 
-  const openEpisode = useCallback(async (row: EpisodeRowData | undefined) => {
+  const openEpisode = useCallback((row: PlaybackEpisode | undefined) => {
     if (!row?.mediaId) {
       onSnack("没有可打开的本地文件", "danger");
       return;
     }
-    if (!window.nexplay) {
-      onSnack("当前不是 Electron 环境，无法打开本地文件", "danger");
-      return;
-    }
-
-    try {
-      await window.nexplay.openMedia(row.mediaId);
-      onSnack(`已调用系统播放器打开第 ${row.episode} 集`, "success");
-    } catch (caught) {
-      const message = caught instanceof Error ? caught.message : String(caught);
-      onSnack(`打开失败：${message}`, "danger");
-    }
-  }, [onSnack]);
+    onPlay(subject, row);
+  }, [onPlay, onSnack, subject]);
 
   return (
     <div className="relative h-full overflow-y-auto overflow-x-hidden">
@@ -83,15 +62,11 @@ export function DetailPage({
         transition={appleSpringSoft}
       >
         <div className="pointer-events-none absolute inset-x-[-72px] top-0 h-[540px] overflow-hidden">
-          <motion.div
+          <div
             className="absolute inset-0"
-            animate={{
-              background: [
-                `radial-gradient(circle at 24% 18%, ${palette.secondary}, transparent 34%), radial-gradient(circle at 72% 18%, ${palette.primary}, transparent 38%), linear-gradient(180deg, ${palette.tertiary}, var(--color-bg))`,
-                `radial-gradient(circle at 30% 16%, ${palette.primary}, transparent 36%), radial-gradient(circle at 68% 24%, ${palette.secondary}, transparent 38%), linear-gradient(180deg, ${palette.tertiary}, var(--color-bg))`,
-              ],
+            style={{
+              background: `linear-gradient(135deg, ${palette.secondary}, transparent 42%), linear-gradient(180deg, ${palette.tertiary}, var(--color-bg))`,
             }}
-            transition={{ duration: 8, repeat: Infinity, repeatType: "mirror" }}
           />
           <div className="detail-hero-scrim absolute inset-0" />
           <div className="detail-hero-side-light absolute inset-0" />
@@ -119,12 +94,6 @@ export function DetailPage({
               animate={{ opacity: 1, y: 0, scale: 1 }}
               transition={appleSpringSoft}
             >
-              {heroSrc && (
-                <div
-                  className="absolute inset-[8%] -z-10 translate-y-6 scale-[0.88] rounded-2xl bg-cover bg-center opacity-28 blur-[30px] saturate-[1.25]"
-                  style={{ backgroundImage: `url(${heroSrc})` }}
-                />
-              )}
               <div className="shadow-glass-elevated relative h-[238px] w-[170px] overflow-hidden rounded-2xl sm:h-[266px] sm:w-[190px]">
                 <Poster
                   src={subject.poster}
@@ -217,7 +186,7 @@ export function DetailPage({
                   whileHover={{ scale: 1.01 }}
                   whileTap={{ scale: 0.96 }}
                   transition={appleSpringBouncy}
-                  onClick={() => void openEpisode(nextPlayableRow)}
+                  onClick={() => openEpisode(nextPlayableRow)}
                 >
                   <CirclePlay size={16} fill="white" className="shrink-0" />
                   <span className="truncate">
@@ -225,7 +194,7 @@ export function DetailPage({
                   </span>
                 </motion.button>
                 <span className="text-[12px] text-[var(--color-text-tertiary)]">
-                  调用系统播放器
+                  内置播放器
                 </span>
               </div>
             </motion.div>
@@ -276,7 +245,7 @@ export function DetailPage({
                   row={row}
                   index={index}
                   isNext={row.key === nextPlayableRow?.key}
-                  onOpen={() => void openEpisode(row)}
+                  onOpen={() => openEpisode(row)}
                 />
               ))}
               {hasMore && (
@@ -308,7 +277,7 @@ const EpisodeRow = memo(function EpisodeRow({
   isNext,
   onOpen,
 }: {
-  row: EpisodeRowData;
+  row: PlaybackEpisode;
   index: number;
   isNext: boolean;
   onOpen: () => void;
@@ -366,42 +335,3 @@ const EpisodeRow = memo(function EpisodeRow({
     </motion.button>
   );
 });
-
-function makeEpisodeRows(subject: Subject): EpisodeRowData[] {
-  if (subject.episodesDetail?.length) {
-    return subject.episodesDetail.map((episode) => ({
-      key: String(episode.mediaId || `episode-${episode.episode}`),
-      episode: episode.episode,
-      title: episode.title,
-      titleCn: episode.titleCn,
-      airDate: episode.airDate,
-      cached: episode.cached,
-      mediaId: episode.mediaId,
-      fileName: episode.fileName,
-      fileSize: episode.fileSize,
-    }));
-  }
-
-  if (subject.localFiles?.length) {
-    return subject.localFiles.map((file, index) => ({
-      key: String(file.mediaId || `${file.fileName}-${index}`),
-      episode: file.episode || index + 1,
-      title: `Episode ${file.episode || index + 1}`,
-      titleCn: "",
-      airDate: "",
-      cached: true,
-      mediaId: file.mediaId,
-      fileName: file.fileName,
-      fileSize: file.fileSize,
-    }));
-  }
-
-  return Array.from({ length: subject.episodes || subject.files }, (_, index) => ({
-    key: `${subject.id}-${index}`,
-    episode: index + 1,
-    title: `Episode ${index + 1}`,
-    titleCn: "",
-    airDate: "",
-    cached: false,
-  }));
-}

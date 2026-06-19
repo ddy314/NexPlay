@@ -124,6 +124,21 @@ pub struct OpenMediaResponse {
     pub opened: bool,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MediaSourceRequest {
+    pub media_id: i64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MediaSourceResponse {
+    pub media_id: i64,
+    pub file_name: String,
+    pub file_size: String,
+    pub source_url: String,
+}
+
 pub fn settings_config(context: &AppContext) -> AppResult<FrontendEditableSettings> {
     Ok(frontend_settings_from_config(
         context.media.config_snapshot(),
@@ -181,6 +196,19 @@ pub fn scan(context: &AppContext) -> AppResult<ScanResponse> {
 pub fn open_media(context: &AppContext, input: OpenMediaRequest) -> AppResult<OpenMediaResponse> {
     context.media.open_media_by_id(input.media_id)?;
     Ok(OpenMediaResponse { opened: true })
+}
+
+pub fn media_source(
+    context: &AppContext,
+    input: MediaSourceRequest,
+) -> AppResult<MediaSourceResponse> {
+    let media = context.media.playback_media_by_id(input.media_id)?;
+    Ok(MediaSourceResponse {
+        media_id: media.id,
+        file_name: media.file_name,
+        file_size: format_bytes(media.file_size),
+        source_url: normalize_asset_path(&media.path.to_string_lossy()),
+    })
 }
 
 fn frontend_subject_from_series(card: UiSeriesCardData) -> FrontendSubject {

@@ -48,6 +48,18 @@ export type EpisodeDetail = {
   fileSize?: string;
 };
 
+export type PlaybackEpisode = {
+  key: string;
+  episode: number;
+  title: string;
+  titleCn: string;
+  airDate: string;
+  cached: boolean;
+  mediaId?: number;
+  fileName?: string;
+  fileSize?: string;
+};
+
 export const STATUS_LABEL: Record<MatchStatus, string> = {
   matched: "已匹配",
   tentative: "待确认",
@@ -78,5 +90,44 @@ export function makeEpisodes(subject: Subject): Episode[] {
     duration: "",
     watched: index + 1 <= subject.watchedEpisodes,
     airDate: "",
+  }));
+}
+
+export function makePlaybackEpisodes(subject: Subject): PlaybackEpisode[] {
+  if (subject.episodesDetail?.length) {
+    return subject.episodesDetail.map((episode) => ({
+      key: String(episode.mediaId || `episode-${episode.episode}`),
+      episode: episode.episode,
+      title: episode.title,
+      titleCn: episode.titleCn,
+      airDate: episode.airDate,
+      cached: episode.cached,
+      mediaId: episode.mediaId,
+      fileName: episode.fileName,
+      fileSize: episode.fileSize,
+    }));
+  }
+
+  if (subject.localFiles?.length) {
+    return subject.localFiles.map((file, index) => ({
+      key: String(file.mediaId || `${file.fileName}-${index}`),
+      episode: file.episode || index + 1,
+      title: `Episode ${file.episode || index + 1}`,
+      titleCn: "",
+      airDate: "",
+      cached: true,
+      mediaId: file.mediaId,
+      fileName: file.fileName,
+      fileSize: file.fileSize,
+    }));
+  }
+
+  return Array.from({ length: subject.episodes || subject.files }, (_, index) => ({
+    key: `${subject.id}-${index}`,
+    episode: index + 1,
+    title: `Episode ${index + 1}`,
+    titleCn: "",
+    airDate: "",
+    cached: false,
   }));
 }
