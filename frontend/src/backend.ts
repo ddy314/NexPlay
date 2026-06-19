@@ -48,6 +48,70 @@ export type ScanResponse = {
   snapshot: BackendSnapshot;
 };
 
+export type MediaSource = {
+  mediaId: number;
+  fileName: string;
+  fileSize: string;
+  sourceUrl: string;
+};
+
+export type MpvTrack = {
+  id: number;
+  kind: string;
+  title: string;
+  lang: string;
+  codec: string;
+  selected: boolean;
+  external: boolean;
+};
+
+export type MpvState = {
+  ok?: boolean;
+  loaded?: boolean;
+  audioTracks: MpvTrack[];
+  subtitleTracks: MpvTrack[];
+  duration?: number;
+  position?: number;
+  paused?: boolean;
+  volume?: number;
+  source?: MediaSource;
+};
+
+export type MpvFrame = {
+  ok: boolean;
+  width: number;
+  height: number;
+  stride: number;
+  pixels: Uint8Array;
+};
+
+export type MpvRenderProbe = {
+  ok: boolean;
+  stage?: string;
+  error?: string;
+  renderApi?: string;
+  mpvClientApiVersion?: number;
+  eglVendor?: string;
+  eglVersion?: string;
+  glVendor?: string;
+  glRenderer?: string;
+  glVersion?: string;
+};
+
+export type MpvRenderInfo = {
+  available: boolean;
+  modulePath?: string;
+  reason?: string;
+  build?: {
+    available: boolean;
+    bridge: string;
+    renderApi: string;
+    nodeApiVersion: number;
+    mpvClientApiVersion: number;
+  };
+  probe?: MpvRenderProbe;
+};
+
 export type BackendEvent = {
   type: string;
   message?: string;

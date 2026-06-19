@@ -1,0 +1,10 @@
+{
+  "name": "@nexplay/mpv-render-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "main": "build/Release/mpv_render_bridge.node",
+  "gypfile": true,
+  "scripts": {
+    "build": "node-gyp rebuild"
+  }
+}

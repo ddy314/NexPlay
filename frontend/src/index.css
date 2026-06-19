@@ -241,6 +241,213 @@ body {
   transform: translateX(2px);
 }
 
+.player-page-wash {
+  background:
+    linear-gradient(135deg, rgba(250, 35, 59, 0.14), transparent 48%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.18), transparent 72%);
+}
+
+.player-stage {
+  background: #050505;
+  box-shadow:
+    0 34px 90px rgba(0, 0, 0, 0.22),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+
+.nexplay-media-controller {
+  --media-primary-color: #ffffff;
+  --media-secondary-color: rgba(255, 255, 255, 0.14);
+  --media-accent-color: var(--color-primary);
+  --media-control-background: transparent;
+  --media-control-hover-background: rgba(255, 255, 255, 0.12);
+  --media-range-track-background: rgba(255, 255, 255, 0.22);
+  --media-range-bar-color: var(--color-primary);
+  --media-range-thumb-background: #ffffff;
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.nexplay-control-bar {
+  position: absolute;
+  left: 20px;
+  right: 20px;
+  bottom: 18px;
+  z-index: 20;
+  display: grid;
+  grid-template-columns: auto auto minmax(180px, 1fr) auto auto 92px auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 56px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: rgba(18, 18, 20, 0.58);
+  box-shadow:
+    inset 0 0 0 0.5px rgba(255, 255, 255, 0.13),
+    0 18px 50px rgba(0, 0, 0, 0.24);
+}
+
+.mpv-control-bar {
+  background: rgba(18, 18, 20, 0.72);
+  box-shadow:
+    inset 0 0 0 0.5px rgba(255, 255, 255, 0.13),
+    0 18px 50px rgba(0, 0, 0, 0.24);
+}
+
+.mpv-progress-slider,
+.mpv-volume-control input {
+  width: 100%;
+  height: 18px;
+  accent-color: var(--color-primary);
+  cursor: pointer;
+}
+
+.mpv-progress-slider:disabled {
+  cursor: default;
+  opacity: 0.42;
+}
+
+.mpv-volume-control {
+  display: inline-flex;
+  width: 118px;
+  min-width: 96px;
+  align-items: center;
+  gap: 8px;
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.mpv-track-select {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.mpv-track-select select {
+  max-width: min(220px, 26vw);
+  height: 34px;
+  border: 0;
+  border-radius: 999px;
+  padding: 0 30px 0 12px;
+  color: white;
+  background: rgba(255, 255, 255, 0.12);
+  outline: none;
+}
+
+.mpv-track-select select:disabled {
+  opacity: 0.45;
+}
+
+.mpv-track-select option {
+  color: #111;
+}
+
+.player-toolbar-button {
+  display: inline-flex;
+  height: 36px;
+  min-width: 36px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  color: var(--color-text-secondary);
+  background: var(--color-surface-1);
+  box-shadow: inset 0 0 0 0.5px var(--color-outline-soft);
+  transition:
+    color 160ms ease,
+    background-color 160ms ease,
+    opacity 160ms ease;
+}
+
+.player-toolbar-button:hover:not(:disabled) {
+  color: var(--color-text-primary);
+  background: var(--color-surface-2);
+}
+
+.player-toolbar-button:disabled {
+  opacity: 0.38;
+}
+
+.player-control,
+.player-round-control,
+.player-icon-button,
+.player-rate {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  border-radius: 999px;
+}
+
+.player-round-control {
+  width: 42px;
+  height: 42px;
+  background: var(--color-primary);
+  box-shadow: 0 12px 28px rgba(250, 35, 59, 0.35);
+}
+
+.player-control,
+.player-icon-button {
+  width: 36px;
+  height: 36px;
+}
+
+.player-rate {
+  min-width: 46px;
+  height: 36px;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.player-time {
+  min-width: 46px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.player-time-range,
+.player-volume {
+  height: 28px;
+}
+
+.player-pill {
+  background: rgba(20, 20, 22, 0.48);
+  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.13);
+}
+
+.danmaku-plane {
+  overflow: hidden;
+  transition: opacity 180ms ease;
+  mask-image: linear-gradient(90deg, transparent, #000 7%, #000 93%, transparent);
+}
+
+.player-episode-list::-webkit-scrollbar {
+  width: 7px;
+}
+
+.player-episode-list::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: var(--scrollbar-thumb);
+}
+
+@media (max-width: 900px) {
+  .nexplay-control-bar {
+    left: 12px;
+    right: 12px;
+    grid-template-columns: auto minmax(80px, 1fr) auto;
+  }
+
+  .nexplay-control-bar .player-time,
+  .nexplay-control-bar .player-volume,
+  .nexplay-control-bar .player-rate {
+    display: none;
+  }
+}
+
 .bg-app-field {
   background: rgb(242, 242, 247);
 }
@@ -253,6 +460,10 @@ body {
 [data-theme="dark"] .settings-section-list {
   background: rgba(44, 44, 46, 0.68);
   border-color: rgba(255, 255, 255, 0.08);
+}
+
+[data-theme="dark"] .player-toolbar-button {
+  background: rgba(255, 255, 255, 0.08);
 }
 
 [data-theme="dark"] .nav-rail {

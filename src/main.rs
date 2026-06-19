@@ -6,14 +6,15 @@ mod config;
 mod domain;
 mod error;
 mod metadata;
+mod player_daemon;
 mod repository;
 mod service;
 mod task;
 
 use crate::app::AppContext;
 use crate::backend_api::{
-    FrontendEditableSettings, OpenMediaRequest, open_media, save_settings_config, scan,
-    settings_config, snapshot,
+    FrontendEditableSettings, MediaSourceRequest, OpenMediaRequest, media_source, open_media,
+    save_settings_config, scan, settings_config, snapshot,
 };
 use crate::config::ConfigStore;
 use crate::error::{AppResult, io_error};
@@ -53,6 +54,15 @@ fn main() -> AppResult<()> {
             let input: OpenMediaRequest = serde_json::from_str(&raw)?;
             print_json(&open_media(&context, input)?)?;
         }
+        "media-source" => {
+            let mut raw = String::new();
+            std::io::stdin()
+                .read_to_string(&mut raw)
+                .map_err(|err| io_error("<stdin>", err))?;
+            let input: MediaSourceRequest = serde_json::from_str(&raw)?;
+            print_json(&media_source(&context, input)?)?;
+        }
+        "player-daemon" => player_daemon::run_player_daemon()?,
         "help" | "--help" | "-h" => {
             println!("NexPlay backend commands:");
             println!("  snapshot  print the current library snapshot as JSON");
@@ -62,6 +72,8 @@ fn main() -> AppResult<()> {
                 "  save-settings  read editable settings JSON from stdin and write config.toml"
             );
             println!("  open-media  read media id JSON from stdin and open with default player");
+            println!("  media-source  read media id JSON from stdin and print playback source");
+            println!("  player-daemon  run a persistent libmpv JSON-lines control process");
         }
         other => {
             return Err(crate::error::AppError::Config(format!(
