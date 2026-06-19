@@ -1,10 +1,12 @@
 import { memo, useCallback, useMemo } from "react";
+import { motion } from "framer-motion";
+import { ArrowLeft, Calendar, Check, CirclePlay, Film, HardDrive, Star, Tv } from "lucide-react";
 import { type Subject } from "../data";
-import { Card, Chip, Progress } from "../ui";
 import { Poster } from "../MediaCard";
-import { ArrowLeft, CheckIcon, FileIcon, StarIcon } from "../icons";
-import { cn } from "../utils/cn";
 import { useIncrementalItems } from "../hooks/useIncrementalItems";
+import { usePosterPalette } from "../hooks/usePosterPalette";
+import { appleSpring, appleSpringBouncy, appleSpringSoft } from "../motion";
+import { cn } from "../utils/cn";
 
 type EpisodeRowData = {
   key: string;
@@ -28,9 +30,10 @@ export function DetailPage({
   onSnack: (text: string, tone?: "neutral" | "success" | "danger") => void;
 }) {
   const rows = useMemo(() => makeEpisodeRows(subject), [subject]);
-  const cachedCount = useMemo(
-    () => rows.filter((row) => row.cached).length,
-    [rows]
+  const cachedCount = useMemo(() => rows.filter((row) => row.cached).length, [rows]);
+  const nextPlayableRow = useMemo(
+    () => rows.find((row) => row.cached && row.episode > subject.watchedEpisodes) ?? rows.find((row) => row.cached),
+    [rows, subject.watchedEpisodes]
   );
   const {
     hasMore,
@@ -45,13 +48,15 @@ export function DetailPage({
   });
   const heroAsset = subject.hero || subject.poster;
   const heroSrc = heroAsset ? window.nexplay?.resolveAssetUrl(heroAsset) ?? heroAsset : "";
-  const isUnmatched = subject.status === "unmatched" || subject.status === "failed";
-  const visibleTags = subject.tags.slice(0, 6);
+  const palette = usePosterPalette(heroSrc);
+  const visibleTags = subject.tags.slice(0, 5);
+  const progressPercent = Math.min(100, Math.max(0, subject.progress * 100));
   const remainingRows = Math.max(0, rows.length - visibleCount);
+  const detailFrame = "mx-auto w-full max-w-[1120px] px-6 sm:px-8";
 
-  const openEpisode = useCallback(async (row: EpisodeRowData) => {
-    if (!row.mediaId) {
-      onSnack(`第 ${row.episode} 集没有对应的本地文件`, "danger");
+  const openEpisode = useCallback(async (row: EpisodeRowData | undefined) => {
+    if (!row?.mediaId) {
+      onSnack("没有可打开的本地文件", "danger");
       return;
     }
     if (!window.nexplay) {
@@ -61,7 +66,7 @@ export function DetailPage({
 
     try {
       await window.nexplay.openMedia(row.mediaId);
-      onSnack(`已打开第 ${row.episode} 集`, "success");
+      onSnack(`已调用系统播放器打开第 ${row.episode} 集`, "success");
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : String(caught);
       onSnack(`打开失败：${message}`, "danger");
@@ -69,224 +74,298 @@ export function DetailPage({
   }, [onSnack]);
 
   return (
-    <div className="relative pb-20">
-      <div className="relative h-[420px] w-full overflow-hidden">
-        {heroSrc ? (
-          <img
-            src={heroSrc}
-            alt={subject.title}
-            loading="eager"
-            decoding="async"
-            fetchPriority="high"
-            className="absolute inset-0 size-full object-cover"
+    <div className="relative h-full overflow-y-auto overflow-x-hidden">
+      <motion.div
+        className="relative min-h-full overflow-hidden"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        transition={appleSpringSoft}
+      >
+        <div className="pointer-events-none absolute inset-x-[-72px] top-0 h-[540px] overflow-hidden">
+          <motion.div
+            className="absolute inset-0"
+            animate={{
+              background: [
+                `radial-gradient(circle at 24% 18%, ${palette.secondary}, transparent 34%), radial-gradient(circle at 72% 18%, ${palette.primary}, transparent 38%), linear-gradient(180deg, ${palette.tertiary}, var(--color-bg))`,
+                `radial-gradient(circle at 30% 16%, ${palette.primary}, transparent 36%), radial-gradient(circle at 68% 24%, ${palette.secondary}, transparent 38%), linear-gradient(180deg, ${palette.tertiary}, var(--color-bg))`,
+              ],
+            }}
+            transition={{ duration: 8, repeat: Infinity, repeatType: "mirror" }}
           />
-        ) : (
-          <div className="absolute inset-0 bg-gradient-to-br from-[var(--color-surface-3)] via-[var(--color-surface-2)] to-[var(--color-surface)]" />
-        )}
-        <div className="absolute inset-0 bg-gradient-to-t from-[var(--color-bg)] via-[var(--color-bg)]/75 to-transparent" />
-        <div className="absolute inset-0 bg-gradient-to-r from-[var(--color-bg)]/75 via-[var(--color-bg)]/20 to-[var(--color-bg)]/20" />
-
-        <div className="absolute top-0 inset-x-0 flex items-center px-8 py-5">
-          <button
-            onClick={onBack}
-            className="inline-flex items-center gap-2 h-9 px-3 rounded-full bg-black/40 backdrop-blur-md text-white text-[13px] hover:bg-black/60 transition-colors"
-          >
-            <ArrowLeft className="size-4" />
-            返回媒体库
-          </button>
+          <div className="detail-hero-scrim absolute inset-0" />
+          <div className="detail-hero-side-light absolute inset-0" />
+          <div className="detail-hero-bottom-fade absolute inset-x-0 bottom-0 h-52" />
         </div>
-      </div>
 
-      <div className="px-10 -mt-40 relative grid grid-cols-[240px_1fr] gap-10 items-start">
-        <div className="relative">
-          <div className="aspect-[2/3] rounded-2xl overflow-hidden ring-1 ring-black/40 shadow-2xl shadow-black/60">
-            <Poster
-              src={subject.poster}
-              alt={subject.title}
-              className="size-full"
-              loading="eager"
-              fetchPriority="high"
-            />
-          </div>
-          {subject.rating > 0 && (
-            <Card className="mt-4 p-4">
-              <div className="flex items-center gap-1.5 text-amber-300">
-                <StarIcon className="size-4" />
-                <span className="text-[22px] font-semibold tabular-nums">{subject.rating.toFixed(1)}</span>
-                {subject.rank > 0 && (
-                  <span className="text-[12px] text-[var(--color-on-surface-faint)] ml-auto">
-                    #{subject.rank}
+        <section className="relative z-[1] pb-9 pt-16 sm:pt-20">
+          <div className={cn(detailFrame, "relative flex items-end gap-6 md:gap-8 max-md:flex-col max-md:items-start")}>
+            <motion.button
+              type="button"
+              className="absolute left-6 top-[-56px] z-10 flex size-9 items-center justify-center rounded-full bg-black/40 text-white backdrop-blur-md transition-colors hover:bg-black/50 sm:left-8 sm:top-[-60px]"
+              onClick={onBack}
+              whileHover={{ scale: 1.03 }}
+              whileTap={{ scale: 0.92 }}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={appleSpringBouncy}
+            >
+              <ArrowLeft size={17} />
+            </motion.button>
+
+            <motion.div
+              className="relative shrink-0"
+              initial={{ opacity: 0, y: 18, scale: 0.97 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              transition={appleSpringSoft}
+            >
+              {heroSrc && (
+                <div
+                  className="absolute inset-[8%] -z-10 translate-y-6 scale-[0.88] rounded-2xl bg-cover bg-center opacity-28 blur-[30px] saturate-[1.25]"
+                  style={{ backgroundImage: `url(${heroSrc})` }}
+                />
+              )}
+              <div className="shadow-glass-elevated relative h-[238px] w-[170px] overflow-hidden rounded-2xl sm:h-[266px] sm:w-[190px]">
+                <Poster
+                  src={subject.poster}
+                  alt={subject.title}
+                  className="size-full"
+                  loading="eager"
+                  fetchPriority="high"
+                />
+                <div className="pointer-events-none absolute inset-x-0 bottom-0 h-1/4 bg-gradient-to-t from-black/15 to-transparent" />
+                <div className="pointer-events-none absolute inset-0 rounded-2xl ring-1 ring-inset ring-black/[0.06]" />
+              </div>
+            </motion.div>
+
+            <motion.div
+              className="min-w-0 flex-1 pb-1 md:max-w-[760px]"
+              initial={{ opacity: 0, y: 14 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={appleSpringSoft}
+            >
+              <div className="mb-2.5 flex flex-wrap items-center gap-1.5">
+                {visibleTags.map((tag) => (
+                  <span key={tag} className="tag-chip rounded-full px-2.5 py-[3px] text-[11px] text-[var(--color-text-secondary)] backdrop-blur-sm">
+                    {tag}
+                  </span>
+                ))}
+                <span className="rounded-full border-[0.5px] border-[var(--color-accent)]/15 bg-[var(--color-accent)]/8 px-2.5 py-[3px] text-[11px] font-medium text-[var(--color-accent)]">
+                  {subject.status === "matched" ? "已匹配" : "待整理"}
+                </span>
+              </div>
+
+              <h1 className="max-w-full break-words text-[30px] font-bold leading-[1.08] tracking-tight text-[var(--color-text-primary)] sm:text-[34px] lg:text-[38px]">
+                {subject.title}
+              </h1>
+              <p className="mt-1 max-w-full truncate text-[14px] font-light tracking-wide text-[var(--color-text-tertiary)]">
+                {subject.titleCn || subject.fileSummary}
+              </p>
+
+              <div className="mt-3.5 flex max-w-full flex-wrap items-center gap-x-3 gap-y-2 text-[13px] text-[var(--color-text-secondary)]">
+                {subject.rating > 0 && (
+                  <span className="flex items-center gap-1.5">
+                    <Star size={14} className="text-amber-500" fill="currentColor" />
+                    <span className="font-semibold text-[var(--color-text-primary)]">{subject.rating.toFixed(1)}</span>
                   </span>
                 )}
+                <MetaSep />
+                <span className="flex items-center gap-1.5">
+                  <Calendar size={13} strokeWidth={1.8} />
+                  {subject.year || "未知年份"}
+                </span>
+                <MetaSep />
+                <span className="flex items-center gap-1.5">
+                  <Film size={13} strokeWidth={1.8} />
+                  {rows.length || subject.episodes || subject.files} 话
+                </span>
+                <MetaSep />
+                <span className="flex items-center gap-1.5">
+                  <Tv size={13} strokeWidth={1.8} />
+                  {subject.files} 文件
+                </span>
+                <MetaSep />
+                <span className="flex items-center gap-1.5">
+                  <HardDrive size={13} strokeWidth={1.8} />
+                  {subject.totalSize}
+                </span>
               </div>
-              <div className="text-[11px] text-[var(--color-on-surface-faint)] mt-1">Bangumi 评分</div>
-            </Card>
-          )}
+
+              {subject.progress > 0 && (
+                <div className="mt-4">
+                  <div className="mb-1.5 flex items-center justify-between text-[11px] text-[var(--color-text-tertiary)]">
+                    <span>观看进度</span>
+                    <span className="tabular-nums">{subject.watchedEpisodes} / {subject.episodes || rows.length}</span>
+                  </div>
+                  <div className="h-[5px] w-full max-w-60 overflow-hidden rounded-full bg-black/[0.05]">
+                    <motion.div
+                      className="relative h-full overflow-hidden rounded-full"
+                      style={{ background: "var(--color-primary)" }}
+                      initial={{ width: 0 }}
+                      animate={{ width: `${progressPercent}%` }}
+                      transition={appleSpring}
+                    >
+                    </motion.div>
+                  </div>
+                </div>
+              )}
+
+              <div className="mt-5 flex max-w-full flex-wrap items-center gap-3">
+                <motion.button
+                  type="button"
+                  className="relative flex min-w-0 max-w-full items-center gap-2 overflow-hidden rounded-full bg-[var(--color-primary)] px-6 py-2.5 text-[13px] font-semibold text-white sm:px-7"
+                  whileHover={{ scale: 1.01 }}
+                  whileTap={{ scale: 0.96 }}
+                  transition={appleSpringBouncy}
+                  onClick={() => void openEpisode(nextPlayableRow)}
+                >
+                  <CirclePlay size={16} fill="white" className="shrink-0" />
+                  <span className="truncate">
+                    {subject.progress > 0 ? `继续播放 · 第${nextPlayableRow?.episode ?? subject.watchedEpisodes + 1}话` : "开始播放"}
+                  </span>
+                </motion.button>
+                <span className="text-[12px] text-[var(--color-text-tertiary)]">
+                  调用系统播放器
+                </span>
+              </div>
+            </motion.div>
+          </div>
+        </section>
+
+        {subject.summary && (
+          <motion.section
+            className="relative z-[1] py-7"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={appleSpringSoft}
+          >
+            <div className={detailFrame}>
+              <h2 className="mb-2.5 text-[16px] font-semibold tracking-tight text-[var(--color-text-primary)]">简介</h2>
+              <p className="max-w-2xl text-[13.5px] leading-[1.8] text-[var(--color-text-secondary)]">
+                {subject.summary}
+              </p>
+            </div>
+          </motion.section>
+        )}
+
+        <div className="relative z-[1]">
+          <div className={detailFrame}>
+            <div className="h-px bg-black/[0.05]" />
+          </div>
         </div>
 
-        <div className="pt-14 min-w-0">
-          <h1 className="text-[44px] font-semibold tracking-tight leading-[1.05]">
-            {isUnmatched ? subject.fileSummary.split(".")[0] : subject.title}
-          </h1>
-          {!isUnmatched && (
-            <div className="text-[18px] text-[var(--color-on-surface-muted)] mt-1 font-light">
-              {subject.titleCn} · {subject.year || "年份未知"} · {subject.airDate || "日期未知"}
+        <motion.section
+          className="relative z-[1] py-6 pb-10"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={appleSpringSoft}
+        >
+          <div className={detailFrame}>
+            <div className="mb-5 flex items-center justify-between">
+              <h2 className="text-[16px] font-semibold tracking-tight text-[var(--color-text-primary)]">
+                剧集 <span className="ml-1 text-[13px] font-normal text-[var(--color-text-tertiary)]">{rows.length} 话</span>
+              </h2>
+              <span className="text-[12px] text-[var(--color-text-tertiary)]">
+                {cachedCount}/{rows.length} 已缓存
+              </span>
             </div>
-          )}
-
-          {!isUnmatched && visibleTags.length > 0 && (
-            <div className="mt-5 flex flex-wrap gap-2">
-              {visibleTags.map((tag) => (
-                <Chip key={tag}>{tag}</Chip>
+            <div className="grid gap-1.5">
+              {visibleRows.map((row, index) => (
+                <EpisodeRow
+                  key={row.key}
+                  row={row}
+                  index={index}
+                  isNext={row.key === nextPlayableRow?.key}
+                  onOpen={() => void openEpisode(row)}
+                />
               ))}
-            </div>
-          )}
-
-          {!isUnmatched && subject.summary && (
-            <p className="text-[15px] leading-relaxed text-[var(--color-on-surface-muted)] mt-6 max-w-3xl line-clamp-5">
-              {subject.summary}
-            </p>
-          )}
-
-          <div className="mt-6 flex flex-wrap items-center gap-x-5 gap-y-2 text-[13px] text-[var(--color-on-surface-muted)]">
-            <span className="tabular-nums">{subject.files} 个本地文件</span>
-            <span className="size-1 rounded-full bg-[var(--color-on-surface-faint)]" />
-            <span className="tabular-nums">{subject.totalSize}</span>
-            <span className="size-1 rounded-full bg-[var(--color-on-surface-faint)]" />
-            <span className="tabular-nums">{cachedCount}/{rows.length || subject.episodes || "?"} 集已缓存</span>
-          </div>
-
-          {subject.progress > 0 && subject.progress < 1 && (
-            <div className="mt-6 max-w-lg">
-              <div className="flex items-center justify-between text-[12px] text-[var(--color-on-surface-faint)] mb-1.5">
-                <span>{subject.watchedEpisodes}/{subject.episodes || "?"} 集</span>
-                <span className="tabular-nums">{Math.round(subject.progress * 100)}%</span>
-              </div>
-              <Progress value={subject.progress} />
-            </div>
-          )}
-        </div>
-      </div>
-
-      <section className="px-10 mt-14">
-        <div className="flex items-end justify-between mb-4">
-          <div>
-            <h2 className="text-[22px] font-semibold tracking-tight">分集与本地缓存</h2>
-            <div className="text-[13px] text-[var(--color-on-surface-faint)] mt-1">
-              {subject.files} 个本地文件 · {subject.totalSize}
+              {hasMore && (
+                <div ref={sentinelRef} className="flex justify-center py-4">
+                  <button
+                    type="button"
+                    onClick={loadMore}
+                    className="glass-light h-8 rounded-full px-3 text-[12px] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
+                  >
+                    继续加载剩余 {remainingRows} 集
+                  </button>
+                </div>
+              )}
             </div>
           </div>
-        </div>
-
-        <Card className="overflow-hidden">
-          <div className="grid grid-cols-[88px_1fr_120px_160px] gap-4 px-5 py-3 text-[11px] uppercase tracking-wider text-[var(--color-on-surface-faint)] border-b border-[var(--color-outline-soft)] bg-[var(--color-surface)]">
-            <div>EP</div>
-            <div>Title</div>
-            <div>Cache</div>
-            <div className="text-right">File</div>
-          </div>
-          <div className="divide-y divide-[var(--color-outline-soft)]">
-            {visibleRows.map((row) => (
-              <EpisodeCacheRow key={row.key} row={row} onOpenEpisode={openEpisode} />
-            ))}
-            {hasMore && (
-              <EpisodeLoadMore
-                remainingCount={remainingRows}
-                sentinelRef={sentinelRef}
-                onLoadMore={loadMore}
-              />
-            )}
-          </div>
-        </Card>
-      </section>
+        </motion.section>
+      </motion.div>
     </div>
   );
 }
 
-const EpisodeCacheRow = memo(function EpisodeCacheRow({
+function MetaSep() {
+  return <span className="hidden h-3 w-px shrink-0 bg-black/10 sm:inline-block" />;
+}
+
+const EpisodeRow = memo(function EpisodeRow({
   row,
-  onOpenEpisode,
+  index,
+  isNext,
+  onOpen,
 }: {
   row: EpisodeRowData;
-  onOpenEpisode: (row: EpisodeRowData) => void;
+  index: number;
+  isNext: boolean;
+  onOpen: () => void;
 }) {
   const title = row.titleCn || row.title || `Episode ${row.episode}`;
-  const handleOpen = useCallback(() => {
-    void onOpenEpisode(row);
-  }, [onOpenEpisode, row]);
-
   return (
-    <button
+    <motion.button
       type="button"
-      onClick={handleOpen}
-      disabled={!row.cached}
       className={cn(
-        "w-full text-left grid grid-cols-[88px_1fr_120px_160px] gap-4 px-5 py-4 items-center text-[13px] transition-colors cv-episode-row",
+        "group flex items-center gap-4 rounded-[14px] border-[0.5px] px-4 py-3 text-left transition-all duration-200",
         row.cached
-          ? "hover:bg-[var(--color-surface-2)] cursor-pointer"
-          : "cursor-default"
+          ? "cursor-pointer hover:border-black/[0.03] hover:bg-black/[0.025]"
+          : "cursor-default opacity-65",
+        isNext
+          ? "border-[var(--color-accent)]/[0.08] bg-[var(--color-accent)]/[0.05]"
+          : "border-transparent"
       )}
+      disabled={!row.cached}
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.16, delay: Math.min(index, 16) * 0.006 }}
+      onClick={onOpen}
+      whileTap={{ scale: 0.995 }}
     >
-      <div className="tabular-nums text-[var(--color-on-surface-muted)]">
-        EP{String(row.episode).padStart(2, "0")}
+      <div
+        className={cn(
+          "w-7 text-center text-[14px] font-medium tabular-nums",
+          row.cached ? (isNext ? "text-[var(--color-accent)]" : "text-[var(--color-text-secondary)]") : "text-[var(--color-text-tertiary)]/60"
+        )}
+      >
+        {isNext ? <CirclePlay size={18} fill="currentColor" /> : String(row.episode).padStart(2, "0")}
       </div>
-      <div className="min-w-0">
-        <div className="text-[15px] font-medium truncate">{title}</div>
-        <div className="text-[12px] text-[var(--color-on-surface-faint)] mt-0.5 truncate">
-          {row.titleCn && row.title && row.titleCn !== row.title ? row.title : row.airDate || "暂无播出日期"}
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-[13.5px] font-medium text-[var(--color-text-primary)]">{title}</div>
+        <div className="mt-0.5 truncate text-[11.5px] text-[var(--color-text-tertiary)]">
+          {row.fileName || row.airDate || "暂无本地文件"}
         </div>
       </div>
-      <div>
+      <div className="flex items-center gap-2">
         {row.cached ? (
-          <span className="inline-flex items-center gap-1.5 h-7 px-2.5 rounded-full bg-emerald-500/15 text-emerald-300 ring-1 ring-inset ring-emerald-400/30">
-            <CheckIcon className="size-3.5" />
-            本地
+          <span className="flex items-center gap-1 rounded-full bg-green-500/8 px-2.5 py-[3px] text-[11px] text-green-600">
+            <Check size={12} /> 本地
           </span>
         ) : (
-          <span className="inline-flex items-center gap-1.5 h-7 px-2.5 rounded-full bg-white/5 text-[var(--color-on-surface-faint)] ring-1 ring-inset ring-[var(--color-outline-soft)]">
-            <FileIcon className="size-3.5" />
+          <span className="rounded-full bg-black/[0.035] px-2.5 py-[3px] text-[11px] text-[var(--color-text-tertiary)]">
             缺失
           </span>
         )}
-      </div>
-      <div className="min-w-0 text-right">
-        <div className="truncate font-mono text-[12px] text-[var(--color-on-surface-muted)]">
-          {row.fileName || "-"}
-        </div>
         {row.fileSize && (
-          <div className="text-[11px] text-[var(--color-on-surface-faint)] mt-0.5 tabular-nums">
+          <span className="hidden text-[11px] tabular-nums text-[var(--color-text-tertiary)] md:inline">
             {row.fileSize}
-          </div>
+          </span>
         )}
       </div>
-    </button>
+    </motion.button>
   );
 });
-
-function EpisodeLoadMore({
-  remainingCount,
-  sentinelRef,
-  onLoadMore,
-}: {
-  remainingCount: number;
-  sentinelRef: (node: HTMLDivElement | null) => void;
-  onLoadMore: () => void;
-}) {
-  return (
-    <div
-      ref={sentinelRef}
-      className="px-5 py-4 text-center bg-[var(--color-surface)]"
-    >
-      <button
-        type="button"
-        onClick={onLoadMore}
-        className="h-8 rounded-full px-3 text-[12px] text-[var(--color-on-surface-muted)] hover:bg-white/[0.06] hover:text-[var(--color-on-surface)]"
-      >
-        继续加载剩余 {remainingCount} 集
-      </button>
-    </div>
-  );
-}
 
 function makeEpisodeRows(subject: Subject): EpisodeRowData[] {
   if (subject.episodesDetail?.length) {

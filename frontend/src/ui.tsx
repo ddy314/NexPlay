@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState, type ReactNode, type ButtonHTMLAttrib
 import { cn } from "./utils/cn";
 import { CheckIcon, CloseIcon } from "./icons";
 
-// ----- Buttons (M3 variants) -----
+// ----- Buttons -----
 type BtnVariant = "filled" | "tonal" | "outlined" | "text" | "danger";
 type BtnSize = "sm" | "md" | "lg";
 
@@ -30,12 +30,12 @@ export function Button({
   };
   const variants: Record<BtnVariant, string> = {
     filled:
-      "bg-[var(--color-primary)] text-[var(--color-on-primary)] hover:brightness-110 active:brightness-95 shadow-sm shadow-black/10",
+      "bg-[var(--color-primary)] text-[var(--color-on-primary)] hover:brightness-105 active:brightness-95",
     tonal:
       "bg-[var(--color-primary-soft)] text-[var(--color-primary)] hover:brightness-95 active:brightness-90",
     outlined:
-      "bg-transparent text-[var(--color-on-surface)] ring-1 ring-inset ring-[var(--color-outline)] hover:bg-white/5",
-    text: "bg-transparent text-[var(--color-on-surface)] hover:bg-white/[0.06]",
+      "bg-transparent text-[var(--color-on-surface)] ring-1 ring-inset ring-[var(--color-outline)] hover:bg-black/[0.035]",
+    text: "bg-transparent text-[var(--color-on-surface)] hover:bg-black/[0.035]",
     danger:
       "bg-[var(--color-danger)]/15 text-[var(--color-danger)] hover:bg-[var(--color-danger)]/25 ring-1 ring-inset ring-[var(--color-danger)]/30",
   };
@@ -254,7 +254,7 @@ export function Snackbar({ msg, onDismiss }: { msg: SnackMsg | null; onDismiss: 
   return (
     <div
       className={cn(
-        "anim-snackbar fixed bottom-8 left-1/2 z-50 flex items-center gap-3 px-4 py-3 rounded-2xl shadow-xl ring-1 ring-white/10 text-sm text-white",
+        "anim-snackbar fixed bottom-8 left-1/2 z-50 flex items-center gap-3 px-4 py-3 rounded-[var(--radius-panel)] shadow-xl ring-1 ring-white/10 text-sm text-white",
         tones[msg.tone ?? "neutral"]
       )}
     >
@@ -295,7 +295,7 @@ export function SearchField({
   return (
     <div
       className={cn(
-        "inline-flex items-center gap-2 h-10 px-3.5 rounded-full bg-[var(--color-surface-2)] ring-1 ring-inset ring-[var(--color-outline-soft)] focus-within:ring-[var(--color-primary)]/40 transition-all",
+        "inline-flex items-center gap-2 h-10 px-3.5 rounded-[var(--radius-pill)] bg-[var(--color-surface-2)] ring-1 ring-inset ring-[var(--color-outline-soft)] focus-within:ring-[var(--color-primary)]/40 transition-all",
         className
       )}
     >
@@ -338,7 +338,7 @@ export function Card({
   return (
     <div
       className={cn(
-        "rounded-2xl bg-[var(--color-surface-1)] ring-1 ring-inset ring-[var(--color-outline-soft)]",
+        "rounded-[var(--radius-panel)] bg-[var(--color-surface-1)] ring-1 ring-inset ring-[var(--color-outline-soft)]",
         elevated && "shadow-lg shadow-black/30",
         className
       )}
