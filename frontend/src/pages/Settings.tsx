@@ -105,40 +105,40 @@ export function SettingsPage({
   };
 
   return (
-    <div className="px-10 py-10 pb-20">
-      <div className="flex items-end justify-between gap-6 mb-8">
+    <div className="page-shell h-full overflow-y-auto">
+      <div className="mb-10 flex items-end justify-between gap-6">
         <div>
-          <h1 className="text-[36px] font-semibold tracking-tight">设置</h1>
-          <div className="text-[14px] text-[var(--color-on-surface-muted)] mt-2">
+          <h1 className="text-[44px] font-bold leading-[1] tracking-tight">设置</h1>
+          <div className="mt-3 text-[17px] font-medium text-[var(--color-on-surface-muted)]">
             这里的配置会直接写入 NexPlay 后端配置。
           </div>
         </div>
-        <Button onClick={save} loading={saving} disabled={loading}>
+        <Button onClick={save} loading={saving} disabled={loading} className="h-10 px-5 text-[13px]">
           保存设置
         </Button>
       </div>
 
-      <div className="grid grid-cols-[220px_minmax(0,1fr)] gap-8 items-start">
-        <Card className="p-2">
+      <div className="grid grid-cols-[240px_minmax(0,1fr)] items-start gap-8">
+        <Card className="p-2 settings-section-list">
           {sections.map((item) => (
             <button
               key={item.id}
               onClick={() => setSection(item.id)}
               className={cn(
-                "w-full flex items-center gap-3 px-3 py-3 rounded-xl text-left transition-colors",
+                "settings-option group flex w-full items-center gap-3 rounded-[var(--radius-card)] px-3.5 py-3 text-left transition-all",
                 section === item.id
                   ? "bg-[var(--color-primary-soft)] text-[var(--color-primary)]"
-                  : "hover:bg-white/[0.05] text-[var(--color-on-surface)]"
+                  : "text-[var(--color-on-surface)] hover:bg-black/[0.045]"
               )}
             >
               <div className="flex-1 min-w-0">
-                <div className="text-[13.5px] font-medium">{item.label}</div>
+                <div className="text-[14px] font-semibold">{item.label}</div>
                 <div
                   className={cn(
-                    "text-[11px] mt-0.5",
+                    "mt-0.5 text-[11.5px] font-medium",
                     section === item.id
                       ? "text-[var(--color-primary)]/70"
-                      : "text-[var(--color-on-surface-faint)]"
+                      : "text-[var(--color-on-surface-faint)] group-hover:text-[var(--color-on-surface-muted)]"
                   )}
                 >
                   {item.desc}
@@ -157,7 +157,7 @@ export function SettingsPage({
                   value={librariesText}
                   onChange={(event) => setLibrariesText(event.target.value)}
                   spellCheck={false}
-                  className="min-h-36 w-full resize-y rounded-xl bg-[var(--color-surface-3)] ring-1 ring-inset ring-[var(--color-outline-soft)] focus:ring-[var(--color-primary)]/40 px-3 py-3 text-[13px] outline-none font-mono"
+                  className="min-h-36 w-full resize-y rounded-[var(--radius-card)] bg-[var(--color-surface-3)] ring-1 ring-inset ring-[var(--color-outline-soft)] focus:ring-[var(--color-primary)]/40 px-3 py-3 text-[13px] outline-none font-mono"
                   placeholder="/path/to/anime/library"
                 />
               </div>
@@ -168,7 +168,7 @@ export function SettingsPage({
                   <TextInput
                     value={settings.databasePath}
                     onChange={(value) => update("databasePath", value)}
-                    className="w-[min(24rem,42vw)] font-mono"
+                    className="w-full font-mono"
                   />
                 }
               />
@@ -179,7 +179,7 @@ export function SettingsPage({
                   <select
                     value={settings.loggingLevel}
                     onChange={(event) => update("loggingLevel", event.target.value)}
-                    className="bg-[var(--color-surface-3)] ring-1 ring-inset ring-[var(--color-outline-soft)] rounded-lg h-9 px-3 text-[13px] outline-none"
+                    className="h-9 rounded-[var(--radius-control)] bg-[var(--color-surface-3)] px-3 text-[13px] outline-none ring-1 ring-inset ring-[var(--color-outline-soft)]"
                   >
                     <option value="error">error</option>
                     <option value="warn">warn</option>
@@ -214,7 +214,7 @@ export function SettingsPage({
                   <TextInput
                     value={settings.bangumiBaseUrl}
                     onChange={(value) => update("bangumiBaseUrl", value)}
-                    className="w-[min(24rem,42vw)] font-mono"
+                    className="w-full font-mono"
                   />
                 }
               />
@@ -224,7 +224,7 @@ export function SettingsPage({
                   <TextInput
                     value={settings.bangumiUserAgent}
                     onChange={(value) => update("bangumiUserAgent", value)}
-                    className="w-[min(24rem,42vw)] font-mono"
+                    className="w-full font-mono"
                   />
                 }
               />
@@ -237,7 +237,7 @@ export function SettingsPage({
                     min={1}
                     value={settings.bangumiRequestTimeoutSecs}
                     onChange={(event) => update("bangumiRequestTimeoutSecs", Number(event.target.value) || 1)}
-                    className="bg-[var(--color-surface-3)] ring-1 ring-inset ring-[var(--color-outline-soft)] rounded-lg h-9 px-3 text-[13px] outline-none w-24"
+                    className="h-9 w-24 rounded-[var(--radius-control)] bg-[var(--color-surface-3)] px-3 text-[13px] outline-none ring-1 ring-inset ring-[var(--color-outline-soft)]"
                   />
                 }
               />
@@ -263,7 +263,7 @@ export function SettingsPage({
                   <TextInput
                     value={settings.dandanplayAppId}
                     onChange={(value) => update("dandanplayAppId", value)}
-                    className="w-[min(24rem,42vw)] font-mono"
+                    className="w-full font-mono"
                   />
                 }
               />
@@ -311,8 +311,8 @@ function Group({ title, desc, children }: { title: string; desc?: string; childr
   return (
     <Card>
       <div className="px-6 pt-5 pb-4 border-b border-[var(--color-outline-soft)]">
-        <div className="text-[16px] font-medium">{title}</div>
-        {desc && <div className="text-[12px] text-[var(--color-on-surface-faint)] mt-1">{desc}</div>}
+        <div className="text-[17px] font-semibold tracking-tight">{title}</div>
+        {desc && <div className="mt-1 text-[12.5px] font-medium text-[var(--color-on-surface-faint)]">{desc}</div>}
       </div>
       <div className="divide-y divide-[var(--color-outline-soft)]">{children}</div>
     </Card>
@@ -329,12 +329,12 @@ function SettingsRow({
   control: React.ReactNode;
 }) {
   return (
-    <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 px-6 py-4">
+    <div className="grid grid-cols-[180px_minmax(0,1fr)] items-center gap-5 px-6 py-4">
       <div className="flex-1 min-w-0">
-        <div className="text-[14px]">{title}</div>
-        {desc && <div className="text-[12px] text-[var(--color-on-surface-faint)] mt-0.5">{desc}</div>}
+        <div className="text-[14px] font-semibold">{title}</div>
+        {desc && <div className="mt-0.5 text-[12px] font-medium text-[var(--color-on-surface-faint)]">{desc}</div>}
       </div>
-      <div className="min-w-0 justify-self-end">{control}</div>
+      <div className="min-w-0 justify-self-stretch">{control}</div>
     </div>
   );
 }
@@ -353,7 +353,7 @@ function TextInput({
       value={value}
       onChange={(event) => onChange(event.target.value)}
       className={cn(
-        "bg-[var(--color-surface-3)] ring-1 ring-inset ring-[var(--color-outline-soft)] focus:ring-[var(--color-primary)]/40 rounded-lg h-9 px-3 text-[13px] outline-none",
+        "h-9 rounded-[var(--radius-control)] bg-[var(--color-surface-3)] px-3 text-[13px] outline-none ring-1 ring-inset ring-[var(--color-outline-soft)] focus:ring-[var(--color-primary)]/40",
         className
       )}
     />
@@ -373,12 +373,12 @@ function SecretInput({
 }) {
   return (
     <div className="flex items-center gap-2">
-      <div className="relative">
+      <div className="relative w-full">
         <input
           type={show ? "text" : "password"}
           value={value}
           onChange={(event) => onChange(event.target.value)}
-          className="bg-[var(--color-surface-3)] ring-1 ring-inset ring-[var(--color-outline-soft)] focus:ring-[var(--color-primary)]/40 rounded-lg h-9 pl-9 pr-3 text-[13px] outline-none w-[min(24rem,42vw)] font-mono"
+          className="h-9 w-full rounded-[var(--radius-control)] bg-[var(--color-surface-3)] pl-9 pr-3 font-mono text-[13px] outline-none ring-1 ring-inset ring-[var(--color-outline-soft)] focus:ring-[var(--color-primary)]/40"
         />
         <KeyIcon className="size-4 absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-on-surface-faint)]" />
       </div>

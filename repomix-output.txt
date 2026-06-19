@@ -450,6 +450,8 @@ SOFTWARE.
   "dependencies": {
     "@vitejs/plugin-react": "5.1.1",
     "clsx": "2.1.1",
+    "framer-motion": "^12.40.0",
+    "lucide-react": "^1.21.0",
     "react": "19.2.6",
     "react-dom": "19.2.6",
     "tailwind-merge": "3.4.0"
@@ -859,40 +861,40 @@ export function SettingsPage({
   };
 
   return (
-    <div className="px-10 py-10 pb-20">
-      <div className="flex items-end justify-between gap-6 mb-8">
+    <div className="page-shell h-full overflow-y-auto">
+      <div className="mb-10 flex items-end justify-between gap-6">
         <div>
-          <h1 className="text-[36px] font-semibold tracking-tight">设置</h1>
-          <div className="text-[14px] text-[var(--color-on-surface-muted)] mt-2">
+          <h1 className="text-[44px] font-[780] leading-[1] tracking-[-0.018em]">设置</h1>
+          <div className="mt-3 text-[17px] font-semibold tracking-[-0.01em] text-[var(--color-on-surface-muted)]">
             这里的配置会直接写入 NexPlay 后端配置。
           </div>
         </div>
-        <Button onClick={save} loading={saving} disabled={loading}>
+        <Button onClick={save} loading={saving} disabled={loading} className="h-10 px-5 text-[13px]">
           保存设置
         </Button>
       </div>
 
-      <div className="grid grid-cols-[220px_minmax(0,1fr)] gap-8 items-start">
-        <Card className="p-2">
+      <div className="grid grid-cols-[240px_minmax(0,1fr)] items-start gap-8">
+        <Card className="p-2 settings-section-list">
           {sections.map((item) => (
             <button
               key={item.id}
               onClick={() => setSection(item.id)}
               className={cn(
-                "w-full flex items-center gap-3 px-3 py-3 rounded-xl text-left transition-colors",
+                "settings-option group flex w-full items-center gap-3 rounded-[var(--radius-card)] px-3.5 py-3 text-left transition-all",
                 section === item.id
                   ? "bg-[var(--color-primary-soft)] text-[var(--color-primary)]"
-                  : "hover:bg-white/[0.05] text-[var(--color-on-surface)]"
+                  : "text-[var(--color-on-surface)] hover:bg-black/[0.045]"
               )}
             >
               <div className="flex-1 min-w-0">
-                <div className="text-[13.5px] font-medium">{item.label}</div>
+                <div className="text-[14px] font-bold tracking-[-0.008em]">{item.label}</div>
                 <div
                   className={cn(
-                    "text-[11px] mt-0.5",
+                    "mt-0.5 text-[11.5px] font-medium",
                     section === item.id
                       ? "text-[var(--color-primary)]/70"
-                      : "text-[var(--color-on-surface-faint)]"
+                      : "text-[var(--color-on-surface-faint)] group-hover:text-[var(--color-on-surface-muted)]"
                   )}
                 >
                   {item.desc}
@@ -911,7 +913,7 @@ export function SettingsPage({
                   value={librariesText}
                   onChange={(event) => setLibrariesText(event.target.value)}
                   spellCheck={false}
-                  className="min-h-36 w-full resize-y rounded-xl bg-[var(--color-surface-3)] ring-1 ring-inset ring-[var(--color-outline-soft)] focus:ring-[var(--color-primary)]/40 px-3 py-3 text-[13px] outline-none font-mono"
+                  className="min-h-36 w-full resize-y rounded-[var(--radius-card)] bg-[var(--color-surface-3)] ring-1 ring-inset ring-[var(--color-outline-soft)] focus:ring-[var(--color-primary)]/40 px-3 py-3 text-[13px] outline-none font-mono"
                   placeholder="/path/to/anime/library"
                 />
               </div>
@@ -922,7 +924,7 @@ export function SettingsPage({
                   <TextInput
                     value={settings.databasePath}
                     onChange={(value) => update("databasePath", value)}
-                    className="w-[min(24rem,42vw)] font-mono"
+                    className="w-full font-mono"
                   />
                 }
               />
@@ -933,7 +935,7 @@ export function SettingsPage({
                   <select
                     value={settings.loggingLevel}
                     onChange={(event) => update("loggingLevel", event.target.value)}
-                    className="bg-[var(--color-surface-3)] ring-1 ring-inset ring-[var(--color-outline-soft)] rounded-lg h-9 px-3 text-[13px] outline-none"
+                    className="h-9 rounded-[var(--radius-control)] bg-[var(--color-surface-3)] px-3 text-[13px] outline-none ring-1 ring-inset ring-[var(--color-outline-soft)]"
                   >
                     <option value="error">error</option>
                     <option value="warn">warn</option>
@@ -968,7 +970,7 @@ export function SettingsPage({
                   <TextInput
                     value={settings.bangumiBaseUrl}
                     onChange={(value) => update("bangumiBaseUrl", value)}
-                    className="w-[min(24rem,42vw)] font-mono"
+                    className="w-full font-mono"
                   />
                 }
               />
@@ -978,7 +980,7 @@ export function SettingsPage({
                   <TextInput
                     value={settings.bangumiUserAgent}
                     onChange={(value) => update("bangumiUserAgent", value)}
-                    className="w-[min(24rem,42vw)] font-mono"
+                    className="w-full font-mono"
                   />
                 }
               />
@@ -991,7 +993,7 @@ export function SettingsPage({
                     min={1}
                     value={settings.bangumiRequestTimeoutSecs}
                     onChange={(event) => update("bangumiRequestTimeoutSecs", Number(event.target.value) || 1)}
-                    className="bg-[var(--color-surface-3)] ring-1 ring-inset ring-[var(--color-outline-soft)] rounded-lg h-9 px-3 text-[13px] outline-none w-24"
+                    className="h-9 w-24 rounded-[var(--radius-control)] bg-[var(--color-surface-3)] px-3 text-[13px] outline-none ring-1 ring-inset ring-[var(--color-outline-soft)]"
                   />
                 }
               />
@@ -1017,7 +1019,7 @@ export function SettingsPage({
                   <TextInput
                     value={settings.dandanplayAppId}
                     onChange={(value) => update("dandanplayAppId", value)}
-                    className="w-[min(24rem,42vw)] font-mono"
+                    className="w-full font-mono"
                   />
                 }
               />
@@ -1065,8 +1067,8 @@ function Group({ title, desc, children }: { title: string; desc?: string; childr
   return (
     <Card>
       <div className="px-6 pt-5 pb-4 border-b border-[var(--color-outline-soft)]">
-        <div className="text-[16px] font-medium">{title}</div>
-        {desc && <div className="text-[12px] text-[var(--color-on-surface-faint)] mt-1">{desc}</div>}
+        <div className="text-[17px] font-bold tracking-[-0.01em]">{title}</div>
+        {desc && <div className="mt-1 text-[12.5px] font-medium text-[var(--color-on-surface-faint)]">{desc}</div>}
       </div>
       <div className="divide-y divide-[var(--color-outline-soft)]">{children}</div>
     </Card>
@@ -1083,12 +1085,12 @@ function SettingsRow({
   control: React.ReactNode;
 }) {
   return (
-    <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 px-6 py-4">
+    <div className="grid grid-cols-[180px_minmax(0,1fr)] items-center gap-5 px-6 py-4">
       <div className="flex-1 min-w-0">
-        <div className="text-[14px]">{title}</div>
-        {desc && <div className="text-[12px] text-[var(--color-on-surface-faint)] mt-0.5">{desc}</div>}
+        <div className="text-[14px] font-semibold">{title}</div>
+        {desc && <div className="mt-0.5 text-[12px] font-medium text-[var(--color-on-surface-faint)]">{desc}</div>}
       </div>
-      <div className="min-w-0 justify-self-end">{control}</div>
+      <div className="min-w-0 justify-self-stretch">{control}</div>
     </div>
   );
 }
@@ -1107,7 +1109,7 @@ function TextInput({
       value={value}
       onChange={(event) => onChange(event.target.value)}
       className={cn(
-        "bg-[var(--color-surface-3)] ring-1 ring-inset ring-[var(--color-outline-soft)] focus:ring-[var(--color-primary)]/40 rounded-lg h-9 px-3 text-[13px] outline-none",
+        "h-9 rounded-[var(--radius-control)] bg-[var(--color-surface-3)] px-3 text-[13px] outline-none ring-1 ring-inset ring-[var(--color-outline-soft)] focus:ring-[var(--color-primary)]/40",
         className
       )}
     />
@@ -1127,12 +1129,12 @@ function SecretInput({
 }) {
   return (
     <div className="flex items-center gap-2">
-      <div className="relative">
+      <div className="relative w-full">
         <input
           type={show ? "text" : "password"}
           value={value}
           onChange={(event) => onChange(event.target.value)}
-          className="bg-[var(--color-surface-3)] ring-1 ring-inset ring-[var(--color-outline-soft)] focus:ring-[var(--color-primary)]/40 rounded-lg h-9 pl-9 pr-3 text-[13px] outline-none w-[min(24rem,42vw)] font-mono"
+          className="h-9 w-full rounded-[var(--radius-control)] bg-[var(--color-surface-3)] pl-9 pr-3 font-mono text-[13px] outline-none ring-1 ring-inset ring-[var(--color-outline-soft)] focus:ring-[var(--color-primary)]/40"
         />
         <KeyIcon className="size-4 absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-on-surface-faint)]" />
       </div>
@@ -1498,123 +1500,78 @@ export function makeEpisodes(subject: Subject): Episode[] {
 </file>
 
 <file path="frontend/src/NavRail.tsx">
+import { motion } from "framer-motion";
+import { Home, Library, Moon, Search, Settings, Sun } from "lucide-react";
 import type { ReactNode } from "react";
 import { cn } from "./utils/cn";
-import {
-  HomeIcon,
-  LibraryIcon,
-  SettingsIcon,
-  CollapseIcon,
-  ExpandIcon,
-  BellIcon,
-} from "./icons";
 
-export type Route = "home" | "library" | "settings";
+export type Route = "search" | "home" | "library" | "settings";
 
-const items: { id: Route; label: string; icon: (p: any) => ReactNode }[] = [
-  { id: "home", label: "Home", icon: HomeIcon },
-  { id: "library", label: "Library", icon: LibraryIcon },
-  { id: "settings", label: "Settings", icon: SettingsIcon },
+const items: { id: Route; label: string; icon: ReactNode }[] = [
+  { id: "search", label: "搜索", icon: <Search size={21} strokeWidth={2.1} /> },
+  { id: "home", label: "主页", icon: <Home size={19} strokeWidth={2} /> },
+  { id: "library", label: "媒体库", icon: <Library size={19} strokeWidth={2} /> },
+  { id: "settings", label: "设置", icon: <Settings size={19} strokeWidth={2} /> },
 ];
 
 export function NavRail({
   route,
   onRoute,
-  collapsed,
-  onToggleCollapsed,
+  theme,
+  onToggleTheme,
 }: {
   route: Route;
   onRoute: (r: Route) => void;
-  collapsed: boolean;
-  onToggleCollapsed: () => void;
+  theme: "light" | "dark";
+  onToggleTheme: () => void;
 }) {
   return (
-    <aside
-      className={cn(
-        "h-full shrink-0 flex flex-col items-stretch border-r border-[var(--color-outline-soft)] mica",
-        "bg-[var(--color-surface)]/80",
-        collapsed ? "w-[72px]" : "w-[228px]"
-      )}
-    >
-      {/* Brand */}
-      <div className={cn("flex items-center px-4 pt-5 pb-4", collapsed && "justify-center px-0")}>
-        <div className="size-9 rounded-xl bg-gradient-to-br from-[var(--color-primary)] to-[var(--color-accent)] grid place-items-center shadow-md">
-          <svg viewBox="0 0 24 24" className="size-5 text-[var(--color-on-primary)]" fill="currentColor">
-            <path d="M12 2l2.4 6.9H22l-6 4.4 2.3 7L12 16l-6.3 4.3 2.3-7-6-4.4h7.6z" />
-          </svg>
-        </div>
-        {!collapsed && (
-          <div className="ml-2.5 min-w-0">
-            <div className="text-[15px] font-semibold tracking-tight leading-none">NexPlay</div>
-            <div className="text-[11px] text-[var(--color-on-surface-faint)] mt-1">本地番剧库</div>
-          </div>
-        )}
+    <aside className="nav-rail relative z-20 flex h-full w-[260px] shrink-0 flex-col overflow-hidden border-r px-5 py-6 backdrop-blur-[38px] backdrop-saturate-[185%]">
+      <div className="nav-brand mb-8 flex items-center px-1">
+        <span className="text-[18px] font-bold tracking-tight">NexPlay</span>
       </div>
-
-      {/* Items */}
-      <nav className={cn("flex-1 flex flex-col gap-1", collapsed ? "px-2" : "px-3")}>
-        {items.map((it) => {
-          const active = route === it.id;
-          const Icon = it.icon;
+      <nav className="relative z-[1] flex w-full flex-col gap-1.5">
+        {items.map((item) => {
+          const active = route === item.id;
           return (
-            <button
-              key={it.id}
-              onClick={() => onRoute(it.id)}
+            <motion.button
+              key={item.id}
+              type="button"
+              onClick={() => onRoute(item.id)}
               className={cn(
-                "group relative flex items-center h-11 rounded-xl transition-all",
-                collapsed ? "justify-center px-0" : "px-3 gap-3",
+                "nav-item relative flex h-[46px] w-full items-center gap-3.5 rounded-[var(--radius-control)] px-4 text-[16px] font-semibold tracking-tight transition-colors",
                 active
-                  ? "bg-[var(--color-primary-soft)] text-[var(--color-primary)]"
-                  : "text-[var(--color-on-surface-muted)] hover:bg-white/[0.06] hover:text-[var(--color-on-surface)]"
+                  ? "is-active text-[var(--color-accent)]"
+                  : "text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
               )}
+              whileTap={{ scale: 0.97 }}
+              transition={{ duration: 0.12 }}
             >
-              {/* M3 active indicator (left bar) */}
-              <span
-                className={cn(
-                  "absolute left-0 top-1/2 -translate-y-1/2 w-1 rounded-r-full bg-[var(--color-primary)] transition-all",
-                  active ? "h-6 opacity-100" : "h-0 opacity-0"
-                )}
-              />
-              <Icon className="size-[20px] shrink-0" />
-              {!collapsed && (
-                <span className="text-[14px] font-medium tracking-tight">{it.label}</span>
+              {active && (
+                <motion.span
+                  layoutId="nav-active-bg"
+                  className="nav-active-bg absolute inset-y-[3px] left-1 right-1 rounded-[calc(var(--radius-control)-2px)]"
+                  transition={{ type: "spring", stiffness: 420, damping: 34 }}
+                />
               )}
-            </button>
+              <span className="nav-item-icon relative flex size-6 shrink-0 items-center justify-center">{item.icon}</span>
+              <span className="relative leading-none">{item.label}</span>
+            </motion.button>
           );
         })}
       </nav>
 
-      {/* Footer / collapse */}
-      <div className={cn("p-3 border-t border-[var(--color-outline-soft)]", collapsed && "flex flex-col items-center gap-1")}>
-        {!collapsed ? (
-          <div className="flex items-center gap-2 mb-2 px-2 py-2 rounded-xl hover:bg-white/[0.05] transition-colors cursor-pointer">
-            <div className="size-7 rounded-full bg-gradient-to-br from-[var(--color-primary)] to-[var(--color-accent)] grid place-items-center text-[11px] font-semibold text-[var(--color-on-primary)]">
-              茉
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="text-[12px] leading-tight truncate">本地用户</div>
-              <div className="text-[10px] text-[var(--color-on-surface-faint)]">3 个媒体库</div>
-            </div>
-            <button className="size-7 rounded-full hover:bg-white/[0.08] grid place-items-center text-[var(--color-on-surface-muted)]">
-              <BellIcon className="size-4" />
-            </button>
-          </div>
-        ) : (
-          <button className="size-9 rounded-full hover:bg-white/[0.08] grid place-items-center text-[var(--color-on-surface-muted)]">
-            <BellIcon className="size-[18px]" />
-          </button>
-        )}
-        <button
-          onClick={onToggleCollapsed}
-          className={cn(
-            "w-full h-9 rounded-xl flex items-center justify-center gap-2 text-[12px]",
-            "text-[var(--color-on-surface-faint)] hover:bg-white/[0.05] hover:text-[var(--color-on-surface)] transition-colors"
-          )}
-        >
-          {collapsed ? <ExpandIcon className="size-4" /> : <CollapseIcon className="size-4" />}
-          {!collapsed && <span>Collapse</span>}
-        </button>
-      </div>
+      <button
+        type="button"
+        title="切换外观"
+        onClick={onToggleTheme}
+        className="nav-item relative z-[1] mt-auto flex h-[44px] w-full items-center gap-3.5 rounded-[var(--radius-control)] px-4 text-[14px] font-semibold text-[var(--color-text-secondary)] transition-colors hover:text-[var(--color-text-primary)]"
+      >
+        <span className="nav-item-icon flex size-6 shrink-0 items-center justify-center">
+          {theme === "light" ? <Moon size={19} strokeWidth={2} /> : <Sun size={19} strokeWidth={2} />}
+        </span>
+        <span>{theme === "light" ? "深色" : "浅色"}</span>
+      </button>
     </aside>
   );
 }
@@ -2499,12 +2456,12 @@ level = "info"
 
 <file path="frontend/src/pages/Detail.tsx">
 import { memo, useCallback, useMemo } from "react";
+import { motion } from "framer-motion";
+import { ArrowLeft, Calendar, Check, CirclePlay, Film, HardDrive, Star, Tv } from "lucide-react";
 import { type Subject } from "../data";
-import { Card, Chip, Progress } from "../ui";
 import { Poster } from "../MediaCard";
-import { ArrowLeft, CheckIcon, FileIcon, StarIcon } from "../icons";
-import { cn } from "../utils/cn";
 import { useIncrementalItems } from "../hooks/useIncrementalItems";
+import { cn } from "../utils/cn";
 
 type EpisodeRowData = {
   key: string;
@@ -2528,9 +2485,10 @@ export function DetailPage({
   onSnack: (text: string, tone?: "neutral" | "success" | "danger") => void;
 }) {
   const rows = useMemo(() => makeEpisodeRows(subject), [subject]);
-  const cachedCount = useMemo(
-    () => rows.filter((row) => row.cached).length,
-    [rows]
+  const cachedCount = useMemo(() => rows.filter((row) => row.cached).length, [rows]);
+  const nextPlayableRow = useMemo(
+    () => rows.find((row) => row.cached && row.episode > subject.watchedEpisodes) ?? rows.find((row) => row.cached),
+    [rows, subject.watchedEpisodes]
   );
   const {
     hasMore,
@@ -2545,13 +2503,13 @@ export function DetailPage({
   });
   const heroAsset = subject.hero || subject.poster;
   const heroSrc = heroAsset ? window.nexplay?.resolveAssetUrl(heroAsset) ?? heroAsset : "";
-  const isUnmatched = subject.status === "unmatched" || subject.status === "failed";
-  const visibleTags = subject.tags.slice(0, 6);
+  const visibleTags = subject.tags.slice(0, 5);
+  const progressPercent = Math.min(100, Math.max(0, subject.progress * 100));
   const remainingRows = Math.max(0, rows.length - visibleCount);
 
-  const openEpisode = useCallback(async (row: EpisodeRowData) => {
-    if (!row.mediaId) {
-      onSnack(`第 ${row.episode} 集没有对应的本地文件`, "danger");
+  const openEpisode = useCallback(async (row: EpisodeRowData | undefined) => {
+    if (!row?.mediaId) {
+      onSnack("没有可打开的本地文件", "danger");
       return;
     }
     if (!window.nexplay) {
@@ -2561,7 +2519,7 @@ export function DetailPage({
 
     try {
       await window.nexplay.openMedia(row.mediaId);
-      onSnack(`已打开第 ${row.episode} 集`, "success");
+      onSnack(`已调用系统播放器打开第 ${row.episode} 集`, "success");
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : String(caught);
       onSnack(`打开失败：${message}`, "danger");
@@ -2569,224 +2527,300 @@ export function DetailPage({
   }, [onSnack]);
 
   return (
-    <div className="relative pb-20">
-      <div className="relative h-[420px] w-full overflow-hidden">
-        {heroSrc ? (
-          <img
-            src={heroSrc}
-            alt={subject.title}
-            loading="eager"
-            decoding="async"
-            fetchPriority="high"
-            className="absolute inset-0 size-full object-cover"
-          />
-        ) : (
-          <div className="absolute inset-0 bg-gradient-to-br from-[var(--color-surface-3)] via-[var(--color-surface-2)] to-[var(--color-surface)]" />
-        )}
-        <div className="absolute inset-0 bg-gradient-to-t from-[var(--color-bg)] via-[var(--color-bg)]/75 to-transparent" />
-        <div className="absolute inset-0 bg-gradient-to-r from-[var(--color-bg)]/75 via-[var(--color-bg)]/20 to-[var(--color-bg)]/20" />
-
-        <div className="absolute top-0 inset-x-0 flex items-center px-8 py-5">
-          <button
-            onClick={onBack}
-            className="inline-flex items-center gap-2 h-9 px-3 rounded-full bg-black/40 backdrop-blur-md text-white text-[13px] hover:bg-black/60 transition-colors"
-          >
-            <ArrowLeft className="size-4" />
-            返回媒体库
-          </button>
-        </div>
-      </div>
-
-      <div className="px-10 -mt-40 relative grid grid-cols-[240px_1fr] gap-10 items-start">
-        <div className="relative">
-          <div className="aspect-[2/3] rounded-2xl overflow-hidden ring-1 ring-black/40 shadow-2xl shadow-black/60">
-            <Poster
-              src={subject.poster}
-              alt={subject.title}
-              className="size-full"
-              loading="eager"
-              fetchPriority="high"
+    <div className="relative h-full overflow-y-auto overflow-x-hidden bg-[var(--color-surface)]">
+      <motion.div
+        className="relative min-h-full overflow-hidden"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        transition={{ duration: 0.36 }}
+      >
+        <div className="pointer-events-none absolute inset-x-[-72px] top-0 h-[540px] overflow-hidden">
+          {heroSrc ? (
+            <div
+              className="absolute inset-0 scale-[1.12] bg-cover bg-center"
+              style={{
+                backgroundImage: `url(${heroSrc})`,
+                filter: "blur(62px) saturate(190%) brightness(0.72)",
+              }}
             />
-          </div>
-          {subject.rating > 0 && (
-            <Card className="mt-4 p-4">
-              <div className="flex items-center gap-1.5 text-amber-300">
-                <StarIcon className="size-4" />
-                <span className="text-[22px] font-semibold tabular-nums">{subject.rating.toFixed(1)}</span>
-                {subject.rank > 0 && (
-                  <span className="text-[12px] text-[var(--color-on-surface-faint)] ml-auto">
-                    #{subject.rank}
+          ) : (
+            <div className="absolute inset-0 bg-gradient-to-br from-white via-[var(--color-accent-soft)] to-[var(--color-accent-blue-soft)]" />
+          )}
+          <div className="detail-hero-scrim absolute inset-0" />
+          <div className="detail-hero-side-light absolute inset-0" />
+          <div className="detail-hero-bottom-fade absolute inset-x-0 bottom-0 h-52" />
+        </div>
+
+        <section className="relative z-[1] px-6 pb-9 pt-16 sm:px-8 sm:pt-20">
+          <div className="mx-auto flex w-full max-w-[1120px] items-end gap-6 md:gap-8 max-md:flex-col max-md:items-start">
+          <motion.button
+            type="button"
+            className="glass glass-refraction shadow-glass hover:shadow-glass-hover group absolute left-5 top-5 z-10 rounded-full p-2.5 transition-all duration-300"
+            onClick={onBack}
+            whileHover={{ scale: 1.08 }}
+            whileTap={{ scale: 0.88 }}
+            initial={{ opacity: 0, x: -10 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ delay: 0.1 }}
+          >
+            <ArrowLeft size={16} className="text-[var(--color-text-primary)] transition-colors group-hover:text-[var(--color-accent)]" />
+          </motion.button>
+
+            <motion.div
+              className="relative shrink-0"
+              initial={{ opacity: 0, y: 40, scale: 0.85 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              transition={{ duration: 0.6, delay: 0.1, ease: [0.25, 0.46, 0.45, 0.94] }}
+            >
+              {heroSrc && (
+                <div
+                  className="absolute inset-[8%] -z-10 translate-y-6 scale-[0.85] rounded-2xl bg-cover bg-center opacity-50 blur-[44px] saturate-[1.8]"
+                  style={{ backgroundImage: `url(${heroSrc})` }}
+                />
+              )}
+              <div className="shadow-glass-elevated relative h-[238px] w-[170px] overflow-hidden rounded-2xl sm:h-[266px] sm:w-[190px]">
+                <Poster
+                  src={subject.poster}
+                  alt={subject.title}
+                  className="size-full transition-transform duration-700 group-hover:scale-105"
+                  loading="eager"
+                  fetchPriority="high"
+                />
+                <div className="pointer-events-none absolute left-0 top-0 h-2/5 w-3/4 rounded-tl-2xl bg-gradient-to-br from-white/25 via-white/5 to-transparent" />
+                <div className="pointer-events-none absolute inset-x-0 bottom-0 h-1/4 bg-gradient-to-t from-black/15 to-transparent" />
+                <div className="pointer-events-none absolute inset-0 rounded-2xl shadow-[inset_0_1px_0_rgba(255,255,255,0.35),inset_0_-1px_0_rgba(0,0,0,0.05),inset_1px_0_0_rgba(255,255,255,0.15),inset_-1px_0_0_rgba(255,255,255,0.08)]" />
+              </div>
+            </motion.div>
+
+            <motion.div
+              className="min-w-0 flex-1 pb-1 md:max-w-[760px]"
+              initial={{ opacity: 0, y: 24 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.5, delay: 0.2 }}
+            >
+              <div className="mb-2.5 flex flex-wrap items-center gap-1.5">
+                {visibleTags.map((tag) => (
+                  <span key={tag} className="tag-chip rounded-full px-2.5 py-[3px] text-[11px] text-[var(--color-text-secondary)] backdrop-blur-sm">
+                    {tag}
+                  </span>
+                ))}
+                <span className="rounded-full border-[0.5px] border-[var(--color-accent)]/15 bg-[var(--color-accent)]/8 px-2.5 py-[3px] text-[11px] font-medium text-[var(--color-accent)]">
+                  {subject.status === "matched" ? "已匹配" : "待整理"}
+                </span>
+              </div>
+
+              <h1 className="max-w-full break-words text-[30px] font-bold leading-[1.08] tracking-tight text-[var(--color-text-primary)] sm:text-[34px] lg:text-[38px]">
+                {subject.title}
+              </h1>
+              <p className="mt-1 max-w-full truncate text-[14px] font-light tracking-wide text-[var(--color-text-tertiary)]">
+                {subject.titleCn || subject.fileSummary}
+              </p>
+
+              <div className="mt-3.5 flex max-w-full flex-wrap items-center gap-x-3 gap-y-2 text-[13px] text-[var(--color-text-secondary)]">
+                {subject.rating > 0 && (
+                  <span className="flex items-center gap-1.5">
+                    <Star size={14} className="text-amber-500" fill="currentColor" />
+                    <span className="font-semibold text-[var(--color-text-primary)]">{subject.rating.toFixed(1)}</span>
                   </span>
                 )}
+                <MetaSep />
+                <span className="flex items-center gap-1.5">
+                  <Calendar size={13} strokeWidth={1.8} />
+                  {subject.year || "未知年份"}
+                </span>
+                <MetaSep />
+                <span className="flex items-center gap-1.5">
+                  <Film size={13} strokeWidth={1.8} />
+                  {rows.length || subject.episodes || subject.files} 话
+                </span>
+                <MetaSep />
+                <span className="flex items-center gap-1.5">
+                  <Tv size={13} strokeWidth={1.8} />
+                  {subject.files} 文件
+                </span>
+                <MetaSep />
+                <span className="flex items-center gap-1.5">
+                  <HardDrive size={13} strokeWidth={1.8} />
+                  {subject.totalSize}
+                </span>
               </div>
-              <div className="text-[11px] text-[var(--color-on-surface-faint)] mt-1">Bangumi 评分</div>
-            </Card>
-          )}
-        </div>
 
-        <div className="pt-14 min-w-0">
-          <h1 className="text-[44px] font-semibold tracking-tight leading-[1.05]">
-            {isUnmatched ? subject.fileSummary.split(".")[0] : subject.title}
-          </h1>
-          {!isUnmatched && (
-            <div className="text-[18px] text-[var(--color-on-surface-muted)] mt-1 font-light">
-              {subject.titleCn} · {subject.year || "年份未知"} · {subject.airDate || "日期未知"}
-            </div>
-          )}
+              {subject.progress > 0 && (
+                <div className="mt-4">
+                  <div className="mb-1.5 flex items-center justify-between text-[11px] text-[var(--color-text-tertiary)]">
+                    <span>观看进度</span>
+                    <span className="tabular-nums">{subject.watchedEpisodes} / {subject.episodes || rows.length}</span>
+                  </div>
+                  <div className="h-[5px] w-full max-w-60 overflow-hidden rounded-full bg-black/[0.05]">
+                    <motion.div
+                      className="relative h-full overflow-hidden rounded-full"
+                      style={{ background: "linear-gradient(90deg, #ff375f, #ff6b8a)" }}
+                      initial={{ width: 0 }}
+                      animate={{ width: `${progressPercent}%` }}
+                      transition={{ duration: 1, delay: 0.4, ease: [0.25, 0.46, 0.45, 0.94] }}
+                    >
+                      <div className="absolute inset-0 animate-pulse bg-gradient-to-r from-transparent via-white/30 to-transparent" />
+                    </motion.div>
+                  </div>
+                </div>
+              )}
 
-          {!isUnmatched && visibleTags.length > 0 && (
-            <div className="mt-5 flex flex-wrap gap-2">
-              {visibleTags.map((tag) => (
-                <Chip key={tag}>{tag}</Chip>
-              ))}
-            </div>
-          )}
+              <div className="mt-5 flex max-w-full flex-wrap items-center gap-3">
+                <motion.button
+                  type="button"
+                  className="relative flex min-w-0 max-w-full items-center gap-2 overflow-hidden rounded-full px-6 py-2.5 text-[13px] font-semibold text-white sm:px-7"
+                  style={{
+                    background: "linear-gradient(135deg, #ff375f 0%, #ff5f7f 100%)",
+                    boxShadow:
+                      "0 4px 20px rgba(255,55,95,0.3), 0 1px 3px rgba(255,55,95,0.2), inset 0 1px 0 rgba(255,255,255,0.2)",
+                  }}
+                  whileHover={{ scale: 1.04 }}
+                  whileTap={{ scale: 0.96 }}
+                  onClick={() => void openEpisode(nextPlayableRow)}
+                >
+                  <CirclePlay size={16} fill="white" className="shrink-0" />
+                  <span className="truncate">
+                    {subject.progress > 0 ? `继续播放 · 第${nextPlayableRow?.episode ?? subject.watchedEpisodes + 1}话` : "开始播放"}
+                  </span>
+                  <div className="pointer-events-none absolute left-0 right-0 top-0 h-1/2 rounded-t-full bg-gradient-to-b from-white/15 to-transparent" />
+                </motion.button>
+                <span className="text-[12px] text-[var(--color-text-tertiary)]">
+                  调用系统播放器
+                </span>
+              </div>
+            </motion.div>
+          </div>
+        </section>
 
-          {!isUnmatched && subject.summary && (
-            <p className="text-[15px] leading-relaxed text-[var(--color-on-surface-muted)] mt-6 max-w-3xl line-clamp-5">
+        {subject.summary && (
+          <motion.section
+            className="relative z-[1] mx-auto w-full max-w-[1120px] px-6 py-7 sm:px-8"
+            initial={{ opacity: 0, y: 15 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.35 }}
+          >
+            <h2 className="mb-2.5 text-[16px] font-semibold tracking-tight text-[var(--color-text-primary)]">简介</h2>
+            <p className="max-w-2xl text-[13.5px] leading-[1.8] text-[var(--color-text-secondary)]">
               {subject.summary}
             </p>
-          )}
+          </motion.section>
+        )}
 
-          <div className="mt-6 flex flex-wrap items-center gap-x-5 gap-y-2 text-[13px] text-[var(--color-on-surface-muted)]">
-            <span className="tabular-nums">{subject.files} 个本地文件</span>
-            <span className="size-1 rounded-full bg-[var(--color-on-surface-faint)]" />
-            <span className="tabular-nums">{subject.totalSize}</span>
-            <span className="size-1 rounded-full bg-[var(--color-on-surface-faint)]" />
-            <span className="tabular-nums">{cachedCount}/{rows.length || subject.episodes || "?"} 集已缓存</span>
-          </div>
-
-          {subject.progress > 0 && subject.progress < 1 && (
-            <div className="mt-6 max-w-lg">
-              <div className="flex items-center justify-between text-[12px] text-[var(--color-on-surface-faint)] mb-1.5">
-                <span>{subject.watchedEpisodes}/{subject.episodes || "?"} 集</span>
-                <span className="tabular-nums">{Math.round(subject.progress * 100)}%</span>
-              </div>
-              <Progress value={subject.progress} />
-            </div>
-          )}
-        </div>
-      </div>
-
-      <section className="px-10 mt-14">
-        <div className="flex items-end justify-between mb-4">
-          <div>
-            <h2 className="text-[22px] font-semibold tracking-tight">分集与本地缓存</h2>
-            <div className="text-[13px] text-[var(--color-on-surface-faint)] mt-1">
-              {subject.files} 个本地文件 · {subject.totalSize}
-            </div>
-          </div>
+        <div className="relative z-[1] mx-auto w-full max-w-[1120px] px-6 sm:px-8">
+          <div className="h-px bg-black/[0.05]" />
         </div>
 
-        <Card className="overflow-hidden">
-          <div className="grid grid-cols-[88px_1fr_120px_160px] gap-4 px-5 py-3 text-[11px] uppercase tracking-wider text-[var(--color-on-surface-faint)] border-b border-[var(--color-outline-soft)] bg-[var(--color-surface)]">
-            <div>EP</div>
-            <div>Title</div>
-            <div>Cache</div>
-            <div className="text-right">File</div>
+        <motion.section
+          className="relative z-[1] mx-auto w-full max-w-[1120px] px-6 py-6 pb-10 sm:px-8"
+          initial={{ opacity: 0, y: 15 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.4 }}
+        >
+          <div className="mb-5 flex items-center justify-between">
+            <h2 className="text-[16px] font-semibold tracking-tight text-[var(--color-text-primary)]">
+              剧集 <span className="ml-1 text-[13px] font-normal text-[var(--color-text-tertiary)]">{rows.length} 话</span>
+            </h2>
+            <span className="text-[12px] text-[var(--color-text-tertiary)]">
+              {cachedCount}/{rows.length} 已缓存
+            </span>
           </div>
-          <div className="divide-y divide-[var(--color-outline-soft)]">
-            {visibleRows.map((row) => (
-              <EpisodeCacheRow key={row.key} row={row} onOpenEpisode={openEpisode} />
+          <div className="grid gap-1.5">
+            {visibleRows.map((row, index) => (
+              <EpisodeRow
+                key={row.key}
+                row={row}
+                index={index}
+                isNext={row.key === nextPlayableRow?.key}
+                onOpen={() => void openEpisode(row)}
+              />
             ))}
             {hasMore && (
-              <EpisodeLoadMore
-                remainingCount={remainingRows}
-                sentinelRef={sentinelRef}
-                onLoadMore={loadMore}
-              />
+              <div ref={sentinelRef} className="flex justify-center py-4">
+                <button
+                  type="button"
+                  onClick={loadMore}
+                  className="glass-light glass-refraction h-8 rounded-full px-3 text-[12px] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
+                >
+                  继续加载剩余 {remainingRows} 集
+                </button>
+              </div>
             )}
           </div>
-        </Card>
-      </section>
+        </motion.section>
+      </motion.div>
     </div>
   );
 }
 
-const EpisodeCacheRow = memo(function EpisodeCacheRow({
+function MetaSep() {
+  return <span className="hidden h-3 w-px shrink-0 bg-black/10 sm:inline-block" />;
+}
+
+const EpisodeRow = memo(function EpisodeRow({
   row,
-  onOpenEpisode,
+  index,
+  isNext,
+  onOpen,
 }: {
   row: EpisodeRowData;
-  onOpenEpisode: (row: EpisodeRowData) => void;
+  index: number;
+  isNext: boolean;
+  onOpen: () => void;
 }) {
   const title = row.titleCn || row.title || `Episode ${row.episode}`;
-  const handleOpen = useCallback(() => {
-    void onOpenEpisode(row);
-  }, [onOpenEpisode, row]);
-
   return (
-    <button
+    <motion.button
       type="button"
-      onClick={handleOpen}
-      disabled={!row.cached}
       className={cn(
-        "w-full text-left grid grid-cols-[88px_1fr_120px_160px] gap-4 px-5 py-4 items-center text-[13px] transition-colors cv-episode-row",
+        "group flex items-center gap-4 rounded-[14px] border-[0.5px] px-4 py-3 text-left transition-all duration-200",
         row.cached
-          ? "hover:bg-[var(--color-surface-2)] cursor-pointer"
-          : "cursor-default"
+          ? "cursor-pointer hover:border-black/[0.03] hover:bg-black/[0.025]"
+          : "cursor-default opacity-65",
+        isNext
+          ? "border-[var(--color-accent)]/[0.08] bg-[var(--color-accent)]/[0.05]"
+          : "border-transparent"
       )}
+      disabled={!row.cached}
+      initial={{ opacity: 0, x: -8 }}
+      animate={{ opacity: 1, x: 0 }}
+      transition={{ delay: 0.25 + index * 0.018, duration: 0.25 }}
+      onClick={onOpen}
+      whileTap={{ scale: 0.995 }}
     >
-      <div className="tabular-nums text-[var(--color-on-surface-muted)]">
-        EP{String(row.episode).padStart(2, "0")}
+      <div
+        className={cn(
+          "w-7 text-center text-[14px] font-medium tabular-nums",
+          row.cached ? (isNext ? "text-[var(--color-accent)]" : "text-[var(--color-text-secondary)]") : "text-[var(--color-text-tertiary)]/60"
+        )}
+      >
+        {isNext ? <CirclePlay size={18} fill="currentColor" /> : String(row.episode).padStart(2, "0")}
       </div>
-      <div className="min-w-0">
-        <div className="text-[15px] font-medium truncate">{title}</div>
-        <div className="text-[12px] text-[var(--color-on-surface-faint)] mt-0.5 truncate">
-          {row.titleCn && row.title && row.titleCn !== row.title ? row.title : row.airDate || "暂无播出日期"}
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-[13.5px] font-medium text-[var(--color-text-primary)]">{title}</div>
+        <div className="mt-0.5 truncate text-[11.5px] text-[var(--color-text-tertiary)]">
+          {row.fileName || row.airDate || "暂无本地文件"}
         </div>
       </div>
-      <div>
+      <div className="flex items-center gap-2">
         {row.cached ? (
-          <span className="inline-flex items-center gap-1.5 h-7 px-2.5 rounded-full bg-emerald-500/15 text-emerald-300 ring-1 ring-inset ring-emerald-400/30">
-            <CheckIcon className="size-3.5" />
-            本地
+          <span className="flex items-center gap-1 rounded-full bg-green-500/8 px-2.5 py-[3px] text-[11px] text-green-600">
+            <Check size={12} /> 本地
           </span>
         ) : (
-          <span className="inline-flex items-center gap-1.5 h-7 px-2.5 rounded-full bg-white/5 text-[var(--color-on-surface-faint)] ring-1 ring-inset ring-[var(--color-outline-soft)]">
-            <FileIcon className="size-3.5" />
+          <span className="rounded-full bg-black/[0.035] px-2.5 py-[3px] text-[11px] text-[var(--color-text-tertiary)]">
             缺失
           </span>
         )}
-      </div>
-      <div className="min-w-0 text-right">
-        <div className="truncate font-mono text-[12px] text-[var(--color-on-surface-muted)]">
-          {row.fileName || "-"}
-        </div>
         {row.fileSize && (
-          <div className="text-[11px] text-[var(--color-on-surface-faint)] mt-0.5 tabular-nums">
+          <span className="hidden text-[11px] tabular-nums text-[var(--color-text-tertiary)] md:inline">
             {row.fileSize}
-          </div>
+          </span>
         )}
       </div>
-    </button>
+    </motion.button>
   );
 });
-
-function EpisodeLoadMore({
-  remainingCount,
-  sentinelRef,
-  onLoadMore,
-}: {
-  remainingCount: number;
-  sentinelRef: (node: HTMLDivElement | null) => void;
-  onLoadMore: () => void;
-}) {
-  return (
-    <div
-      ref={sentinelRef}
-      className="px-5 py-4 text-center bg-[var(--color-surface)]"
-    >
-      <button
-        type="button"
-        onClick={onLoadMore}
-        className="h-8 rounded-full px-3 text-[12px] text-[var(--color-on-surface-muted)] hover:bg-white/[0.06] hover:text-[var(--color-on-surface)]"
-      >
-        继续加载剩余 {remainingCount} 集
-      </button>
-    </div>
-  );
-}
 
 function makeEpisodeRows(subject: Subject): EpisodeRowData[] {
   if (subject.episodesDetail?.length) {
@@ -3088,460 +3122,511 @@ function ContinueCard({
 </file>
 
 <file path="frontend/src/pages/Library.tsx">
-import { memo, useCallback, useDeferredValue, useMemo, useState } from "react";
-import { STATUS_LABEL, STATUS_COLOR, type Subject, type MatchStatus } from "../data";
-import type { BackendLogEntry, LibraryStats, ScanStatus } from "../backend";
-import { Badge, Button, Card, Progress, SearchField, Segmented } from "../ui";
-import { MediaCard, Poster } from "../MediaCard";
+import { useDeferredValue, useMemo, useState } from "react";
+import { AnimatePresence, motion } from "framer-motion";
+import { RefreshCw, Search, Sparkles } from "lucide-react";
+import type { BackendLogEntry, ScanStatus } from "../backend";
+import type { Subject } from "../data";
+import type { Route } from "../NavRail";
+import { MediaCard } from "../MediaCard";
 import { useIncrementalItems } from "../hooks/useIncrementalItems";
-import {
-  FolderPlus,
-  GridIcon,
-  ListIcon,
-  ScanIcon,
-  SortIcon,
-  ChevronDown,
-  CheckIcon,
-} from "../icons";
+import { Button } from "../ui";
 import { cn } from "../utils/cn";
 
+type CatalogRoute = Exclude<Route, "settings">;
+
+const pageCopy: Record<CatalogRoute, { title: string; subtitle?: string }> = {
+  search: {
+    title: "搜索",
+    subtitle: "查找标题、文件名或标签",
+  },
+  home: {
+    title: "主页",
+  },
+  library: {
+    title: "媒体库",
+    subtitle: "你的本地番剧收藏",
+  },
+};
+
 export function LibraryPage({
+  route,
   subjects,
-  stats,
   scanStatus,
   logs,
+  loading,
+  error,
   onOpen,
   onSnack,
   onScan,
 }: {
+  route: CatalogRoute;
   subjects: Subject[];
-  stats: LibraryStats;
   scanStatus: ScanStatus;
   logs: BackendLogEntry[];
+  loading?: boolean;
+  error?: string | null;
   onOpen: (s: Subject) => void;
   onSnack: (text: string, tone?: "neutral" | "success" | "danger") => void;
   onScan: () => void | Promise<void>;
 }) {
-  const [sort, setSort] = useState<"title" | "date" | "progress" | "match">("date");
-  const [view, setView] = useState<"grid" | "list">("grid");
   const [query, setQuery] = useState("");
+  const [heroIndex, setHeroIndex] = useState(0);
   const deferredQuery = useDeferredValue(query);
 
-  const filtered = useMemo(() => {
-    let list = subjects.slice();
-    const normalizedQuery = deferredQuery.trim();
-    if (normalizedQuery) {
-      const q = normalizedQuery.toLowerCase();
-      list = list.filter(
-        (s) =>
-          s.title.toLowerCase().includes(q) ||
-          s.titleCn.toLowerCase().includes(q) ||
-          s.fileSummary.toLowerCase().includes(q)
-      );
-    }
-    switch (sort) {
-      case "title":
-        list.sort((a, b) => a.title.localeCompare(b.title));
-        break;
-      case "progress":
-        list.sort((a, b) => b.progress - a.progress);
-        break;
-      case "match":
-        const order: Record<MatchStatus, number> = { matched: 0, tentative: 1, unmatched: 2, failed: 3 };
-        list.sort((a, b) => order[a.status] - order[b.status]);
-        break;
-    }
-    return list;
-  }, [sort, deferredQuery, subjects]);
+  const watching = useMemo(
+    () => subjects.filter((subject) => subject.progress > 0 && subject.progress < 1),
+    [subjects]
+  );
+  const completed = useMemo(
+    () => subjects.filter((subject) => subject.progress >= 1),
+    [subjects]
+  );
+  const recent = useMemo(() => subjects.slice(0, 18), [subjects]);
+  const heroSubject = watching[heroIndex % Math.max(1, watching.length)] ?? subjects[0];
 
+  const searchResults = useMemo(() => {
+    const q = deferredQuery.trim().toLowerCase();
+    if (!q) return [];
+    return subjects.filter(
+      (subject) =>
+        subject.title.toLowerCase().includes(q) ||
+        subject.titleCn.toLowerCase().includes(q) ||
+        subject.fileSummary.toLowerCase().includes(q) ||
+        subject.tags.some((tag) => tag.toLowerCase().includes(q))
+    );
+  }, [deferredQuery, subjects]);
+
+  const displayItems = route === "search" ? searchResults : subjects;
   const {
     hasMore,
     loadMore,
     sentinelRef,
     visibleCount,
     visibleItems,
-  } = useIncrementalItems(filtered, {
-    initialCount: view === "grid" ? 48 : 80,
-    step: view === "grid" ? 36 : 80,
-    resetKey: `${view}:${sort}:${deferredQuery}:${subjects.length}`,
+  } = useIncrementalItems(displayItems, {
+    initialCount: route === "library" ? 72 : 36,
+    step: 36,
+    resetKey: `${route}:${deferredQuery}:${displayItems.length}`,
   });
-
-  const showEmpty = filtered.length === 0;
-  const remainingCount = Math.max(0, filtered.length - visibleCount);
-
-  return (
-    <div className="px-10 py-10 pb-20">
-      {/* Header */}
-      <div className="flex items-end justify-between mb-2">
-        <div>
-          <h1 className="text-[36px] font-semibold tracking-tight leading-tight">媒体库</h1>
-          <div className="text-[14px] text-[var(--color-on-surface-muted)] mt-2">
-            <span className="tabular-nums">{stats.total}</span> items ·{" "}
-            <span className="text-emerald-300 tabular-nums">{stats.matched}</span> matched ·{" "}
-            <span className="text-amber-300 tabular-nums">{stats.unmatched}</span> unmatched
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button
-            icon={<ScanIcon className="size-4" />}
-            loading={scanStatus.running}
-            onClick={() => {
-              onSnack("已开始扫描媒体目录…");
-              void onScan();
-            }}
-          >
-            {scanStatus.running ? "Scanning" : "Scan Now"}
-          </Button>
-        </div>
-      </div>
-
-      {/* Command Bar */}
-      <Card className="mt-7 p-3 flex flex-wrap items-center gap-3 acrylic">
-        <SearchField
-          value={query}
-          onChange={setQuery}
-          placeholder="搜索标题、文件名、标签…"
-          className="min-w-[280px] flex-1 max-w-md"
-        />
-        <div className="ml-auto flex items-center gap-2">
-          <SortMenu sort={sort} onChange={setSort} />
-          <Segmented
-            value={view}
-            onChange={setView}
-            options={[
-              { value: "grid", label: "", icon: <GridIcon className="size-4" /> },
-              { value: "list", label: "", icon: <ListIcon className="size-4" /> },
-            ]}
-          />
-        </div>
-      </Card>
-
-      {(scanStatus.running || logs.length > 0) && (
-        <ScanPanel status={scanStatus} logs={logs} />
-      )}
-
-      {/* Body */}
-      <div className="mt-8">
-        <div>
-          {showEmpty ? (
-            <EmptyState query={query} onClear={() => setQuery("")} />
-          ) : view === "grid" ? (
-            <div className="grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-x-5 gap-y-8">
-              {visibleItems.map((s, index) => (
-                <MediaGridItem
-                  key={s.id}
-                  subject={s}
-                  onOpen={onOpen}
-                  priority={index < 8}
-                />
-              ))}
-              {hasMore && (
-                <GridLoadMore
-                  remainingCount={remainingCount}
-                  sentinelRef={sentinelRef}
-                  onLoadMore={loadMore}
-                />
-              )}
-            </div>
-          ) : (
-            <Card className="overflow-hidden">
-              <ListHeader />
-              {visibleItems.map((s, i) => (
-                <ListRow
-                  key={s.id}
-                  subject={s}
-                  isLast={!hasMore && i === visibleItems.length - 1}
-                  onOpenSubject={onOpen}
-                />
-              ))}
-              {hasMore && (
-                <ListLoadMore
-                  remainingCount={remainingCount}
-                  sentinelRef={sentinelRef}
-                  onLoadMore={loadMore}
-                />
-              )}
-            </Card>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-const MediaGridItem = memo(function MediaGridItem({
-  subject,
-  onOpen,
-  priority,
-}: {
-  subject: Subject;
-  onOpen: (s: Subject) => void;
-  priority: boolean;
-}) {
-  const handleOpen = useCallback(() => onOpen(subject), [onOpen, subject]);
+  const remainingCount = Math.max(0, displayItems.length - visibleCount);
+  const copy = pageCopy[route];
 
   return (
-    <div className="flex justify-center cv-media-card">
-      <MediaCard
-        subject={subject}
-        onClick={handleOpen}
-        imageLoading={priority ? "eager" : "lazy"}
-        imageFetchPriority={priority ? "high" : "auto"}
-      />
-    </div>
-  );
-});
-
-function GridLoadMore({
-  remainingCount,
-  sentinelRef,
-  onLoadMore,
-}: {
-  remainingCount: number;
-  sentinelRef: (node: HTMLDivElement | null) => void;
-  onLoadMore: () => void;
-}) {
-  return (
-    <div ref={sentinelRef} className="col-span-full flex justify-center py-2">
-      <button
-        type="button"
-        onClick={onLoadMore}
-        className="h-9 rounded-full px-4 text-[12px] text-[var(--color-on-surface-muted)] hover:bg-white/[0.06] hover:text-[var(--color-on-surface)]"
-      >
-        继续加载剩余 {remainingCount} 项
-      </button>
-    </div>
-  );
-}
-
-function ListLoadMore({
-  remainingCount,
-  sentinelRef,
-  onLoadMore,
-}: {
-  remainingCount: number;
-  sentinelRef: (node: HTMLDivElement | null) => void;
-  onLoadMore: () => void;
-}) {
-  return (
-    <div
-      ref={sentinelRef}
-      className="px-5 py-4 text-center bg-[var(--color-surface)]"
-    >
-      <button
-        type="button"
-        onClick={onLoadMore}
-        className="h-8 rounded-full px-3 text-[12px] text-[var(--color-on-surface-muted)] hover:bg-white/[0.06] hover:text-[var(--color-on-surface)]"
-      >
-        继续加载剩余 {remainingCount} 项
-      </button>
-    </div>
-  );
-}
-
-function SortMenu({
-  sort,
-  onChange,
-}: {
-  sort: "title" | "date" | "progress" | "match";
-  onChange: (v: any) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const items = [
-    { v: "title", l: "Title" },
-    { v: "date", l: "Date Added" },
-    { v: "progress", l: "Progress" },
-    { v: "match", l: "Match Status" },
-  ] as const;
-  const current = items.find((i) => i.v === sort)?.l;
-  return (
-    <div className="relative">
-      <button
-        onClick={() => setOpen((v) => !v)}
-        className="inline-flex items-center gap-2 h-9 px-3 text-[13px] rounded-full bg-[var(--color-surface-2)] ring-1 ring-inset ring-[var(--color-outline-soft)] hover:bg-[var(--color-surface-3)] text-[var(--color-on-surface)]"
-      >
-        <SortIcon className="size-4 text-[var(--color-on-surface-faint)]" />
-        Sort · <span className="text-[var(--color-on-surface)] font-medium">{current}</span>
-        <ChevronDown className="size-3.5" />
-      </button>
-      {open && (
-        <>
-          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 top-full mt-2 z-20 w-44 rounded-xl bg-[var(--color-surface-3)] ring-1 ring-inset ring-[var(--color-outline)] shadow-xl py-1.5">
-            {items.map((it) => (
-              <button
-                key={it.v}
-                onClick={() => {
-                  onChange(it.v);
-                  setOpen(false);
-                }}
-                className="w-full flex items-center justify-between px-3 py-2 text-[13px] text-left hover:bg-white/[0.06]"
-              >
-                {it.l}
-                {sort === it.v && <CheckIcon className="size-4 text-[var(--color-primary)]" />}
-              </button>
-            ))}
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
-
-function ListHeader() {
-  return (
-    <div className="grid grid-cols-[64px_1fr_140px_120px_140px] gap-4 px-5 py-3 text-[11px] uppercase tracking-wider text-[var(--color-on-surface-faint)] border-b border-[var(--color-outline-soft)] bg-[var(--color-surface)]">
-      <div></div>
-      <div>Title</div>
-      <div>Status</div>
-      <div>Progress</div>
-      <div>Last Played</div>
-    </div>
-  );
-}
-
-const ListRow = memo(function ListRow({
-  subject,
-  onOpenSubject,
-  isLast,
-}: {
-  subject: Subject;
-  onOpenSubject: (s: Subject) => void;
-  isLast: boolean;
-}) {
-  const handleOpen = useCallback(() => onOpenSubject(subject), [onOpenSubject, subject]);
-
-  return (
-    <div
-      onClick={handleOpen}
-      className={cn(
-        "grid grid-cols-[64px_1fr_140px_120px_140px] gap-4 px-5 py-3 items-center cursor-pointer transition-colors hover:bg-white/[0.04] cv-list-row",
-        !isLast && "border-b border-[var(--color-outline-soft)]"
-      )}
-    >
-      <div className="aspect-[2/3] w-12 rounded-md overflow-hidden ring-1 ring-black/40">
-        <Poster src={subject.poster} alt={subject.title} className="size-full" />
-      </div>
-      <div className="min-w-0">
-        <div className="text-[14px] font-medium truncate flex items-center gap-2">
-          {subject.title}
-          {subject.newEpisode && <Badge tone="primary">NEW</Badge>}
-        </div>
-        <div className="text-[12px] text-[var(--color-on-surface-faint)] truncate font-mono">
-          {subject.fileSummary}
-        </div>
-      </div>
-      <div>
-        <span
-          className={cn(
-            "inline-flex items-center px-2 h-6 rounded-full text-[11px] font-medium ring-1 ring-inset",
-            STATUS_COLOR[subject.status]
-          )}
+    <div className="h-full overflow-y-auto overflow-x-hidden">
+      <AnimatePresence mode="wait">
+        <motion.div
+          key={route}
+          className="page-shell"
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -8 }}
+          transition={{ duration: 0.28, ease: [0.25, 0.46, 0.45, 0.94] }}
         >
-          {STATUS_LABEL[subject.status]}
-        </span>
-      </div>
-      <div className="flex flex-col gap-1 text-[12px]">
-        <Progress value={subject.progress} />
-        <span className="text-[var(--color-on-surface-faint)] tabular-nums">
-          {subject.watchedEpisodes}/{subject.episodes || "?"} ep
-        </span>
-      </div>
-      <div className="text-[12px] text-[var(--color-on-surface-muted)]">
-        {subject.lastPlayed ?? "—"}
+          {route === "search" && (
+            <SearchHeader query={query} setQuery={setQuery} />
+          )}
+
+          {route !== "search" && (
+            <PageHeader
+              title={copy.title}
+              subtitle={copy.subtitle}
+              action={
+                route === "library" ? (
+                  <Button
+                    icon={<RefreshCw size={16} className={scanStatus.running ? "animate-spin" : ""} />}
+                    loading={scanStatus.running}
+                    onClick={() => {
+                      onSnack("已开始扫描媒体目录...");
+                      void onScan();
+                    }}
+                    className="h-10 px-4 text-[13px] shadow-[0_4px_18px_rgba(255,55,95,0.16)]"
+                  >
+                    {scanStatus.running ? "扫描中" : "扫描"}
+                  </Button>
+                ) : null
+              }
+            />
+          )}
+
+          {route === "search" ? (
+            <SearchContent
+              query={deferredQuery}
+              results={visibleItems}
+              total={searchResults.length}
+              hasMore={hasMore}
+              remainingCount={remainingCount}
+              sentinelRef={sentinelRef}
+              onLoadMore={loadMore}
+              onOpen={onOpen}
+            />
+          ) : !subjects.length ? (
+            <EmptyState
+              title={loading ? "正在读取媒体库" : "这里还没有番剧"}
+              desc={error ?? "请先在设置页确认媒体目录，然后到媒体库执行扫描。"}
+            />
+          ) : route === "home" ? (
+            <>
+              {heroSubject && (
+                <HeroBanner
+                  subject={heroSubject}
+                  onOpen={() => onOpen(heroSubject)}
+                  current={heroIndex}
+                  total={watching.length || 1}
+                  onNext={() => setHeroIndex((index) => (index + 1) % Math.max(1, watching.length))}
+                />
+              )}
+              {watching.length > 0 && (
+                <Section title="继续观看">
+                  <CardGrid subjects={watching} onOpen={onOpen} />
+                </Section>
+              )}
+              <Section title="最近添加">
+                <CardGrid subjects={recent} onOpen={onOpen} offset={watching.length} />
+              </Section>
+            </>
+          ) : (
+            <>
+              {(scanStatus.running || logs.length > 0) && (
+                <div className="mt-5">
+                  <ScanPanel status={scanStatus} logs={logs} />
+                </div>
+              )}
+              {completed.length > 0 && (
+                <Section title="已完成">
+                  <CardGrid subjects={completed.slice(0, 18)} onOpen={onOpen} />
+                </Section>
+              )}
+              <Section title="全部番剧">
+                <CardGrid subjects={visibleItems} onOpen={onOpen} />
+                {hasMore && (
+                  <LoadMore
+                    remainingCount={remainingCount}
+                    sentinelRef={sentinelRef}
+                    onLoadMore={loadMore}
+                  />
+                )}
+              </Section>
+            </>
+          )}
+        </motion.div>
+      </AnimatePresence>
+    </div>
+  );
+}
+
+function SearchHeader({
+  query,
+  setQuery,
+}: {
+  query: string;
+  setQuery: (value: string) => void;
+}) {
+  return (
+    <div className="search-page-header">
+      <label className="search-field flex h-12 min-w-0 flex-1 items-center gap-3 rounded-[var(--radius-pill)] px-4">
+        <Search size={22} className="text-[var(--color-text-tertiary)]" strokeWidth={2.1} />
+        <input
+          autoFocus
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="搜索标题、文件名、标签..."
+          className="min-w-0 flex-1 bg-transparent text-[17px] font-semibold text-[var(--color-text-primary)] outline-none placeholder:text-[var(--color-text-tertiary)]/85"
+        />
+      </label>
+      <div className="search-scope">
+        <button type="button" className="active">NexPlay</button>
+        <button type="button">资料库</button>
       </div>
     </div>
   );
-});
+}
 
-function EmptyState({ query, onClear }: { query: string; onClear: () => void }) {
-  if (query) {
+function SearchContent({
+  query,
+  results,
+  total,
+  hasMore,
+  remainingCount,
+  sentinelRef,
+  onLoadMore,
+  onOpen,
+}: {
+  query: string;
+  results: Subject[];
+  total: number;
+  hasMore: boolean;
+  remainingCount: number;
+  sentinelRef: (node: HTMLDivElement | null) => void;
+  onLoadMore: () => void;
+  onOpen: (subject: Subject) => void;
+}) {
+  if (!query.trim()) {
     return (
-      <Card className="p-12 grid place-items-center text-center">
-        <div className="size-14 rounded-2xl bg-[var(--color-surface-3)] grid place-items-center mb-4">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} className="size-6 text-[var(--color-on-surface-muted)]">
-            <circle cx="11" cy="11" r="7" />
-            <path d="M20 20l-3.5-3.5" />
-          </svg>
-        </div>
-        <div className="text-[16px] font-medium">没有找到 "{query}"</div>
-        <div className="text-[13px] text-[var(--color-on-surface-faint)] mt-1">
-          换个关键词试试，或者清除搜索查看全部。
-        </div>
-        <Button variant="tonal" className="mt-5" onClick={onClear}>
-          Clear Search
-        </Button>
-      </Card>
+      <EmptyState
+        title="搜索你的资料库"
+        desc="输入标题、文件名或标签后，结果会显示在这里。"
+      />
     );
   }
+
   return (
-    <Card className="p-12 grid place-items-center text-center">
-      <div className="size-16 rounded-2xl bg-[var(--color-primary-soft)] grid place-items-center mb-4">
-        <FolderPlus className="size-7 text-[var(--color-primary)]" />
-      </div>
-      <div className="text-[18px] font-medium">媒体库为空</div>
-      <div className="text-[13px] text-[var(--color-on-surface-faint)] mt-1 max-w-sm">
-        当前没有可显示的媒体。检查设置里的媒体目录后点击 Scan Now。
-      </div>
-    </Card>
+    <Section title="搜索结果" subtitle={`${total} 部`}>
+      {results.length ? (
+        <>
+          <CardGrid subjects={results} onOpen={onOpen} />
+          {hasMore && (
+            <LoadMore
+              remainingCount={remainingCount}
+              sentinelRef={sentinelRef}
+              onLoadMore={onLoadMore}
+            />
+          )}
+        </>
+      ) : (
+        <EmptyState title="没有匹配的番剧" desc="换一个搜索词再试。" compact />
+      )}
+    </Section>
   );
 }
 
-function ScanPanel({ status, logs }: { status: ScanStatus; logs: BackendLogEntry[] }) {
-  const progress =
-    status.stage === "done"
-      ? 1
-      : status.stage === "metadata" && status.total > 0
-      ? status.processed / status.total
-      : status.scanned > 0
-      ? Math.min(0.95, status.indexed / Math.max(status.scanned, 1))
-      : 0;
+function PageHeader({
+  title,
+  subtitle,
+  action,
+}: {
+  title: string;
+  subtitle?: string;
+  action?: React.ReactNode;
+}) {
+  return (
+    <header className="page-header">
+      <div>
+        <motion.h1
+          className="text-[42px] font-[780] leading-[1] tracking-[-0.018em] text-[var(--color-text-primary)]"
+          initial={{ opacity: 0, x: -8 }}
+          animate={{ opacity: 1, x: 0 }}
+          transition={{ delay: 0.04 }}
+        >
+          {title}
+        </motion.h1>
+        {subtitle && (
+          <motion.p
+            className="mt-2.5 text-[17px] font-semibold tracking-[-0.01em] text-[var(--color-text-secondary)]"
+            initial={{ opacity: 0, x: -8 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ delay: 0.09 }}
+          >
+            {subtitle}
+          </motion.p>
+        )}
+      </div>
+      {action}
+    </header>
+  );
+}
+
+function HeroBanner({
+  subject,
+  onOpen,
+  total,
+  current,
+  onNext,
+}: {
+  subject: Subject;
+  onOpen: () => void;
+  total: number;
+  current: number;
+  onNext: () => void;
+}) {
+  const heroAsset = subject.hero || subject.poster;
+  const heroSrc = heroAsset ? window.nexplay?.resolveAssetUrl(heroAsset) ?? heroAsset : "";
 
   return (
-    <Card className="mt-4 overflow-hidden">
-      <div className="px-4 py-3 border-b border-[var(--color-outline-soft)]">
-        <div className="flex items-center justify-between gap-4">
-          <div className="min-w-0">
-            <div className="text-[14px] font-medium truncate">
-              {status.message || "扫描状态"}
-            </div>
-            <div className="text-[12px] text-[var(--color-on-surface-faint)] mt-0.5 tabular-nums">
-              文件 {status.indexed}/{status.scanned}
-              {status.total > 0 ? ` · 元数据 ${status.processed}/${status.total}` : ""}
-            </div>
-          </div>
-          <div className="text-[12px] text-[var(--color-on-surface-muted)]">
-            {status.running ? "运行中" : status.stage === "failed" ? "失败" : "空闲"}
-          </div>
-        </div>
-        <Progress value={progress} className="mt-3" />
+    <motion.button
+      type="button"
+      className="group relative mt-6 h-[300px] w-full cursor-pointer overflow-hidden rounded-[var(--radius-panel)] text-left"
+      onClick={onOpen}
+      whileHover={{ scale: 1.002 }}
+      whileTap={{ scale: 0.997 }}
+      transition={{ duration: 0.45, ease: [0.25, 0.46, 0.45, 0.94] }}
+      initial={{ opacity: 0, y: 16 }}
+      animate={{ opacity: 1, y: 0 }}
+      key={subject.id}
+    >
+      {heroSrc ? (
+        <motion.img
+          src={heroSrc}
+          alt={subject.title}
+          className="absolute inset-0 size-full object-cover"
+          initial={{ scale: 1.08, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          transition={{ duration: 0.8, ease: [0.25, 0.46, 0.45, 0.94] }}
+        />
+      ) : (
+        <div className="absolute inset-0 bg-gradient-to-br from-[#ff2d55] via-[#fb395f] to-[#b20d35]" />
+      )}
+      <div className="absolute inset-0 bg-gradient-to-r from-black/58 via-black/22 to-transparent" />
+      <div className="absolute inset-0 bg-gradient-to-t from-black/48 via-transparent to-black/8" />
+
+      <div className="absolute inset-0 flex flex-col justify-end p-7">
+        <motion.div
+          className="max-w-xl"
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.16 }}
+        >
+          <h2 className="text-[28px] font-[760] leading-tight tracking-[-0.01em] text-white">
+            {subject.title}
+          </h2>
+          <p className="mt-2 line-clamp-2 max-w-lg text-[14px] font-medium leading-relaxed text-white/68">
+            {subject.summary || subject.titleCn || subject.fileSummary}
+          </p>
+        </motion.div>
       </div>
-      {logs.length > 0 && (
-        <div className="max-h-52 overflow-y-auto px-4 py-3 space-y-1 bg-[var(--color-surface)]">
-          {logs.slice(-80).map((entry) => (
-            <div
-              key={entry.id}
+
+      {total > 1 && (
+        <div className="absolute bottom-5 right-7 flex items-center gap-1.5">
+          {Array.from({ length: Math.min(total, 8) }).map((_, index) => (
+            <span
+              key={index}
+              onClick={(event) => {
+                event.stopPropagation();
+                onNext();
+              }}
               className={cn(
-                "font-mono text-[11.5px] leading-relaxed",
-                entry.tone === "danger"
-                  ? "text-[var(--color-danger)]"
-                  : "text-[var(--color-on-surface-muted)]"
+                "rounded-full transition-all duration-300",
+                index === current % Math.min(total, 8)
+                  ? "h-1.5 w-5 bg-white/90"
+                  : "size-1.5 bg-white/30 hover:bg-white/50"
               )}
-            >
+            />
+          ))}
+        </div>
+      )}
+    </motion.button>
+  );
+}
+
+function Section({
+  title,
+  subtitle,
+  children,
+}: {
+  title: string;
+  subtitle?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="mt-9">
+      <div className="mb-5 flex items-end gap-2">
+        <h2 className="text-[25px] font-[760] tracking-[-0.015em] text-[var(--color-text-primary)]">{title}</h2>
+        {subtitle && <span className="pb-0.5 text-[13px] font-semibold text-[var(--color-text-tertiary)]">{subtitle}</span>}
+      </div>
+      {children}
+    </section>
+  );
+}
+
+function CardGrid({
+  subjects,
+  onOpen,
+  offset = 0,
+}: {
+  subjects: Subject[];
+  onOpen: (subject: Subject) => void;
+  offset?: number;
+}) {
+  return (
+    <div className="grid grid-cols-[repeat(auto-fill,minmax(178px,1fr))] gap-x-7 gap-y-8 pb-2">
+      {subjects.map((subject, index) => (
+        <MediaCard
+          key={subject.id}
+          subject={subject}
+          index={index + offset}
+          onClick={() => onOpen(subject)}
+          imageLoading={index < 8 ? "eager" : "lazy"}
+          imageFetchPriority={index < 8 ? "high" : "auto"}
+        />
+      ))}
+    </div>
+  );
+}
+
+function LoadMore({
+  remainingCount,
+  sentinelRef,
+  onLoadMore,
+}: {
+  remainingCount: number;
+  sentinelRef: (node: HTMLDivElement | null) => void;
+  onLoadMore: () => void;
+}) {
+  return (
+    <div ref={sentinelRef} className="flex justify-center py-7">
+      <button
+        type="button"
+        onClick={onLoadMore}
+        className="glass-light glass-refraction h-10 rounded-[var(--radius-pill)] px-4 text-[13px] font-semibold text-[var(--color-text-secondary)] transition-colors hover:text-[var(--color-text-primary)]"
+      >
+        继续加载剩余 {remainingCount} 项
+      </button>
+    </div>
+  );
+}
+
+function ScanPanel({
+  status,
+  logs,
+}: {
+  status: ScanStatus;
+  logs: BackendLogEntry[];
+}) {
+  const recentLogs = logs.slice(-4).reverse();
+  return (
+    <div className="glass-light glass-refraction rounded-[var(--radius-card)] px-4 py-3">
+      <div className="flex items-center gap-2 text-[13px] font-semibold text-[var(--color-text-primary)]">
+        <RefreshCw size={14} className={status.running ? "animate-spin text-[var(--color-accent)]" : "text-[var(--color-text-tertiary)]"} />
+        {status.running ? "正在扫描媒体目录" : "最近扫描日志"}
+      </div>
+      {recentLogs.length > 0 && (
+        <div className="mt-2 grid gap-1">
+          {recentLogs.map((entry, index) => (
+            <div key={`${entry.id}-${index}`} className="truncate text-[11.5px] text-[var(--color-text-tertiary)]">
               {entry.text}
             </div>
           ))}
         </div>
       )}
-    </Card>
+    </div>
+  );
+}
+
+function EmptyState({
+  title,
+  desc,
+  compact,
+}: {
+  title: string;
+  desc: string;
+  compact?: boolean;
+}) {
+  return (
+    <div className={cn("flex flex-col items-center justify-center text-[var(--color-text-tertiary)]", compact ? "py-16" : "min-h-[360px] py-24")}>
+      <div className="glass glass-refraction mb-5 flex size-20 items-center justify-center rounded-[var(--radius-card)]">
+        <Sparkles size={28} className="text-[var(--color-accent)]" />
+      </div>
+      <p className="text-[17px] font-bold text-[var(--color-text-secondary)]">{title}</p>
+      <p className="mt-1.5 max-w-md text-center text-[13px] font-medium opacity-70">{desc}</p>
+    </div>
   );
 }
 </file>
 
 <file path="frontend/src/App.tsx">
 import { useCallback, useState } from "react";
+import { AnimatePresence, motion } from "framer-motion";
 import { NavRail, type Route } from "./NavRail";
-import { HomePage } from "./pages/Home";
 import { LibraryPage } from "./pages/Library";
 import { DetailPage } from "./pages/Detail";
 import { SettingsPage } from "./pages/Settings";
@@ -3551,8 +3636,8 @@ import type { Subject } from "./data";
 
 export default function App() {
   const [route, setRoute] = useState<Route>("home");
-  const [collapsed, setCollapsed] = useState(false);
   const [detail, setDetail] = useState<Subject | null>(null);
+  const [theme, setTheme] = useState<"light" | "dark">("light");
   const snack = useSnackbar();
   const backend = useBackendSnapshot();
 
@@ -3566,63 +3651,68 @@ export default function App() {
     setRoute(r);
   }, []);
 
-  const toggleCollapsed = useCallback(() => {
-    setCollapsed((value) => !value);
-  }, []);
-
   return (
-    <div className="h-full w-full flex bg-[var(--color-bg)] text-[var(--color-on-surface)]">
+    <div
+      data-theme={theme}
+      className="h-full w-full flex overflow-hidden bg-[var(--color-surface)] text-[var(--color-text-primary)]"
+    >
+      <div className="fixed inset-0 pointer-events-none bg-app-field" />
       <NavRail
         route={route}
         onRoute={handleRoute}
-        collapsed={collapsed}
-        onToggleCollapsed={toggleCollapsed}
+        theme={theme}
+        onToggleTheme={() => setTheme((current) => (current === "light" ? "dark" : "light"))}
       />
 
-      <main className="flex-1 min-w-0 h-full overflow-y-auto mica">
-        <div key={detail ? `d-${detail.id}` : `r-${route}`} className="anim-fade-up">
-          {detail ? (
-            <DetailPage
-              subject={detail}
-              onBack={() => setDetail(null)}
-              onSnack={snack.show}
-            />
-          ) : route === "home" ? (
-            <HomePage
-              subjects={backend.subjects}
-              loading={backend.loading}
-              error={backend.error}
-              onOpen={openDetail}
-            />
-          ) : route === "library" ? (
-            <LibraryPage
-              subjects={backend.subjects}
-              stats={backend.stats}
-              scanStatus={backend.scanStatus}
-              logs={backend.logs}
-              onOpen={openDetail}
-              onSnack={snack.show}
-              onScan={async () => {
-                try {
-                  const result = await backend.scanLibrary();
-                  if (!result) {
-                    snack.show("当前不是 Electron 环境，无法调用 Rust 后端", "danger");
-                    return;
+      <main className="app-main relative min-w-0 h-full overflow-hidden">
+        <div className="absolute top-0 left-0 right-0 h-px bg-black/[0.04] z-10" />
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={detail ? `detail-${detail.id}` : `route-${route}`}
+            className="h-full"
+            initial={{ opacity: 0, x: detail ? 34 : -14 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: detail ? -24 : 18 }}
+            transition={{ duration: 0.32, ease: [0.25, 0.46, 0.45, 0.94] }}
+          >
+            {detail ? (
+              <DetailPage
+                subject={detail}
+                onBack={() => setDetail(null)}
+                onSnack={snack.show}
+              />
+            ) : route === "settings" ? (
+              <SettingsPage onSnack={snack.show} />
+            ) : (
+              <LibraryPage
+                route={route}
+                subjects={backend.subjects}
+                scanStatus={backend.scanStatus}
+                logs={backend.logs}
+                loading={backend.loading}
+                error={backend.error}
+                onOpen={openDetail}
+                onSnack={snack.show}
+                onScan={async () => {
+                  try {
+                    const result = await backend.scanLibrary();
+                    if (!result) {
+                      snack.show("当前不是 Electron 环境，无法调用 Rust 后端", "danger");
+                      return;
+                    }
+                    snack.show(
+                      `扫描完成：新增 ${result.summary.added}，修改 ${result.summary.modified}，刮削 ${result.scraped}，删除 ${result.summary.deleted}`,
+                      "success"
+                    );
+                  } catch (caught) {
+                    const message = caught instanceof Error ? caught.message : String(caught);
+                    snack.show(`扫描失败：${message}`, "danger");
                   }
-                  snack.show(
-                    `扫描完成：新增 ${result.summary.added}，修改 ${result.summary.modified}，刮削 ${result.scraped}，删除 ${result.summary.deleted}`,
-                    "success"
-                  );
-                } catch (caught) {
-                  const message = caught instanceof Error ? caught.message : String(caught);
-                  snack.show(`扫描失败：${message}`, "danger");
-                }
-              }}
-            />
-          ) : (
-            <SettingsPage onSnack={snack.show} />
-          )}
-        </div>
+                }}
+              />
+            )}
+          </motion.div>
+        </AnimatePresence>
       </main>
 
       <Snackbar msg={snack.msg} onDismiss={snack.dismiss} />
@@ -3635,149 +3725,594 @@ export default function App() {
 @import "tailwindcss";
 
 @theme {
-  --font-sans: "Inter", "Segoe UI Variable", "Segoe UI", "PingFang SC",
-    "Microsoft YaHei", system-ui, sans-serif;
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text",
+    "Segoe UI", "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
 
-  --color-bg: #f6f3ec;
-  --color-surface: #fffdf8;
-  --color-surface-1: #ffffff;
-  --color-surface-2: #f0ede6;
-  --color-surface-3: #e7e2d8;
-  --color-surface-4: #dcd5c9;
-  --color-outline: #b8afa2;
-  --color-outline-soft: #e1dbd1;
-
-  --color-on-surface: #1f2933;
-  --color-on-surface-muted: #5d6875;
-  --color-on-surface-faint: #87909b;
-
-  --color-primary: #315f9f;
-  --color-primary-soft: #dce8f7;
-  --color-on-primary: #ffffff;
-
-  --color-accent: #0f766e;
-  --color-success: #168a57;
-  --color-warning: #b7791f;
-  --color-danger: #c2414b;
+  --color-glass-white: rgba(255, 255, 255, 0.72);
+  --color-glass-white-light: rgba(255, 255, 255, 0.45);
+  --color-glass-white-ultra: rgba(255, 255, 255, 0.88);
+  --color-glass-border: rgba(255, 255, 255, 0.5);
+  --color-glass-border-subtle: rgba(255, 255, 255, 0.25);
+  --color-surface: rgba(245, 245, 247, 1);
+  --color-surface-elevated: rgba(255, 255, 255, 0.95);
+  --color-text-primary: rgba(29, 29, 31, 1);
+  --color-text-secondary: rgba(110, 110, 115, 1);
+  --color-text-tertiary: rgba(160, 160, 165, 1);
+  --color-accent: rgba(255, 55, 95, 1);
+  --color-accent-hover: rgba(255, 35, 75, 1);
+  --color-accent-soft: rgba(255, 55, 95, 0.1);
+  --color-accent-blue: rgba(0, 122, 255, 1);
+  --color-accent-blue-soft: rgba(0, 122, 255, 0.08);
+  --color-shadow-light: rgba(0, 0, 0, 0.04);
+  --color-shadow-medium: rgba(0, 0, 0, 0.08);
+  --color-shadow-heavy: rgba(0, 0, 0, 0.15);
 }
 
 :root {
   color-scheme: light;
-  --mica-tint-a: rgba(49, 95, 159, 0.1);
-  --mica-tint-b: rgba(15, 118, 110, 0.08);
-  --acrylic-bg: rgba(255, 253, 248, 0.78);
-  --scrollbar-thumb: rgba(31, 41, 51, 0.18);
-  --scrollbar-thumb-hover: rgba(31, 41, 51, 0.3);
+  --radius-window: 24px;
+  --radius-panel: 18px;
+  --radius-card: 12px;
+  --radius-control: 10px;
+  --radius-pill: 999px;
+  --color-bg: var(--color-surface);
+  --color-surface-1: var(--color-surface-elevated);
+  --color-surface-2: rgba(255, 255, 255, 0.68);
+  --color-surface-3: rgba(245, 245, 247, 0.88);
+  --color-surface-4: rgba(232, 232, 237, 0.92);
+  --color-outline: rgba(0, 0, 0, 0.1);
+  --color-outline-soft: rgba(0, 0, 0, 0.055);
+  --color-on-surface: var(--color-text-primary);
+  --color-on-surface-muted: var(--color-text-secondary);
+  --color-on-surface-faint: var(--color-text-tertiary);
+  --color-primary: var(--color-accent);
+  --color-primary-soft: var(--color-accent-soft);
+  --color-on-primary: #ffffff;
+  --color-success: #34a853;
+  --color-warning: #c98418;
+  --color-danger: #d9304f;
+  --acrylic-bg: rgba(255, 255, 255, 0.72);
+  --scrollbar-thumb: rgba(0, 0, 0, 0.12);
+  --scrollbar-thumb-hover: rgba(0, 0, 0, 0.22);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    color-scheme: dark;
-    --color-bg: #101820;
-    --color-surface: #14212b;
-    --color-surface-1: #182733;
-    --color-surface-2: #1f303d;
-    --color-surface-3: #283a48;
-    --color-surface-4: #334653;
-    --color-outline: #536673;
-    --color-outline-soft: #263844;
+[data-theme="dark"] {
+  color-scheme: dark;
+  --color-surface: rgb(28, 28, 30);
+  --color-surface-elevated: rgba(44, 44, 46, 0.96);
+  --color-surface-1: rgba(44, 44, 46, 0.96);
+  --color-surface-2: rgba(58, 58, 60, 0.72);
+  --color-surface-3: rgba(58, 58, 60, 0.82);
+  --color-surface-4: rgba(72, 72, 74, 0.86);
+  --color-outline: rgba(255, 255, 255, 0.16);
+  --color-outline-soft: rgba(255, 255, 255, 0.08);
+  --color-text-primary: rgba(245, 245, 247, 1);
+  --color-text-secondary: rgba(198, 198, 204, 1);
+  --color-text-tertiary: rgba(142, 142, 147, 1);
+  --color-on-surface: var(--color-text-primary);
+  --color-on-surface-muted: var(--color-text-secondary);
+  --color-on-surface-faint: var(--color-text-tertiary);
+  --color-primary-soft: rgba(255, 55, 95, 0.18);
+  --scrollbar-thumb: rgba(255, 255, 255, 0.16);
+  --scrollbar-thumb-hover: rgba(255, 255, 255, 0.28);
+}
 
-    --color-on-surface: #edf3f7;
-    --color-on-surface-muted: #b9c5ce;
-    --color-on-surface-faint: #82909a;
-
-    --color-primary: #7dd3c7;
-    --color-primary-soft: #143f44;
-    --color-on-primary: #052022;
-
-    --color-accent: #f0b96a;
-    --color-success: #6ee7a6;
-    --color-warning: #f2c06b;
-    --color-danger: #fb7185;
-
-    --mica-tint-a: rgba(125, 211, 199, 0.09);
-    --mica-tint-b: rgba(240, 185, 106, 0.07);
-    --acrylic-bg: rgba(20, 33, 43, 0.76);
-    --scrollbar-thumb: rgba(237, 243, 247, 0.1);
-    --scrollbar-thumb-hover: rgba(237, 243, 247, 0.2);
-  }
+* {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 html,
 body,
 #root {
   height: 100%;
-  background: var(--color-bg);
-  color: var(--color-on-surface);
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+body {
+  background: var(--color-surface);
+  color: var(--color-text-primary);
   font-family: var(--font-sans);
-  -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
 
-/* Scrollbar — subtle, fluent-ish */
+.page-shell {
+  width: 100%;
+  max-width: 1500px;
+  margin: 0 auto;
+  padding: 52px 42px 72px;
+}
+
+.app-main {
+  flex: 1 1 0%;
+}
+
+.page-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.search-page-header {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+}
+
+.search-field {
+  background: rgba(255, 255, 255, 0.48);
+  border: 0.5px solid rgba(255, 255, 255, 0.72);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.72),
+    0 1px 2px rgba(0, 0, 0, 0.025);
+  backdrop-filter: blur(36px) saturate(160%);
+  -webkit-backdrop-filter: blur(36px) saturate(160%);
+}
+
+.nav-rail {
+  border-color: rgba(255, 255, 255, 0.5);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.62) 0%, rgba(255, 246, 252, 0.5) 48%, rgba(255, 255, 255, 0.46) 100%),
+    radial-gradient(circle at 18% 8%, rgba(255, 255, 255, 0.72), transparent 34%),
+    radial-gradient(circle at 82% 28%, rgba(255, 55, 95, 0.08), transparent 34%);
+  backdrop-filter: blur(38px) saturate(185%);
+  -webkit-backdrop-filter: blur(38px) saturate(185%);
+  box-shadow:
+    inset 1px 0 0 rgba(255, 255, 255, 0.72),
+    inset -1px 0 0 rgba(255, 255, 255, 0.34),
+    18px 0 46px rgba(28, 28, 31, 0.065);
+  isolation: isolate;
+}
+
+.nav-rail::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(90deg, rgba(255, 255, 255, 0.52), rgba(255, 255, 255, 0.16) 42%, transparent 100%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.48), transparent 18%);
+}
+
+.nav-rail::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 0;
+  width: 28px;
+  pointer-events: none;
+  background: linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.18) 52%, rgba(0, 0, 0, 0.045) 100%);
+  opacity: 0.72;
+}
+
+.nav-brand {
+  position: relative;
+  z-index: 1;
+  color: rgba(29, 29, 31, 0.96);
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.56);
+}
+
+.nav-rail .nav-item {
+  isolation: isolate;
+  overflow: hidden;
+}
+
+.nav-rail .nav-item::before {
+  content: "";
+  position: absolute;
+  inset: 3px 4px;
+  z-index: -1;
+  border-radius: calc(var(--radius-control) - 2px);
+  pointer-events: none;
+  background: rgba(255, 255, 255, 0);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0);
+  transition:
+    background-color 180ms ease,
+    box-shadow 180ms ease;
+}
+
+.nav-rail .nav-item:hover::before {
+  background: rgba(255, 255, 255, 0.42);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.62),
+    0 1px 2px rgba(0, 0, 0, 0.025);
+}
+
+.nav-rail .nav-item.is-active:hover::before {
+  background: transparent;
+  box-shadow: none;
+}
+
+.nav-active-bg {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.44), rgba(255, 255, 255, 0.18)),
+    color-mix(in srgb, var(--color-accent) 16%, transparent);
+  border: 0.5px solid color-mix(in srgb, var(--color-accent) 18%, rgba(255, 255, 255, 0.5));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.62),
+    inset 0 -1px 0 rgba(255, 55, 95, 0.04),
+    0 7px 18px rgba(255, 55, 95, 0.08),
+    0 1px 2px rgba(0, 0, 0, 0.035);
+}
+
+.nav-item-icon {
+  opacity: 0.88;
+  filter: drop-shadow(0 1px 0 rgba(255, 255, 255, 0.36));
+}
+
+.nav-rail .nav-item.is-active .nav-item-icon {
+  opacity: 1;
+}
+
+.search-scope {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 330px;
+  height: 48px;
+  padding: 5px;
+  border-radius: var(--radius-pill);
+  background: rgba(255, 255, 255, 0.62);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.74),
+    0 1px 2px rgba(0, 0, 0, 0.03);
+  backdrop-filter: blur(28px) saturate(150%);
+  -webkit-backdrop-filter: blur(28px) saturate(150%);
+}
+
+.search-scope button {
+  flex: 1;
+  height: 100%;
+  border-radius: var(--radius-pill);
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+
+.search-scope button.active {
+  background: rgba(0, 0, 0, 0.07);
+}
+
+.settings-section-list {
+  background: rgba(255, 255, 255, 0.68);
+}
+
+.settings-option:hover {
+  transform: translateX(2px);
+}
+
+.bg-app-field {
+  background:
+    radial-gradient(circle at 100% -10%, rgba(255, 55, 95, 0.06), transparent 30%),
+    radial-gradient(circle at -10% 100%, rgba(0, 122, 255, 0.05), transparent 34%),
+    linear-gradient(180deg, #f7f7f9 0%, #f1f1f4 100%);
+}
+
+[data-theme="dark"] .bg-app-field {
+  background:
+    radial-gradient(circle at 100% -10%, rgba(255, 55, 95, 0.13), transparent 30%),
+    radial-gradient(circle at -10% 100%, rgba(10, 132, 255, 0.11), transparent 34%),
+    linear-gradient(180deg, #202024 0%, #171719 100%);
+}
+
+[data-theme="dark"] .search-field,
+[data-theme="dark"] .settings-section-list {
+  background: rgba(44, 44, 46, 0.68);
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+[data-theme="dark"] .nav-rail {
+  border-color: rgba(255, 255, 255, 0.08);
+  background:
+    linear-gradient(180deg, rgba(38, 38, 42, 0.58) 0%, rgba(32, 30, 34, 0.5) 48%, rgba(28, 28, 30, 0.48) 100%),
+    radial-gradient(circle at 18% 8%, rgba(255, 255, 255, 0.08), transparent 34%),
+    radial-gradient(circle at 82% 28%, rgba(255, 55, 95, 0.14), transparent 34%);
+  box-shadow:
+    inset 1px 0 0 rgba(255, 255, 255, 0.08),
+    inset -1px 0 0 rgba(255, 255, 255, 0.05),
+    18px 0 46px rgba(0, 0, 0, 0.24);
+}
+
+[data-theme="dark"] .nav-rail::before {
+  background:
+    linear-gradient(90deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.025) 42%, transparent 100%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.055), transparent 18%);
+}
+
+[data-theme="dark"] .nav-rail::after {
+  background: linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.025) 52%, rgba(0, 0, 0, 0.28) 100%);
+}
+
+[data-theme="dark"] .nav-brand {
+  color: rgba(245, 245, 247, 0.96);
+  text-shadow: none;
+}
+
+[data-theme="dark"] .nav-active-bg {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.13), rgba(255, 255, 255, 0.055)),
+    color-mix(in srgb, var(--color-accent) 24%, transparent);
+  border-color: color-mix(in srgb, var(--color-accent) 22%, rgba(255, 255, 255, 0.1));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.16),
+    0 8px 22px rgba(255, 55, 95, 0.12),
+    0 1px 2px rgba(0, 0, 0, 0.18);
+}
+
+[data-theme="dark"] .nav-item:hover,
+[data-theme="dark"] .settings-option:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+[data-theme="dark"] .nav-rail .nav-item:hover {
+  background: transparent;
+}
+
+[data-theme="dark"] .nav-rail .nav-item:hover::before {
+  background: rgba(255, 255, 255, 0.07);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 1px 2px rgba(0, 0, 0, 0.16);
+}
+
+[data-theme="dark"] .nav-item-icon {
+  filter: none;
+}
+
 *::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  width: 6px;
+  height: 6px;
 }
 *::-webkit-scrollbar-track {
   background: transparent;
 }
 *::-webkit-scrollbar-thumb {
   background: var(--scrollbar-thumb);
-  border-radius: 999px;
-  border: 2px solid transparent;
-  background-clip: padding-box;
+  border-radius: 3px;
 }
 *::-webkit-scrollbar-thumb:hover {
   background: var(--scrollbar-thumb-hover);
-  background-clip: padding-box;
-  border: 2px solid transparent;
 }
 
-/* Mica-like noise */
-.mica {
-  background-image:
-    radial-gradient(120% 80% at 0% 0%, var(--mica-tint-a), transparent 60%),
-    radial-gradient(120% 80% at 100% 100%, var(--mica-tint-b), transparent 60%),
-    linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0));
+.glass {
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.78) 0%, rgba(255, 255, 255, 0.68) 100%);
+  backdrop-filter: blur(40px) saturate(180%);
+  -webkit-backdrop-filter: blur(40px) saturate(180%);
+  border-top: 0.5px solid rgba(255, 255, 255, 0.8);
+  border-left: 0.5px solid rgba(255, 255, 255, 0.6);
+  border-bottom: 0.5px solid rgba(255, 255, 255, 0.2);
+  border-right: 0.5px solid rgba(255, 255, 255, 0.3);
 }
 
-.acrylic {
-  background: var(--acrylic-bg);
-  backdrop-filter: blur(24px) saturate(140%);
-  -webkit-backdrop-filter: blur(24px) saturate(140%);
+.glass-heavy {
+  background: linear-gradient(
+    145deg,
+    rgba(255, 255, 255, 0.92) 0%,
+    rgba(255, 255, 255, 0.82) 50%,
+    rgba(255, 255, 255, 0.88) 100%
+  );
+  backdrop-filter: blur(60px) saturate(200%);
+  -webkit-backdrop-filter: blur(60px) saturate(200%);
+  border-top: 0.5px solid rgba(255, 255, 255, 0.9);
+  border-left: 0.5px solid rgba(255, 255, 255, 0.7);
+  border-bottom: 0.5px solid rgba(255, 255, 255, 0.3);
+  border-right: 0.5px solid rgba(255, 255, 255, 0.4);
 }
 
-.hide-scrollbar::-webkit-scrollbar { display: none; }
-.hide-scrollbar { scrollbar-width: none; }
-
-.cv-media-card {
-  content-visibility: auto;
-  contain-intrinsic-size: 180px 320px;
+.glass-light {
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.5) 0%, rgba(255, 255, 255, 0.35) 100%);
+  backdrop-filter: blur(30px) saturate(150%);
+  -webkit-backdrop-filter: blur(30px) saturate(150%);
+  border: 0.5px solid rgba(255, 255, 255, 0.3);
 }
 
-.cv-list-row {
-  content-visibility: auto;
-  contain-intrinsic-size: 1000px 72px;
+.glass-dark {
+  background: linear-gradient(135deg, rgba(0, 0, 0, 0.5) 0%, rgba(0, 0, 0, 0.4) 100%);
+  backdrop-filter: blur(40px) saturate(180%);
+  -webkit-backdrop-filter: blur(40px) saturate(180%);
+  border-top: 0.5px solid rgba(255, 255, 255, 0.15);
+  border-left: 0.5px solid rgba(255, 255, 255, 0.1);
+  border-bottom: 0.5px solid rgba(255, 255, 255, 0.03);
+  border-right: 0.5px solid rgba(255, 255, 255, 0.05);
 }
 
+.glass-refraction::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: inherit;
+  padding: 0.5px;
+  pointer-events: none;
+  background: linear-gradient(
+    155deg,
+    rgba(255, 255, 255, 0.95) 0%,
+    rgba(255, 255, 255, 0.2) 25%,
+    rgba(255, 255, 255, 0) 50%,
+    rgba(255, 255, 255, 0.05) 75%,
+    rgba(255, 255, 255, 0.5) 100%
+  );
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+}
+.glass-refraction::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: inherit;
+  pointer-events: none;
+  background: linear-gradient(
+    135deg,
+    rgba(180, 200, 255, 0.04) 0%,
+    rgba(255, 200, 220, 0.02) 50%,
+    rgba(200, 255, 230, 0.03) 100%
+  );
+}
+
+.shadow-glass {
+  box-shadow:
+    0 0 0 0.5px rgba(0, 0, 0, 0.03),
+    0 1px 2px rgba(0, 0, 0, 0.04),
+    0 4px 12px rgba(0, 0, 0, 0.04),
+    0 8px 24px rgba(0, 0, 0, 0.04),
+    inset 0 0.5px 0 rgba(255, 255, 255, 0.5);
+}
+
+.shadow-glass-hover {
+  box-shadow:
+    0 0 0 0.5px rgba(0, 0, 0, 0.05),
+    0 2px 8px rgba(0, 0, 0, 0.06),
+    0 8px 24px rgba(0, 0, 0, 0.07),
+    0 16px 48px rgba(0, 0, 0, 0.06),
+    inset 0 0.5px 0 rgba(255, 255, 255, 0.6);
+}
+
+.shadow-glass-elevated {
+  box-shadow:
+    0 0 0 0.5px rgba(0, 0, 0, 0.06),
+    0 4px 16px rgba(0, 0, 0, 0.1),
+    0 12px 40px rgba(0, 0, 0, 0.08),
+    0 24px 64px rgba(0, 0, 0, 0.06),
+    inset 0 1px 0 rgba(255, 255, 255, 0.5);
+}
+
+.sidebar-item {
+  border-radius: 8px;
+  transition: all 0.2s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+.sidebar-item:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+.sidebar-item.active {
+  background: rgba(0, 0, 0, 0.06);
+  font-weight: 500;
+}
+
+.tag-chip {
+  background: rgba(0, 0, 0, 0.035);
+  border: 0.5px solid rgba(0, 0, 0, 0.05);
+  transition: all 0.2s ease;
+}
+.tag-chip:hover {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.detail-hero-scrim {
+  background:
+    linear-gradient(180deg, rgba(245, 245, 247, 0.52) 0%, rgba(245, 245, 247, 0.34) 38%, var(--color-surface) 78%, var(--color-surface) 100%),
+    linear-gradient(90deg, rgba(245, 245, 247, 0.34) 0%, rgba(245, 245, 247, 0.08) 50%, rgba(245, 245, 247, 0.2) 100%);
+}
+
+.detail-hero-side-light {
+  background: radial-gradient(circle at 18% 24%, rgba(255, 255, 255, 0.44), transparent 30%);
+}
+
+.detail-hero-bottom-fade {
+  background: linear-gradient(180deg, transparent 0%, rgba(245, 245, 247, 0.9) 52%, var(--color-surface) 86%);
+}
+
+[data-theme="dark"] .detail-hero-scrim {
+  background:
+    linear-gradient(180deg, rgba(28, 28, 30, 0.44) 0%, rgba(28, 28, 30, 0.34) 38%, var(--color-surface) 78%, var(--color-surface) 100%),
+    linear-gradient(90deg, rgba(28, 28, 30, 0.44) 0%, rgba(28, 28, 30, 0.08) 50%, rgba(28, 28, 30, 0.28) 100%);
+}
+
+[data-theme="dark"] .detail-hero-side-light {
+  background: radial-gradient(circle at 18% 24%, rgba(255, 255, 255, 0.08), transparent 32%);
+}
+
+[data-theme="dark"] .detail-hero-bottom-fade {
+  background: linear-gradient(180deg, transparent 0%, rgba(28, 28, 30, 0.9) 52%, var(--color-surface) 86%);
+}
+
+.glass-refraction:not(.absolute):not(.fixed):not(.sticky) {
+  position: relative;
+}
+
+.hero-play-button {
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0.85));
+  box-shadow:
+    0 4px 20px rgba(0, 0, 0, 0.15),
+    0 1px 3px rgba(0, 0, 0, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 1);
+}
+.hero-play-button::after {
+  content: "";
+  position: absolute;
+  inset: 0 0 50%;
+  border-radius: 999px 999px 0 0;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.4), transparent);
+  pointer-events: none;
+}
+
+@keyframes light-sweep {
+  0% { transform: translateX(-120%) rotate(15deg); opacity: 0; }
+  10% { opacity: 1; }
+  90% { opacity: 1; }
+  100% { transform: translateX(220%) rotate(15deg); opacity: 0; }
+}
+.glass-shimmer {
+  position: relative;
+  overflow: hidden;
+}
+.glass-shimmer::after {
+  content: "";
+  position: absolute;
+  top: -100%;
+  left: -50%;
+  z-index: 2;
+  width: 25%;
+  height: 300%;
+  pointer-events: none;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.08) 45%,
+    rgba(255, 255, 255, 0.12) 50%,
+    rgba(255, 255, 255, 0.08) 55%,
+    transparent 100%
+  );
+  animation: light-sweep 8s ease-in-out infinite;
+  transform: rotate(15deg);
+}
+
+.hide-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.hide-scrollbar {
+  scrollbar-width: none;
+}
+
+.cv-media-card,
+.cv-list-row,
 .cv-episode-row {
   content-visibility: auto;
+}
+.cv-media-card {
+  contain-intrinsic-size: 180px 320px;
+}
+.cv-list-row {
+  contain-intrinsic-size: 1000px 72px;
+}
+.cv-episode-row {
   contain-intrinsic-size: 1000px 76px;
 }
-
-@keyframes fadeUp {
-  from { opacity: 0; transform: translateY(8px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-.anim-fade-up { animation: fadeUp .35s ease-out both; }
 
 @keyframes shimmer {
   0% { background-position: -400px 0; }
   100% { background-position: 400px 0; }
 }
 .skeleton {
-  background: linear-gradient(90deg, var(--color-surface-2) 0%, var(--color-surface-3) 50%, var(--color-surface-2) 100%);
+  background: linear-gradient(90deg, var(--color-surface-2) 0%, var(--color-surface-4) 50%, var(--color-surface-2) 100%);
   background-size: 800px 100%;
   animation: shimmer 1.4s linear infinite;
 }
@@ -3786,13 +4321,17 @@ body,
   from { opacity: 0; transform: translate(-50%, 20px); }
   to { opacity: 1; transform: translate(-50%, 0); }
 }
-.anim-snackbar { animation: snackbarIn .3s cubic-bezier(.2,.8,.2,1) both; }
+.anim-snackbar {
+  animation: snackbarIn 0.3s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
 </file>
 
 <file path="frontend/src/MediaCard.tsx">
 import { memo, useState } from "react";
+import { motion } from "framer-motion";
+import { Play } from "lucide-react";
 import { cn } from "./utils/cn";
-import { Badge, Progress } from "./ui";
+import { Badge } from "./ui";
 import { STATUS_COLOR, STATUS_LABEL, type Subject } from "./data";
 
 type ImageLoading = "eager" | "lazy";
@@ -3855,31 +4394,60 @@ export const MediaCard = memo(function MediaCard({
   subject,
   onClick,
   selected,
-  size = "md",
+  index = 0,
   imageLoading = "lazy",
   imageFetchPriority = "auto",
 }: {
   subject: Subject;
   onClick?: () => void;
   selected?: boolean;
-  size?: "sm" | "md";
+  index?: number;
   imageLoading?: ImageLoading;
   imageFetchPriority?: ImageFetchPriority;
 }) {
-  const sizeCls = size === "sm" ? "w-[150px]" : "w-[180px]";
+  const progressText = `${subject.watchedEpisodes} / ${subject.episodes || subject.files || "?"} 话`;
+  const resolvedPoster = subject.poster
+    ? window.nexplay?.resolveAssetUrl(subject.poster) ?? subject.poster
+    : "";
 
   return (
-    <button
+    <motion.button
+      type="button"
       onClick={onClick}
       className={cn(
-        "group relative shrink-0 text-left rounded-2xl transition-all duration-200",
-        "focus:outline-none",
-        sizeCls,
+        "group relative min-w-0 cursor-pointer text-left focus:outline-none",
         selected && "ring-2 ring-[var(--color-primary)] ring-offset-2 ring-offset-[var(--color-bg)]"
       )}
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{
+        duration: 0.45,
+        delay: Math.min(index, 18) * 0.035,
+        ease: [0.25, 0.46, 0.45, 0.94],
+      }}
     >
-      {/* Poster */}
-      <div className="relative aspect-[2/3] rounded-2xl overflow-hidden bg-[var(--color-surface-2)] ring-1 ring-[var(--color-outline-soft)] group-hover:ring-[var(--color-outline)] transition-all group-hover:scale-[1.025] group-hover:shadow-xl group-hover:shadow-black/40">
+      <div className="relative mb-2.5">
+        {resolvedPoster && (
+          <div
+            className="absolute inset-[6%] -z-10 translate-y-5 scale-[0.85] rounded-[var(--radius-card)] bg-cover bg-center opacity-0 blur-[32px] saturate-[1.6] transition-all duration-[600ms] group-hover:opacity-[0.38]"
+            style={{ backgroundImage: `url(${resolvedPoster})` }}
+          />
+        )}
+        <motion.div
+          className="relative aspect-[3/4] overflow-hidden rounded-[var(--radius-card)] bg-[var(--color-surface-elevated)]"
+          style={{
+            boxShadow:
+              "0 1px 3px rgba(0,0,0,0.04), 0 4px 12px rgba(0,0,0,0.06), 0 8px 24px rgba(0,0,0,0.04)",
+          }}
+          whileHover={{
+            scale: 1.04,
+            y: -6,
+            boxShadow:
+              "0 4px 12px rgba(0,0,0,0.08), 0 12px 32px rgba(0,0,0,0.1), 0 20px 48px rgba(0,0,0,0.06)",
+          }}
+          whileTap={{ scale: 0.97 }}
+          transition={{ duration: 0.35, ease: [0.25, 0.46, 0.45, 0.94] }}
+        >
         <Poster
           src={subject.poster}
           alt={subject.title}
@@ -3888,45 +4456,83 @@ export const MediaCard = memo(function MediaCard({
           fetchPriority={imageFetchPriority}
         />
 
-        {/* gradient bottom for legibility */}
-        <div className="absolute inset-x-0 bottom-0 h-1/3 bg-gradient-to-t from-black/70 to-transparent pointer-events-none" />
+          <div className="absolute inset-x-0 top-0 h-16 bg-gradient-to-b from-black/25 to-transparent opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
+          <div className="absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-black/40 to-transparent opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
 
-        {/* top-right badges */}
-        <div className="absolute top-2 right-2 flex flex-col items-end gap-1">
-          {subject.newEpisode && <Badge tone="primary">NEW</Badge>}
-          {subject.currentEpisode && subject.status === "matched" && (
-            <Badge tone="neutral">EP{String(subject.currentEpisode).padStart(2, "0")}</Badge>
-          )}
-          {subject.status !== "matched" && (
-            <span
-              className={cn(
-                "inline-flex items-center px-2 h-6 rounded-full text-[11px] font-medium ring-1 ring-inset",
-                STATUS_COLOR[subject.status]
-              )}
-            >
-              {STATUS_LABEL[subject.status]}
-            </span>
-          )}
-        </div>
-
-        {/* progress */}
-        {subject.progress > 0 && subject.progress < 1 && (
-          <div className="absolute inset-x-3 bottom-3">
-            <Progress value={subject.progress} />
+          <div className="absolute right-2.5 top-2.5 translate-y-1 opacity-0 transition-all duration-300 group-hover:translate-y-0 group-hover:opacity-100">
+            {subject.rating > 0 ? (
+              <div className="glass-dark flex items-center gap-1 rounded-[var(--radius-control)] px-2 py-[3px] text-[10.5px] font-semibold tracking-wide text-white">
+                <span className="text-amber-400">★</span> {subject.rating.toFixed(1)}
+              </div>
+            ) : subject.status !== "matched" ? (
+              <span
+                className={cn(
+                  "inline-flex h-6 items-center rounded-full px-2 text-[11px] font-medium ring-1 ring-inset",
+                  STATUS_COLOR[subject.status]
+                )}
+              >
+                {STATUS_LABEL[subject.status]}
+              </span>
+            ) : null}
           </div>
+
+          {subject.newEpisode && (
+            <div className="absolute left-2.5 top-2.5">
+              <Badge tone="primary">NEW</Badge>
+            </div>
+          )}
+
+          <div className="absolute inset-0 flex scale-75 items-center justify-center opacity-0 transition-all duration-300 group-hover:scale-100 group-hover:opacity-100">
+            <motion.div
+              className="relative flex size-12 items-center justify-center rounded-full"
+              style={{
+                background: "linear-gradient(135deg, rgba(255,255,255,0.95), rgba(255,255,255,0.85))",
+                boxShadow:
+                  "0 4px 20px rgba(0,0,0,0.2), 0 1px 3px rgba(0,0,0,0.1), inset 0 1px 0 rgba(255,255,255,1)",
+              }}
+              whileHover={{ scale: 1.1 }}
+            >
+              <Play size={18} className="ml-0.5 text-[var(--color-text-primary)]" fill="currentColor" />
+              <div className="pointer-events-none absolute top-0 left-[15%] right-[15%] h-[45%] rounded-t-full bg-gradient-to-b from-white/50 to-transparent" />
+            </motion.div>
+          </div>
+
+          {subject.progress > 0 && (
+            <div className="absolute inset-x-0 bottom-0 h-[3px] bg-black/20">
+              <motion.div
+                className="h-full rounded-r-full"
+                style={{ background: "linear-gradient(90deg, #ff375f, #ff6b8a)" }}
+                initial={{ width: 0 }}
+                animate={{ width: `${Math.min(100, Math.max(0, subject.progress * 100))}%` }}
+                transition={{ duration: 0.8, delay: Math.min(index, 18) * 0.035 + 0.25, ease: "easeOut" }}
+              />
+            </div>
+          )}
+
+          <div className="pointer-events-none absolute inset-0 rounded-[var(--radius-card)] shadow-[inset_0_1px_0_rgba(255,255,255,0.2),inset_0_-1px_0_rgba(0,0,0,0.05)]" />
+          <div className="pointer-events-none absolute left-0 top-0 h-1/4 w-1/2 rounded-tl-[var(--radius-card)] bg-gradient-to-br from-white/[0.08] to-transparent" />
+        </motion.div>
+      </div>
+
+      <div className="px-0.5">
+        <h3 className="truncate text-[16px] font-[680] leading-tight tracking-[-0.012em] text-[var(--color-text-primary)] transition-colors duration-250 group-hover:text-[var(--color-accent)]">
+          {subject.title}
+        </h3>
+        <p className="mt-1.5 truncate text-[13px] font-semibold tracking-[-0.006em] text-[var(--color-text-tertiary)]">
+          {subject.titleCn} · {subject.year}
+        </p>
+        {subject.progress > 0 && subject.progress < 1 && (
+          <p className="mt-1.5 text-[13px] font-semibold tabular-nums tracking-[-0.006em] text-[var(--color-accent)]/80">
+            {progressText}
+          </p>
+        )}
+        {subject.progress >= 1 && (
+          <p className="mt-1.5 text-[13px] font-semibold tracking-[-0.006em] text-green-600/80">
+            已完成 · {subject.episodes || subject.files || "?"} 话
+          </p>
         )}
       </div>
-
-      {/* title */}
-      <div className="px-1 pt-3">
-        <div className="text-[13.5px] font-medium leading-tight truncate group-hover:text-[var(--color-primary)] transition-colors">
-          {subject.title}
-        </div>
-        <div className="text-[11.5px] text-[var(--color-on-surface-faint)] mt-1 truncate">
-          {subject.titleCn} · {subject.year}
-        </div>
-      </div>
-    </button>
+    </motion.button>
   );
 });
 </file>
@@ -4188,7 +4794,7 @@ export function Snackbar({ msg, onDismiss }: { msg: SnackMsg | null; onDismiss: 
   return (
     <div
       className={cn(
-        "anim-snackbar fixed bottom-8 left-1/2 z-50 flex items-center gap-3 px-4 py-3 rounded-2xl shadow-xl ring-1 ring-white/10 text-sm text-white",
+        "anim-snackbar fixed bottom-8 left-1/2 z-50 flex items-center gap-3 px-4 py-3 rounded-[var(--radius-panel)] shadow-xl ring-1 ring-white/10 text-sm text-white",
         tones[msg.tone ?? "neutral"]
       )}
     >
@@ -4229,7 +4835,7 @@ export function SearchField({
   return (
     <div
       className={cn(
-        "inline-flex items-center gap-2 h-10 px-3.5 rounded-full bg-[var(--color-surface-2)] ring-1 ring-inset ring-[var(--color-outline-soft)] focus-within:ring-[var(--color-primary)]/40 transition-all",
+        "inline-flex items-center gap-2 h-10 px-3.5 rounded-[var(--radius-pill)] bg-[var(--color-surface-2)] ring-1 ring-inset ring-[var(--color-outline-soft)] focus-within:ring-[var(--color-primary)]/40 transition-all",
         className
       )}
     >
@@ -4272,7 +4878,7 @@ export function Card({
   return (
     <div
       className={cn(
-        "rounded-2xl bg-[var(--color-surface-1)] ring-1 ring-inset ring-[var(--color-outline-soft)]",
+        "rounded-[var(--radius-panel)] bg-[var(--color-surface-1)] ring-1 ring-inset ring-[var(--color-outline-soft)]",
         elevated && "shadow-lg shadow-black/30",
         className
       )}

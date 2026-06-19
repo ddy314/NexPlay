@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, nativeTheme, net, protocol } = require("electron");
+const { app, BrowserWindow, Menu, ipcMain, nativeTheme, net, protocol } = require("electron");
 const { spawn } = require("node:child_process");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
@@ -150,7 +150,8 @@ ipcMain.handle("backend:open-media", (_event, mediaId) => runBackend("open-media
 
 function createMainWindow() {
   nativeTheme.themeSource = "system";
-  const backgroundColor = nativeTheme.shouldUseDarkColors ? "#111827" : "#f6f3ec";
+  Menu.setApplicationMenu(null);
+  const backgroundColor = nativeTheme.shouldUseDarkColors ? "#1c1c1e" : "#f2f2f7";
 
   const window = new BrowserWindow({
     width: 1320,
@@ -159,6 +160,7 @@ function createMainWindow() {
     minHeight: 680,
     title: "NexPlay",
     backgroundColor,
+    autoHideMenuBar: true,
     titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
@@ -167,6 +169,8 @@ function createMainWindow() {
       sandbox: false,
     },
   });
+
+  window.setMenu(null);
 
   if (useDevRenderer) {
     window.loadURL("http://127.0.0.1:5173");

@@ -1,448 +1,500 @@
-import { memo, useCallback, useDeferredValue, useMemo, useState } from "react";
-import { STATUS_LABEL, STATUS_COLOR, type Subject, type MatchStatus } from "../data";
-import type { BackendLogEntry, LibraryStats, ScanStatus } from "../backend";
-import { Badge, Button, Card, Progress, SearchField, Segmented } from "../ui";
-import { MediaCard, Poster } from "../MediaCard";
+import { useDeferredValue, useMemo, useState } from "react";
+import { AnimatePresence, motion } from "framer-motion";
+import { RefreshCw, Search, Sparkles } from "lucide-react";
+import type { BackendLogEntry, ScanStatus } from "../backend";
+import type { Subject } from "../data";
+import type { Route } from "../NavRail";
+import { MediaCard } from "../MediaCard";
 import { useIncrementalItems } from "../hooks/useIncrementalItems";
-import {
-  FolderPlus,
-  GridIcon,
-  ListIcon,
-  ScanIcon,
-  SortIcon,
-  ChevronDown,
-  CheckIcon,
-} from "../icons";
+import { appleSpringBouncy, appleSpringSoft } from "../motion";
+import { Button } from "../ui";
 import { cn } from "../utils/cn";
 
+type CatalogRoute = Exclude<Route, "settings">;
+
+const pageCopy: Record<CatalogRoute, { title: string; subtitle?: string }> = {
+  search: {
+    title: "搜索",
+    subtitle: "查找标题、文件名或标签",
+  },
+  home: {
+    title: "主页",
+  },
+  library: {
+    title: "媒体库",
+    subtitle: "你的本地番剧收藏",
+  },
+};
+
 export function LibraryPage({
+  route,
   subjects,
-  stats,
   scanStatus,
   logs,
+  loading,
+  error,
   onOpen,
   onSnack,
   onScan,
 }: {
+  route: CatalogRoute;
   subjects: Subject[];
-  stats: LibraryStats;
   scanStatus: ScanStatus;
   logs: BackendLogEntry[];
+  loading?: boolean;
+  error?: string | null;
   onOpen: (s: Subject) => void;
   onSnack: (text: string, tone?: "neutral" | "success" | "danger") => void;
   onScan: () => void | Promise<void>;
 }) {
-  const [sort, setSort] = useState<"title" | "date" | "progress" | "match">("date");
-  const [view, setView] = useState<"grid" | "list">("grid");
   const [query, setQuery] = useState("");
+  const [heroIndex, setHeroIndex] = useState(0);
   const deferredQuery = useDeferredValue(query);
 
-  const filtered = useMemo(() => {
-    let list = subjects.slice();
-    const normalizedQuery = deferredQuery.trim();
-    if (normalizedQuery) {
-      const q = normalizedQuery.toLowerCase();
-      list = list.filter(
-        (s) =>
-          s.title.toLowerCase().includes(q) ||
-          s.titleCn.toLowerCase().includes(q) ||
-          s.fileSummary.toLowerCase().includes(q)
-      );
-    }
-    switch (sort) {
-      case "title":
-        list.sort((a, b) => a.title.localeCompare(b.title));
-        break;
-      case "progress":
-        list.sort((a, b) => b.progress - a.progress);
-        break;
-      case "match":
-        const order: Record<MatchStatus, number> = { matched: 0, tentative: 1, unmatched: 2, failed: 3 };
-        list.sort((a, b) => order[a.status] - order[b.status]);
-        break;
-    }
-    return list;
-  }, [sort, deferredQuery, subjects]);
+  const watching = useMemo(
+    () => subjects.filter((subject) => subject.progress > 0 && subject.progress < 1),
+    [subjects]
+  );
+  const completed = useMemo(
+    () => subjects.filter((subject) => subject.progress >= 1),
+    [subjects]
+  );
+  const recent = useMemo(() => subjects.slice(0, 18), [subjects]);
+  const heroSubject = watching[heroIndex % Math.max(1, watching.length)] ?? subjects[0];
 
+  const searchResults = useMemo(() => {
+    const q = deferredQuery.trim().toLowerCase();
+    if (!q) return [];
+    return subjects.filter(
+      (subject) =>
+        subject.title.toLowerCase().includes(q) ||
+        subject.titleCn.toLowerCase().includes(q) ||
+        subject.fileSummary.toLowerCase().includes(q) ||
+        subject.tags.some((tag) => tag.toLowerCase().includes(q))
+    );
+  }, [deferredQuery, subjects]);
+
+  const displayItems = route === "search" ? searchResults : subjects;
   const {
     hasMore,
     loadMore,
     sentinelRef,
     visibleCount,
     visibleItems,
-  } = useIncrementalItems(filtered, {
-    initialCount: view === "grid" ? 48 : 80,
-    step: view === "grid" ? 36 : 80,
-    resetKey: `${view}:${sort}:${deferredQuery}:${subjects.length}`,
+  } = useIncrementalItems(displayItems, {
+    initialCount: route === "library" ? 72 : 36,
+    step: 36,
+    resetKey: `${route}:${deferredQuery}:${displayItems.length}`,
   });
-
-  const showEmpty = filtered.length === 0;
-  const remainingCount = Math.max(0, filtered.length - visibleCount);
-
-  return (
-    <div className="px-10 py-10 pb-20">
-      {/* Header */}
-      <div className="flex items-end justify-between mb-2">
-        <div>
-          <h1 className="text-[36px] font-semibold tracking-tight leading-tight">媒体库</h1>
-          <div className="text-[14px] text-[var(--color-on-surface-muted)] mt-2">
-            <span className="tabular-nums">{stats.total}</span> items ·{" "}
-            <span className="text-emerald-300 tabular-nums">{stats.matched}</span> matched ·{" "}
-            <span className="text-amber-300 tabular-nums">{stats.unmatched}</span> unmatched
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button
-            icon={<ScanIcon className="size-4" />}
-            loading={scanStatus.running}
-            onClick={() => {
-              onSnack("已开始扫描媒体目录…");
-              void onScan();
-            }}
-          >
-            {scanStatus.running ? "Scanning" : "Scan Now"}
-          </Button>
-        </div>
-      </div>
-
-      {/* Command Bar */}
-      <Card className="mt-7 p-3 flex flex-wrap items-center gap-3 acrylic">
-        <SearchField
-          value={query}
-          onChange={setQuery}
-          placeholder="搜索标题、文件名、标签…"
-          className="min-w-[280px] flex-1 max-w-md"
-        />
-        <div className="ml-auto flex items-center gap-2">
-          <SortMenu sort={sort} onChange={setSort} />
-          <Segmented
-            value={view}
-            onChange={setView}
-            options={[
-              { value: "grid", label: "", icon: <GridIcon className="size-4" /> },
-              { value: "list", label: "", icon: <ListIcon className="size-4" /> },
-            ]}
-          />
-        </div>
-      </Card>
-
-      {(scanStatus.running || logs.length > 0) && (
-        <ScanPanel status={scanStatus} logs={logs} />
-      )}
-
-      {/* Body */}
-      <div className="mt-8">
-        <div>
-          {showEmpty ? (
-            <EmptyState query={query} onClear={() => setQuery("")} />
-          ) : view === "grid" ? (
-            <div className="grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-x-5 gap-y-8">
-              {visibleItems.map((s, index) => (
-                <MediaGridItem
-                  key={s.id}
-                  subject={s}
-                  onOpen={onOpen}
-                  priority={index < 8}
-                />
-              ))}
-              {hasMore && (
-                <GridLoadMore
-                  remainingCount={remainingCount}
-                  sentinelRef={sentinelRef}
-                  onLoadMore={loadMore}
-                />
-              )}
-            </div>
-          ) : (
-            <Card className="overflow-hidden">
-              <ListHeader />
-              {visibleItems.map((s, i) => (
-                <ListRow
-                  key={s.id}
-                  subject={s}
-                  isLast={!hasMore && i === visibleItems.length - 1}
-                  onOpenSubject={onOpen}
-                />
-              ))}
-              {hasMore && (
-                <ListLoadMore
-                  remainingCount={remainingCount}
-                  sentinelRef={sentinelRef}
-                  onLoadMore={loadMore}
-                />
-              )}
-            </Card>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-const MediaGridItem = memo(function MediaGridItem({
-  subject,
-  onOpen,
-  priority,
-}: {
-  subject: Subject;
-  onOpen: (s: Subject) => void;
-  priority: boolean;
-}) {
-  const handleOpen = useCallback(() => onOpen(subject), [onOpen, subject]);
+  const remainingCount = Math.max(0, displayItems.length - visibleCount);
+  const copy = pageCopy[route];
 
   return (
-    <div className="flex justify-center cv-media-card">
-      <MediaCard
-        subject={subject}
-        onClick={handleOpen}
-        imageLoading={priority ? "eager" : "lazy"}
-        imageFetchPriority={priority ? "high" : "auto"}
-      />
-    </div>
-  );
-});
-
-function GridLoadMore({
-  remainingCount,
-  sentinelRef,
-  onLoadMore,
-}: {
-  remainingCount: number;
-  sentinelRef: (node: HTMLDivElement | null) => void;
-  onLoadMore: () => void;
-}) {
-  return (
-    <div ref={sentinelRef} className="col-span-full flex justify-center py-2">
-      <button
-        type="button"
-        onClick={onLoadMore}
-        className="h-9 rounded-full px-4 text-[12px] text-[var(--color-on-surface-muted)] hover:bg-white/[0.06] hover:text-[var(--color-on-surface)]"
-      >
-        继续加载剩余 {remainingCount} 项
-      </button>
-    </div>
-  );
-}
-
-function ListLoadMore({
-  remainingCount,
-  sentinelRef,
-  onLoadMore,
-}: {
-  remainingCount: number;
-  sentinelRef: (node: HTMLDivElement | null) => void;
-  onLoadMore: () => void;
-}) {
-  return (
-    <div
-      ref={sentinelRef}
-      className="px-5 py-4 text-center bg-[var(--color-surface)]"
-    >
-      <button
-        type="button"
-        onClick={onLoadMore}
-        className="h-8 rounded-full px-3 text-[12px] text-[var(--color-on-surface-muted)] hover:bg-white/[0.06] hover:text-[var(--color-on-surface)]"
-      >
-        继续加载剩余 {remainingCount} 项
-      </button>
-    </div>
-  );
-}
-
-function SortMenu({
-  sort,
-  onChange,
-}: {
-  sort: "title" | "date" | "progress" | "match";
-  onChange: (v: any) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const items = [
-    { v: "title", l: "Title" },
-    { v: "date", l: "Date Added" },
-    { v: "progress", l: "Progress" },
-    { v: "match", l: "Match Status" },
-  ] as const;
-  const current = items.find((i) => i.v === sort)?.l;
-  return (
-    <div className="relative">
-      <button
-        onClick={() => setOpen((v) => !v)}
-        className="inline-flex items-center gap-2 h-9 px-3 text-[13px] rounded-full bg-[var(--color-surface-2)] ring-1 ring-inset ring-[var(--color-outline-soft)] hover:bg-[var(--color-surface-3)] text-[var(--color-on-surface)]"
-      >
-        <SortIcon className="size-4 text-[var(--color-on-surface-faint)]" />
-        Sort · <span className="text-[var(--color-on-surface)] font-medium">{current}</span>
-        <ChevronDown className="size-3.5" />
-      </button>
-      {open && (
-        <>
-          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 top-full mt-2 z-20 w-44 rounded-xl bg-[var(--color-surface-3)] ring-1 ring-inset ring-[var(--color-outline)] shadow-xl py-1.5">
-            {items.map((it) => (
-              <button
-                key={it.v}
-                onClick={() => {
-                  onChange(it.v);
-                  setOpen(false);
-                }}
-                className="w-full flex items-center justify-between px-3 py-2 text-[13px] text-left hover:bg-white/[0.06]"
-              >
-                {it.l}
-                {sort === it.v && <CheckIcon className="size-4 text-[var(--color-primary)]" />}
-              </button>
-            ))}
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
-
-function ListHeader() {
-  return (
-    <div className="grid grid-cols-[64px_1fr_140px_120px_140px] gap-4 px-5 py-3 text-[11px] uppercase tracking-wider text-[var(--color-on-surface-faint)] border-b border-[var(--color-outline-soft)] bg-[var(--color-surface)]">
-      <div></div>
-      <div>Title</div>
-      <div>Status</div>
-      <div>Progress</div>
-      <div>Last Played</div>
-    </div>
-  );
-}
-
-const ListRow = memo(function ListRow({
-  subject,
-  onOpenSubject,
-  isLast,
-}: {
-  subject: Subject;
-  onOpenSubject: (s: Subject) => void;
-  isLast: boolean;
-}) {
-  const handleOpen = useCallback(() => onOpenSubject(subject), [onOpenSubject, subject]);
-
-  return (
-    <div
-      onClick={handleOpen}
-      className={cn(
-        "grid grid-cols-[64px_1fr_140px_120px_140px] gap-4 px-5 py-3 items-center cursor-pointer transition-colors hover:bg-white/[0.04] cv-list-row",
-        !isLast && "border-b border-[var(--color-outline-soft)]"
-      )}
-    >
-      <div className="aspect-[2/3] w-12 rounded-md overflow-hidden ring-1 ring-black/40">
-        <Poster src={subject.poster} alt={subject.title} className="size-full" />
-      </div>
-      <div className="min-w-0">
-        <div className="text-[14px] font-medium truncate flex items-center gap-2">
-          {subject.title}
-          {subject.newEpisode && <Badge tone="primary">NEW</Badge>}
-        </div>
-        <div className="text-[12px] text-[var(--color-on-surface-faint)] truncate font-mono">
-          {subject.fileSummary}
-        </div>
-      </div>
-      <div>
-        <span
-          className={cn(
-            "inline-flex items-center px-2 h-6 rounded-full text-[11px] font-medium ring-1 ring-inset",
-            STATUS_COLOR[subject.status]
-          )}
+    <div className="h-full overflow-y-auto overflow-x-hidden">
+      <AnimatePresence mode="wait">
+        <motion.div
+          key={route}
+          className="page-shell"
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -8 }}
+          transition={appleSpringSoft}
         >
-          {STATUS_LABEL[subject.status]}
-        </span>
-      </div>
-      <div className="flex flex-col gap-1 text-[12px]">
-        <Progress value={subject.progress} />
-        <span className="text-[var(--color-on-surface-faint)] tabular-nums">
-          {subject.watchedEpisodes}/{subject.episodes || "?"} ep
-        </span>
-      </div>
-      <div className="text-[12px] text-[var(--color-on-surface-muted)]">
-        {subject.lastPlayed ?? "—"}
+          {route === "search" && (
+            <SearchHeader query={query} setQuery={setQuery} />
+          )}
+
+          {route !== "search" && (
+            <PageHeader
+              title={copy.title}
+              subtitle={copy.subtitle}
+              action={
+                route === "library" ? (
+                  <Button
+                    icon={<RefreshCw size={16} className={scanStatus.running ? "animate-spin" : ""} />}
+                    loading={scanStatus.running}
+                    onClick={() => {
+                      onSnack("已开始扫描媒体目录...");
+                      void onScan();
+                    }}
+                    className="h-10 px-4 text-[13px]"
+                  >
+                    {scanStatus.running ? "扫描中" : "扫描"}
+                  </Button>
+                ) : null
+              }
+            />
+          )}
+
+          {route === "search" ? (
+            <SearchContent
+              query={deferredQuery}
+              results={visibleItems}
+              total={searchResults.length}
+              hasMore={hasMore}
+              remainingCount={remainingCount}
+              sentinelRef={sentinelRef}
+              onLoadMore={loadMore}
+              onOpen={onOpen}
+            />
+          ) : !subjects.length ? (
+            <EmptyState
+              title={loading ? "正在读取媒体库" : "这里还没有番剧"}
+              desc={error ?? "请先在设置页确认媒体目录，然后到媒体库执行扫描。"}
+            />
+          ) : route === "home" ? (
+            <>
+              {heroSubject && (
+                <HeroBanner
+                  subject={heroSubject}
+                  onOpen={() => onOpen(heroSubject)}
+                  current={heroIndex}
+                  total={watching.length || 1}
+                  onNext={() => setHeroIndex((index) => (index + 1) % Math.max(1, watching.length))}
+                />
+              )}
+              {watching.length > 0 && (
+                <Section title="继续观看">
+                  <CardGrid subjects={watching} onOpen={onOpen} />
+                </Section>
+              )}
+              <Section title="最近添加">
+                <CardGrid subjects={recent} onOpen={onOpen} offset={watching.length} />
+              </Section>
+            </>
+          ) : (
+            <>
+              {(scanStatus.running || logs.length > 0) && (
+                <div className="mt-5">
+                  <ScanPanel status={scanStatus} logs={logs} />
+                </div>
+              )}
+              {completed.length > 0 && (
+                <Section title="已完成">
+                  <CardGrid subjects={completed.slice(0, 18)} onOpen={onOpen} />
+                </Section>
+              )}
+              <Section title="全部番剧">
+                <CardGrid subjects={visibleItems} onOpen={onOpen} />
+                {hasMore && (
+                  <LoadMore
+                    remainingCount={remainingCount}
+                    sentinelRef={sentinelRef}
+                    onLoadMore={loadMore}
+                  />
+                )}
+              </Section>
+            </>
+          )}
+        </motion.div>
+      </AnimatePresence>
+    </div>
+  );
+}
+
+function SearchHeader({
+  query,
+  setQuery,
+}: {
+  query: string;
+  setQuery: (value: string) => void;
+}) {
+  return (
+    <div className="search-page-header">
+      <label className="search-field flex h-12 min-w-0 flex-1 items-center gap-3 rounded-[var(--radius-pill)] px-4">
+        <Search size={22} className="text-[var(--color-text-tertiary)]" strokeWidth={2.1} />
+        <input
+          autoFocus
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="搜索标题、文件名、标签..."
+          className="min-w-0 flex-1 bg-transparent text-[17px] font-semibold text-[var(--color-text-primary)] outline-none placeholder:text-[var(--color-text-tertiary)]/85"
+        />
+      </label>
+      <div className="search-scope">
+        <button type="button" className="active">NexPlay</button>
+        <button type="button">资料库</button>
       </div>
     </div>
   );
-});
+}
 
-function EmptyState({ query, onClear }: { query: string; onClear: () => void }) {
-  if (query) {
+function SearchContent({
+  query,
+  results,
+  total,
+  hasMore,
+  remainingCount,
+  sentinelRef,
+  onLoadMore,
+  onOpen,
+}: {
+  query: string;
+  results: Subject[];
+  total: number;
+  hasMore: boolean;
+  remainingCount: number;
+  sentinelRef: (node: HTMLDivElement | null) => void;
+  onLoadMore: () => void;
+  onOpen: (subject: Subject) => void;
+}) {
+  if (!query.trim()) {
     return (
-      <Card className="p-12 grid place-items-center text-center">
-        <div className="size-14 rounded-2xl bg-[var(--color-surface-3)] grid place-items-center mb-4">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} className="size-6 text-[var(--color-on-surface-muted)]">
-            <circle cx="11" cy="11" r="7" />
-            <path d="M20 20l-3.5-3.5" />
-          </svg>
-        </div>
-        <div className="text-[16px] font-medium">没有找到 "{query}"</div>
-        <div className="text-[13px] text-[var(--color-on-surface-faint)] mt-1">
-          换个关键词试试，或者清除搜索查看全部。
-        </div>
-        <Button variant="tonal" className="mt-5" onClick={onClear}>
-          Clear Search
-        </Button>
-      </Card>
+      <EmptyState
+        title="搜索你的资料库"
+        desc="输入标题、文件名或标签后，结果会显示在这里。"
+      />
     );
   }
+
   return (
-    <Card className="p-12 grid place-items-center text-center">
-      <div className="size-16 rounded-2xl bg-[var(--color-primary-soft)] grid place-items-center mb-4">
-        <FolderPlus className="size-7 text-[var(--color-primary)]" />
-      </div>
-      <div className="text-[18px] font-medium">媒体库为空</div>
-      <div className="text-[13px] text-[var(--color-on-surface-faint)] mt-1 max-w-sm">
-        当前没有可显示的媒体。检查设置里的媒体目录后点击 Scan Now。
-      </div>
-    </Card>
+    <Section title="搜索结果" subtitle={`${total} 部`}>
+      {results.length ? (
+        <>
+          <CardGrid subjects={results} onOpen={onOpen} />
+          {hasMore && (
+            <LoadMore
+              remainingCount={remainingCount}
+              sentinelRef={sentinelRef}
+              onLoadMore={onLoadMore}
+            />
+          )}
+        </>
+      ) : (
+        <EmptyState title="没有匹配的番剧" desc="换一个搜索词再试。" compact />
+      )}
+    </Section>
   );
 }
 
-function ScanPanel({ status, logs }: { status: ScanStatus; logs: BackendLogEntry[] }) {
-  const progress =
-    status.stage === "done"
-      ? 1
-      : status.stage === "metadata" && status.total > 0
-      ? status.processed / status.total
-      : status.scanned > 0
-      ? Math.min(0.95, status.indexed / Math.max(status.scanned, 1))
-      : 0;
+function PageHeader({
+  title,
+  subtitle,
+  action,
+}: {
+  title: string;
+  subtitle?: string;
+  action?: React.ReactNode;
+}) {
+  return (
+    <header className="page-header">
+      <div>
+        <motion.h1
+          className="text-[42px] font-bold leading-[1] tracking-tight text-[var(--color-text-primary)]"
+          initial={{ opacity: 0, x: -8 }}
+          animate={{ opacity: 1, x: 0 }}
+          transition={appleSpringSoft}
+        >
+          {title}
+        </motion.h1>
+        {subtitle && (
+          <motion.p
+            className="mt-2.5 text-[17px] font-medium text-[var(--color-text-secondary)]"
+            initial={{ opacity: 0, x: -8 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={appleSpringSoft}
+          >
+            {subtitle}
+          </motion.p>
+        )}
+      </div>
+      {action}
+    </header>
+  );
+}
+
+function HeroBanner({
+  subject,
+  onOpen,
+  total,
+  current,
+  onNext,
+}: {
+  subject: Subject;
+  onOpen: () => void;
+  total: number;
+  current: number;
+  onNext: () => void;
+}) {
+  const heroAsset = subject.hero || subject.poster;
+  const heroSrc = heroAsset ? window.nexplay?.resolveAssetUrl(heroAsset) ?? heroAsset : "";
 
   return (
-    <Card className="mt-4 overflow-hidden">
-      <div className="px-4 py-3 border-b border-[var(--color-outline-soft)]">
-        <div className="flex items-center justify-between gap-4">
-          <div className="min-w-0">
-            <div className="text-[14px] font-medium truncate">
-              {status.message || "扫描状态"}
-            </div>
-            <div className="text-[12px] text-[var(--color-on-surface-faint)] mt-0.5 tabular-nums">
-              文件 {status.indexed}/{status.scanned}
-              {status.total > 0 ? ` · 元数据 ${status.processed}/${status.total}` : ""}
-            </div>
-          </div>
-          <div className="text-[12px] text-[var(--color-on-surface-muted)]">
-            {status.running ? "运行中" : status.stage === "failed" ? "失败" : "空闲"}
-          </div>
-        </div>
-        <Progress value={progress} className="mt-3" />
+    <motion.button
+      type="button"
+      className="group relative mt-6 h-[300px] w-full cursor-pointer overflow-hidden rounded-[var(--radius-panel)] text-left"
+      onClick={onOpen}
+      whileHover={{ scale: 1.003 }}
+      whileTap={{ scale: 0.985 }}
+      transition={appleSpringBouncy}
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      key={subject.id}
+    >
+      {heroSrc ? (
+        <motion.img
+          src={heroSrc}
+          alt={subject.title}
+          className="absolute inset-0 size-full object-cover"
+          initial={{ scale: 1.025, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          transition={appleSpringSoft}
+        />
+      ) : (
+        <div className="absolute inset-0 bg-gradient-to-br from-[#ff2d55] via-[#fb395f] to-[#b20d35]" />
+      )}
+      <div className="absolute inset-0 bg-gradient-to-r from-black/58 via-black/22 to-transparent" />
+      <div className="absolute inset-0 bg-gradient-to-t from-black/48 via-transparent to-black/8" />
+
+      <div className="absolute inset-0 flex flex-col justify-end p-7">
+        <motion.div
+          className="max-w-xl"
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={appleSpringSoft}
+        >
+          <h2 className="text-[28px] font-bold leading-tight tracking-tight text-white">
+            {subject.title}
+          </h2>
+          <p className="mt-2 line-clamp-2 max-w-lg text-[14px] font-medium leading-relaxed text-white/68">
+            {subject.summary || subject.titleCn || subject.fileSummary}
+          </p>
+        </motion.div>
       </div>
-      {logs.length > 0 && (
-        <div className="max-h-52 overflow-y-auto px-4 py-3 space-y-1 bg-[var(--color-surface)]">
-          {logs.slice(-80).map((entry) => (
-            <div
-              key={entry.id}
+
+      {total > 1 && (
+        <div className="absolute bottom-5 right-7 flex items-center gap-1.5">
+          {Array.from({ length: Math.min(total, 8) }).map((_, index) => (
+            <span
+              key={index}
+              onClick={(event) => {
+                event.stopPropagation();
+                onNext();
+              }}
               className={cn(
-                "font-mono text-[11.5px] leading-relaxed",
-                entry.tone === "danger"
-                  ? "text-[var(--color-danger)]"
-                  : "text-[var(--color-on-surface-muted)]"
+                "rounded-full transition-all duration-300",
+                index === current % Math.min(total, 8)
+                  ? "h-1.5 w-5 bg-white/90"
+                  : "size-1.5 bg-white/30 hover:bg-white/50"
               )}
-            >
+            />
+          ))}
+        </div>
+      )}
+    </motion.button>
+  );
+}
+
+function Section({
+  title,
+  subtitle,
+  children,
+}: {
+  title: string;
+  subtitle?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="mt-9">
+      <div className="mb-5 flex items-end gap-2">
+        <h2 className="text-[25px] font-bold tracking-tight text-[var(--color-text-primary)]">{title}</h2>
+        {subtitle && <span className="pb-0.5 text-[13px] font-semibold text-[var(--color-text-tertiary)]">{subtitle}</span>}
+      </div>
+      {children}
+    </section>
+  );
+}
+
+function CardGrid({
+  subjects,
+  onOpen,
+  offset = 0,
+}: {
+  subjects: Subject[];
+  onOpen: (subject: Subject) => void;
+  offset?: number;
+}) {
+  return (
+    <div className="grid grid-cols-[repeat(auto-fill,minmax(178px,1fr))] gap-x-7 gap-y-8 pb-2">
+      {subjects.map((subject, index) => (
+        <MediaCard
+          key={subject.id}
+          subject={subject}
+          index={index + offset}
+          onClick={() => onOpen(subject)}
+          imageLoading={index < 8 ? "eager" : "lazy"}
+          imageFetchPriority={index < 8 ? "high" : "auto"}
+        />
+      ))}
+    </div>
+  );
+}
+
+function LoadMore({
+  remainingCount,
+  sentinelRef,
+  onLoadMore,
+}: {
+  remainingCount: number;
+  sentinelRef: (node: HTMLDivElement | null) => void;
+  onLoadMore: () => void;
+}) {
+  return (
+    <div ref={sentinelRef} className="flex justify-center py-7">
+      <button
+        type="button"
+        onClick={onLoadMore}
+        className="glass-light h-10 rounded-[var(--radius-pill)] px-4 text-[13px] font-medium text-[var(--color-text-secondary)] transition-colors hover:text-[var(--color-text-primary)]"
+      >
+        继续加载剩余 {remainingCount} 项
+      </button>
+    </div>
+  );
+}
+
+function ScanPanel({
+  status,
+  logs,
+}: {
+  status: ScanStatus;
+  logs: BackendLogEntry[];
+}) {
+  const recentLogs = logs.slice(-4).reverse();
+  return (
+    <div className="glass-light rounded-[var(--radius-card)] px-4 py-3">
+      <div className="flex items-center gap-2 text-[13px] font-semibold text-[var(--color-text-primary)]">
+        <RefreshCw size={14} className={status.running ? "animate-spin text-[var(--color-accent)]" : "text-[var(--color-text-tertiary)]"} />
+        {status.running ? "正在扫描媒体目录" : "最近扫描日志"}
+      </div>
+      {recentLogs.length > 0 && (
+        <div className="mt-2 grid gap-1">
+          {recentLogs.map((entry, index) => (
+            <div key={`${entry.id}-${index}`} className="truncate text-[11.5px] text-[var(--color-text-tertiary)]">
               {entry.text}
             </div>
           ))}
         </div>
       )}
-    </Card>
+    </div>
+  );
+}
+
+function EmptyState({
+  title,
+  desc,
+  compact,
+}: {
+  title: string;
+  desc: string;
+  compact?: boolean;
+}) {
+  return (
+    <div className={cn("flex flex-col items-center justify-center text-[var(--color-text-tertiary)]", compact ? "py-16" : "min-h-[360px] py-24")}>
+      <div className="glass mb-5 flex size-20 items-center justify-center rounded-[var(--radius-card)]">
+        <Sparkles size={28} className="text-[var(--color-accent)]" />
+      </div>
+      <p className="text-[17px] font-bold text-[var(--color-text-secondary)]">{title}</p>
+      <p className="mt-1.5 max-w-md text-center text-[13px] font-medium opacity-70">{desc}</p>
+    </div>
   );
 }
