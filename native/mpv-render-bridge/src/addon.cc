@@ -311,6 +311,7 @@ napi_value GetBuildInfo(napi_env env, napi_callback_info) {
   SetBool(env, result, "available", true);
   SetString(env, result, "bridge", "node-api");
   SetString(env, result, "renderApi", MPV_RENDER_API_TYPE_SW);
+  SetString(env, result, "renderBackend", "software-diagnostic");
   SetNumber(env, result, "nodeApiVersion", NAPI_VERSION);
   SetNumber(env, result, "mpvClientApiVersion", static_cast<double>(mpv_client_api_version()));
   return result;
@@ -327,7 +328,20 @@ napi_value ProbeRenderContext(napi_env env, napi_callback_info) {
   SetBool(env, result, "ok", true);
   SetString(env, result, "stage", "ready");
   SetString(env, result, "renderApi", MPV_RENDER_API_TYPE_SW);
+  SetString(env, result, "renderBackend", "software-diagnostic");
   SetNumber(env, result, "mpvClientApiVersion", static_cast<double>(mpv_client_api_version()));
+  return result;
+}
+
+napi_value ProbeWebglTextureRenderer(napi_env env, napi_callback_info) {
+  napi_value result;
+  napi_create_object(env, &result);
+  SetBool(env, result, "ok", false);
+  SetString(env, result, "stage", "nativeTextureInterop");
+  SetString(env, result, "target", "webglTexture");
+  SetString(env, result, "renderApi", MPV_RENDER_API_TYPE_OPENGL);
+  SetString(env, result, "fallback", "externalMpv");
+  SetString(env, result, "error", "native OpenGL/EGL texture export is not implemented in this bridge yet");
   return result;
 }
 
@@ -516,6 +530,7 @@ napi_value Init(napi_env env, napi_value exports) {
   napi_property_descriptor descriptors[] = {
     {"getBuildInfo", nullptr, GetBuildInfo, nullptr, nullptr, nullptr, napi_default, nullptr},
     {"probeRenderContext", nullptr, ProbeRenderContext, nullptr, nullptr, nullptr, napi_default, nullptr},
+    {"probeWebglTextureRenderer", nullptr, ProbeWebglTextureRenderer, nullptr, nullptr, nullptr, napi_default, nullptr},
     {"load", nullptr, Load, nullptr, nullptr, nullptr, napi_default, nullptr},
     {"stop", nullptr, Stop, nullptr, nullptr, nullptr, napi_default, nullptr},
     {"setPause", nullptr, SetPause, nullptr, nullptr, nullptr, napi_default, nullptr},
@@ -526,7 +541,7 @@ napi_value Init(napi_env env, napi_value exports) {
     {"renderFrame", nullptr, RenderFrame, nullptr, nullptr, nullptr, napi_default, nullptr},
     {"shutdown", nullptr, Shutdown, nullptr, nullptr, nullptr, napi_default, nullptr},
   };
-  napi_define_properties(env, exports, 11, descriptors);
+  napi_define_properties(env, exports, 12, descriptors);
   return exports;
 }
 

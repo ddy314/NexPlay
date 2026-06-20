@@ -32,9 +32,6 @@ export function PlayerPage({
   onSnack: (text: string, tone?: "neutral" | "success" | "danger") => void;
 }) {
   const episodes = useMemo(() => makePlaybackEpisodes(subject), [subject]);
-  const stageSurfaceRef = useRef<HTMLDivElement | null>(null);
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const forceNextFrameRef = useRef(false);
   const seekInFlightRef = useRef(false);
   const scrubPositionRef = useRef<number | null>(null);
   const [currentKey, setCurrentKey] = useState(initialEpisode.key);
@@ -45,8 +42,6 @@ export function PlayerPage({
   const [episodeDrawerOpen, setEpisodeDrawerOpen] = useState(false);
   const [playbackError, setPlaybackError] = useState<string | null>(null);
   const [renderInfo, setRenderInfo] = useState<MpvRenderInfo | null>(null);
-  const [frameReady, setFrameReady] = useState(false);
-  const [frameError, setFrameError] = useState<string | null>(null);
   const [paused, setPaused] = useState(false);
   const [scrubPosition, setScrubPosition] = useState<number | null>(null);
   const heroAsset = subject.hero || subject.poster;
@@ -65,16 +60,17 @@ export function PlayerPage({
     .slice(Math.max(0, currentIndex + 1))
     .find((episode) => episode.cached && episode.mediaId);
   const displayEpisodeTitle = episodeTitle(currentEpisode);
-  const renderBridgeReady = Boolean(renderInfo?.available && renderInfo.probe?.ok);
-  const renderBridgeError = renderInfo?.available
+  const nativeBridgeReady = Boolean(renderInfo?.available && renderInfo.probe?.ok);
+  const textureProbe = mpvState?.textureProbe ?? renderInfo?.textureProbe;
+  const renderMode = mpvState?.renderMode;
+  const webglTextureReady = renderMode === "webglTexture" && Boolean(textureProbe?.ok);
+  const renderBridgeError = textureProbe?.error ?? (renderInfo?.available
     ? renderInfo.probe?.error
-    : renderInfo?.reason;
+    : renderInfo?.reason);
   const duration = mpvState?.duration ?? 0;
   const position = mpvState?.position ?? 0;
   const displayedPosition = scrubPosition ?? position;
   const volume = Math.round(mpvState?.volume ?? 100);
-  const playbackFps = normalizePlaybackFps(mpvState?.fps);
-  const sourceFrameSize = normalizeFrameSize(mpvState?.videoWidth, mpvState?.videoHeight);
 
   useEffect(() => {
     setCurrentKey(initialEpisode.key);
@@ -127,8 +123,6 @@ export function PlayerPage({
 
       setLoadingSource(true);
       setPlaybackError(null);
-      setFrameReady(false);
-      setFrameError(null);
       try {
         const nextState = await window.nexplay.mpvLoad(currentEpisode.mediaId);
         if (!cancelled) {
@@ -158,103 +152,39 @@ export function PlayerPage({
   }, [currentEpisode.mediaId, onSnack]);
 
   useEffect(() => {
-    const nexplay = window.nexplay;
-    if (!renderBridgeReady || loadingSource || playbackError || !nexplay?.mpvRenderFrame) {
+    if (loadingSource || playbackError || !window.nexplay?.mpvState) {
       return;
     }
-    const renderFrame = nexplay.mpvRenderFrame;
-    const getState = nexplay.mpvState;
 
     let disposed = false;
-    let animationFrame = 0;
-    let pausedTimer = 0;
-    let lastStateRefresh = 0;
-    let lastFrameRequest = 0;
-
-    async function drawFrame(timestamp: number) {
-      if (disposed) return;
-      const targetFrameInterval = 1000 / playbackFps;
-      if (scrubPositionRef.current !== null && frameReady) {
-        animationFrame = requestAnimationFrame(drawFrame);
-        return;
-      }
-      if (!forceNextFrameRef.current && frameReady && !paused && timestamp - lastFrameRequest < targetFrameInterval) {
-        animationFrame = requestAnimationFrame(drawFrame);
-        return;
-      }
-
-      const surface = stageSurfaceRef.current;
-      const canvas = canvasRef.current;
-      const context = canvas?.getContext("2d", { alpha: false });
-      if (!surface || !canvas || !context) {
-        animationFrame = requestAnimationFrame(drawFrame);
-        return;
-      }
-
-      const rect = surface.getBoundingClientRect();
-      const estimatedFrameSize = estimateFrameSize(rect.width, rect.height);
-      const frameWidth = sourceFrameSize?.width ?? estimatedFrameSize.width;
-      const frameHeight = sourceFrameSize?.height ?? estimatedFrameSize.height;
-      lastFrameRequest = timestamp;
-      forceNextFrameRef.current = false;
-
+    const refreshState = async () => {
       try {
-        const frame = await renderFrame(frameWidth, frameHeight);
-        if (disposed) return;
-        if (canvas.width !== frame.width || canvas.height !== frame.height) {
-          canvas.width = frame.width;
-          canvas.height = frame.height;
+        const nextState = await window.nexplay?.mpvState();
+        if (!disposed && nextState) {
+          setMpvState((current) => ({
+            ...nextState,
+            source: current?.source ?? source ?? undefined,
+            renderMode: current?.renderMode,
+            textureProbe: current?.textureProbe,
+          }));
+          if (typeof nextState.paused === "boolean") {
+            setPaused(nextState.paused);
+          }
         }
-        const pixels = frame.pixels instanceof Uint8Array ? frame.pixels : new Uint8Array(frame.pixels);
-        const clamped = pixels instanceof Uint8ClampedArray
-          ? pixels
-          : pixels.buffer instanceof ArrayBuffer
-            ? new Uint8ClampedArray(pixels.buffer, pixels.byteOffset, pixels.byteLength)
-            : new Uint8ClampedArray(pixels);
-        const image = new ImageData(clamped, frame.width, frame.height);
-        context.putImageData(image, 0, 0);
-        setFrameReady(true);
-        setFrameError(null);
-
-        if (timestamp - lastStateRefresh > 650) {
-          lastStateRefresh = timestamp;
-          void getState().then((nextState) => {
-            if (!disposed) {
-              setMpvState((current) => ({
-                ...nextState,
-                source: current?.source ?? source ?? undefined,
-              }));
-              if (typeof nextState.paused === "boolean") {
-                setPaused(nextState.paused);
-              }
-            }
-          });
-        }
-      } catch (caught) {
-        if (!disposed) {
-          const message = caught instanceof Error ? caught.message : String(caught);
-          setFrameError(message);
-        }
+      } catch {
+        // State polling is best-effort; command handlers surface actionable errors.
       }
+    };
 
-      if (!disposed) {
-        if (paused && frameReady) {
-          pausedTimer = window.setTimeout(() => {
-            animationFrame = requestAnimationFrame(drawFrame);
-          }, 250);
-        } else {
-          animationFrame = requestAnimationFrame(drawFrame);
-        }
-      }
-    }
-
-    animationFrame = requestAnimationFrame(drawFrame);
+    const timer = window.setInterval(() => {
+      void refreshState();
+    }, 650);
+    void refreshState();
     return () => {
       disposed = true;
-      cancelAnimationFrame(animationFrame);
-      window.clearTimeout(pausedTimer);
+      window.clearInterval(timer);
     };
-  }, [frameReady, loadingSource, paused, playbackError, playbackFps, renderBridgeReady, source, sourceFrameSize?.height, sourceFrameSize?.width, currentEpisode.mediaId]);
+  }, [loadingSource, playbackError, source]);
 
   useEffect(() => {
     return () => {
@@ -310,8 +240,6 @@ export function PlayerPage({
         ...nextState,
         source: current?.source ?? source ?? undefined,
       }));
-      forceNextFrameRef.current = true;
-      setFrameError(null);
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : String(caught);
       onSnack(`跳转失败：${message}`, "danger");
@@ -390,24 +318,22 @@ export function PlayerPage({
               className="player-stage relative min-h-0 overflow-hidden rounded-[28px]"
             >
               <div className="absolute inset-0 bg-black" />
-              <div ref={stageSurfaceRef} className="absolute inset-x-0 top-0 bottom-[86px] overflow-hidden rounded-t-[28px] bg-black">
-                <canvas
-                  ref={canvasRef}
-                  className={cn("absolute inset-0 size-full object-contain transition-opacity duration-200", frameReady ? "opacity-100" : "opacity-0")}
-                />
-                {!frameReady && heroSrc && (
+              <div className="absolute inset-x-0 top-0 bottom-[86px] overflow-hidden rounded-t-[28px] bg-black">
+                {webglTextureReady ? (
+                  <div className="absolute inset-0 bg-black" />
+                ) : heroSrc ? (
                   <img
                     src={heroSrc}
                     alt=""
                     className="absolute inset-0 size-full object-cover opacity-20"
                     draggable={false}
                   />
-                )}
-                {!frameReady && <div className="absolute inset-0 bg-black/62" />}
+                ) : null}
+                {!webglTextureReady && <div className="absolute inset-0 bg-black/62" />}
 
                 <div className={cn("danmaku-plane pointer-events-none absolute inset-x-0 top-0 h-[42%]", danmakuVisible ? "opacity-100" : "opacity-0")} />
 
-                {!frameReady && <div className="absolute inset-0 flex items-center justify-center px-6 text-center text-white">
+                {!webglTextureReady && <div className="absolute inset-0 flex items-center justify-center px-6 text-center text-white">
                   {loadingSource ? (
                     <div className="text-[14px] text-white/70">正在启动 libmpv</div>
                   ) : playbackError ? null : (
@@ -416,13 +342,13 @@ export function PlayerPage({
                         <Play size={24} fill="currentColor" />
                       </div>
                       <h3 className="text-[22px] font-bold">
-                        {renderBridgeReady ? "原生渲染桥已就绪" : "libmpv 后端播放中"}
+                        {renderMode === "externalMpv" ? "外部 mpv 窗口播放中" : nativeBridgeReady ? "等待 WebGL 纹理输出" : "libmpv 后端播放中"}
                       </h3>
                       <p className="mt-2 text-[13px] leading-6 text-white/66">
-                        {frameError
-                          ? `画面输出暂不可用：${frameError}`
-                          : renderBridgeReady
-                            ? "正在把 libmpv 解码画面输出到播放器舞台。"
+                        {renderBridgeError
+                          ? `画面输出暂不可用：${renderBridgeError}`
+                          : nativeBridgeReady
+                            ? "当前媒体控制已接管，画面将在纹理通道可用后进入播放器舞台。"
                           : renderBridgeError
                             ? `原生渲染桥暂不可用：${renderBridgeError}`
                             : "已接管 MKV、HEVC 10-bit、内封字幕与多音轨，正在等待原生渲染桥探测。"}
@@ -697,32 +623,6 @@ function formatTime(value: number) {
     return `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
   }
   return `${minutes}:${String(seconds).padStart(2, "0")}`;
-}
-
-function normalizePlaybackFps(value: number | undefined) {
-  if (!value || !Number.isFinite(value) || value < 10) {
-    return 30;
-  }
-  return Math.max(24, Math.min(60, Math.round(value)));
-}
-
-function normalizeFrameSize(width: number | undefined, height: number | undefined) {
-  if (!width || !height || !Number.isFinite(width) || !Number.isFinite(height)) {
-    return null;
-  }
-  return {
-    width: Math.max(2, Math.min(3840, Math.round(width))),
-    height: Math.max(2, Math.min(2160, Math.round(height))),
-  };
-}
-
-function estimateFrameSize(width: number, height: number) {
-  const pixelRatio = Math.min(window.devicePixelRatio || 1, 1.5);
-  const scale = Math.max(0.1, Math.min(pixelRatio, 1920 / Math.max(1, width), 1080 / Math.max(1, height)));
-  return {
-    width: Math.max(2, Math.round(width * scale)),
-    height: Math.max(2, Math.round(height * scale)),
-  };
 }
 
 function TrackSelect({

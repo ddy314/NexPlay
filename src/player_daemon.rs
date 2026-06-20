@@ -45,8 +45,11 @@ unsafe extern "C" {
     fn mpv_terminate_destroy(ctx: *mut MpvHandle);
     fn mpv_error_string(error: c_int) -> *const c_char;
     fn mpv_command(ctx: *mut MpvHandle, args: *const *const c_char) -> c_int;
-    fn mpv_set_option_string(ctx: *mut MpvHandle, name: *const c_char, data: *const c_char)
-    -> c_int;
+    fn mpv_set_option_string(
+        ctx: *mut MpvHandle,
+        name: *const c_char,
+        data: *const c_char,
+    ) -> c_int;
     fn mpv_set_property_string(
         ctx: *mut MpvHandle,
         name: *const c_char,
@@ -145,7 +148,9 @@ pub fn run_player_daemon() -> crate::error::AppResult<()> {
 
         writeln!(stdout, "{}", serde_json::to_string(&response)?)
             .map_err(|err| crate::error::io_error("<stdout>", err))?;
-        stdout.flush().map_err(|err| crate::error::io_error("<stdout>", err))?;
+        stdout
+            .flush()
+            .map_err(|err| crate::error::io_error("<stdout>", err))?;
     }
 
     Ok(())
@@ -153,18 +158,12 @@ pub fn run_player_daemon() -> crate::error::AppResult<()> {
 
 fn handle_request(player: &mut LibMpvPlayer, request: PlayerRequest) -> PlayerResponse {
     let result = match request.command {
-        PlayerCommand::Load { path } => {
-            player.load(&path).and_then(|_| player.state())
-        }
+        PlayerCommand::Load { path } => player.load(&path).and_then(|_| player.state()),
         PlayerCommand::SetTrack { kind, id } => {
             player.set_track(kind, id).and_then(|_| player.state())
         }
-        PlayerCommand::SetPause { paused } => {
-            player.set_pause(paused).and_then(|_| player.state())
-        }
-        PlayerCommand::Seek { position } => {
-            player.seek(position).and_then(|_| player.state())
-        }
+        PlayerCommand::SetPause { paused } => player.set_pause(paused).and_then(|_| player.state()),
+        PlayerCommand::Seek { position } => player.seek(position).and_then(|_| player.state()),
         PlayerCommand::SetVolume { volume } => {
             player.set_volume(volume).and_then(|_| player.state())
         }
@@ -222,7 +221,13 @@ impl LibMpvPlayer {
     fn set_option(&self, name: &str, value: &str) -> Result<(), String> {
         let name = CString::new(name).map_err(|error| error.to_string())?;
         let value = CString::new(value).map_err(|error| error.to_string())?;
-        unsafe { check_mpv(mpv_set_option_string(self.handle, name.as_ptr(), value.as_ptr())) }
+        unsafe {
+            check_mpv(mpv_set_option_string(
+                self.handle,
+                name.as_ptr(),
+                value.as_ptr(),
+            ))
+        }
     }
 
     fn load(&self, path: &str) -> Result<(), String> {
@@ -243,12 +248,7 @@ impl LibMpvPlayer {
     }
 
     fn seek(&self, position: f64) -> Result<(), String> {
-        self.command(&[
-            "seek",
-            &position.max(0.0).to_string(),
-            "absolute",
-            "exact",
-        ])
+        self.command(&["seek", &position.max(0.0).to_string(), "absolute", "exact"])
     }
 
     fn set_volume(&self, volume: f64) -> Result<(), String> {

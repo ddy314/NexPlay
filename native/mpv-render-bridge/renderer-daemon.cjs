@@ -39,7 +39,11 @@ process.on("message", (message) => {
           available: true,
           build: bridge.getBuildInfo(),
           probe: assertOk(bridge.probeRenderContext()),
+          textureProbe: bridge.probeWebglTextureRenderer(),
         });
+        break;
+      case "probeWebglTextureRenderer":
+        success(id, bridge.probeWebglTextureRenderer());
         break;
       case "load":
         success(id, assertOk(bridge.load(command.path)));

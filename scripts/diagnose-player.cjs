@@ -9,6 +9,7 @@ const defaultMedia =
   "/mnt/media/entertainment/bangumi/[SweetSub&LoliHouse] Takopii no Genzai/[SweetSub&LoliHouse] Takopii no Genzai - 01 [WebRip 1080p HEVC-10bit AAC ASSx2].mkv";
 const rawArgs = process.argv.slice(2);
 const discover = rawArgs.includes("--discover");
+const includeSubtitles = rawArgs.includes("--subtitles");
 const discoverDirCandidate = rawArgs[rawArgs.indexOf("--discover") + 1];
 const discoverDirArg = discoverDirCandidate && !discoverDirCandidate.startsWith("--") ? discoverDirCandidate : null;
 const limitArg = Number(rawArgs[rawArgs.indexOf("--limit") + 1]);
@@ -143,8 +144,8 @@ async function renderSameFrameWithSubtitle(position, subtitleId, frameSize) {
 
 function frameSizeFromState(state) {
   return {
-    width: Math.max(2, Math.min(3840, Math.round(state.videoWidth || 1280))),
-    height: Math.max(2, Math.min(2160, Math.round(state.videoHeight || 720))),
+    width: Math.max(2, Math.min(960, Math.round(state.videoWidth || 960))),
+    height: Math.max(2, Math.min(540, Math.round(state.videoHeight || 540))),
   };
 }
 
@@ -247,6 +248,7 @@ async function diagnoseMedia(currentMediaPath, { includeSubtitles = true } = {})
   };
 
   const info = await request({ type: "info" });
+  const textureProbe = await request({ type: "probeWebglTextureRenderer" });
   const load = await request({ type: "load", path: currentMediaPath }, 30000);
   await sleep(500);
   const state = await request({ type: "state" });
@@ -263,7 +265,12 @@ async function diagnoseMedia(currentMediaPath, { includeSubtitles = true } = {})
   }
   const avgRenderMs = renderSamples.reduce((sum, value) => sum + value, 0) / renderSamples.length;
   result.render = {
-    renderMode: `libmpv-${info.build?.renderApi || info.probe?.renderApi || "unknown"}-ipc`,
+    renderMode: textureProbe.ok
+      ? "webglTexture"
+      : `libmpv-${info.build?.renderApi || info.probe?.renderApi || "unknown"}-diagnostic`,
+    textureProbe,
+    fallback: textureProbe.ok ? null : textureProbe.fallback,
+    fallbackReason: textureProbe.ok ? null : textureProbe.error,
     width: frame.width,
     height: frame.height,
     ms: Number(renderMs.toFixed(2)),
@@ -391,7 +398,7 @@ async function main() {
     return;
   }
 
-  const result = await diagnoseMedia(mediaPath);
+  const result = await diagnoseMedia(mediaPath, { includeSubtitles });
   await request({ type: "shutdown" });
   console.log(JSON.stringify(result, null, 2));
   if (!result.ok) {

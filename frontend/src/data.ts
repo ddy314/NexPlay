@@ -1,52 +1,14 @@
-export type MatchStatus = "matched" | "tentative" | "unmatched" | "failed";
+import type {
+  FrontendEpisode,
+  FrontendLocalFile,
+  FrontendMatchStatus,
+  FrontendSubject,
+} from "./generated/backend";
 
-export type Subject = {
-  id: string;
-  mediaId?: number;
-  subjectId?: number;
-  title: string;
-  titleCn: string;
-  year: number;
-  airDate: string;
-  rating: number;
-  rank: number;
-  tags: string[];
-  summary: string;
-  poster: string;
-  hero: string;
-  status: MatchStatus;
-  episodes: number;
-  watchedEpisodes: number;
-  currentEpisode?: number;
-  progress: number;
-  files: number;
-  totalSize: string;
-  lastPlayed?: string;
-  newEpisode?: boolean;
-  metadataReady?: boolean;
-  fileSummary: string;
-  localFiles?: LocalFile[];
-  episodesDetail?: EpisodeDetail[];
-};
-
-export type LocalFile = {
-  mediaId: number;
-  fileName: string;
-  fileSize: string;
-  episode?: number;
-  modifiedAt: number;
-};
-
-export type EpisodeDetail = {
-  episode: number;
-  title: string;
-  titleCn: string;
-  airDate: string;
-  cached: boolean;
-  mediaId?: number;
-  fileName?: string;
-  fileSize?: string;
-};
+export type MatchStatus = FrontendMatchStatus;
+export type Subject = FrontendSubject;
+export type LocalFile = FrontendLocalFile;
+export type EpisodeDetail = FrontendEpisode;
 
 export type PlaybackEpisode = {
   key: string;

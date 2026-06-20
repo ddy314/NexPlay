@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
 #[derive(Debug, Clone)]
 pub struct MediaItem {
@@ -39,7 +40,8 @@ pub enum ScanUpsertStatus {
     Unchanged,
 }
 
-#[derive(Debug, Default, Clone, Serialize)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
 pub struct ScanSummary {
     pub scanned_files: usize,
     pub added: usize,
