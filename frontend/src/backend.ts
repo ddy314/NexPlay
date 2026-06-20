@@ -1,59 +1,18 @@
 import { useCallback, useEffect, useState } from "react";
-import type { Subject } from "./data";
+import type {
+  BackendEvent as GeneratedBackendEvent,
+  BackendSnapshot as GeneratedBackendSnapshot,
+  FrontendEditableSettings,
+  MediaSourceResponse,
+  OpenMediaResponse,
+  ScanResponse as GeneratedScanResponse,
+} from "./generated/backend";
 
-export type LibraryStats = {
-  total: number;
-  matched: number;
-  unmatched: number;
-  tentative: number;
-};
-
-export type BackendSnapshot = {
-  subjects: Subject[];
-  stats: LibraryStats;
-  settings: {
-    bangumiEnabled: boolean;
-    bangumiAutoMatch: boolean;
-    bangumiCacheImages: boolean;
-    dandanplayConfigured: boolean;
-  };
-};
-
-export type EditableSettings = {
-  mediaLibraries: string[];
-  databasePath: string;
-  bangumiEnabled: boolean;
-  bangumiBaseUrl: string;
-  bangumiAccessToken: string;
-  bangumiUserAgent: string;
-  bangumiRequestTimeoutSecs: number;
-  bangumiAutoMatch: boolean;
-  bangumiCacheImages: boolean;
-  dandanplayAppId: string;
-  dandanplayAppSecret: string;
-  dandanplayApiKey: string;
-  loggingLevel: string;
-};
-
-export type ScanResponse = {
-  summary: {
-    scannedFiles: number;
-    added: number;
-    modified: number;
-    restored: number;
-    unchanged: number;
-    deleted: number;
-  };
-  scraped: number;
-  snapshot: BackendSnapshot;
-};
-
-export type MediaSource = {
-  mediaId: number;
-  fileName: string;
-  fileSize: string;
-  sourceUrl: string;
-};
+export type BackendSnapshot = GeneratedBackendSnapshot;
+export type EditableSettings = FrontendEditableSettings;
+export type ScanResponse = GeneratedScanResponse;
+export type MediaSource = MediaSourceResponse;
+export type { OpenMediaResponse };
 
 export type MpvTrack = {
   id: number;
@@ -78,6 +37,8 @@ export type MpvState = {
   videoWidth?: number;
   videoHeight?: number;
   source?: MediaSource;
+  renderMode?: "webglTexture" | "externalMpv";
+  textureProbe?: MpvTextureProbe;
 };
 
 export type MpvFrame = {
@@ -101,6 +62,15 @@ export type MpvRenderProbe = {
   glVersion?: string;
 };
 
+export type MpvTextureProbe = {
+  ok: boolean;
+  stage?: string;
+  target?: string;
+  renderApi?: string;
+  fallback?: string;
+  error?: string;
+};
+
 export type MpvRenderInfo = {
   available: boolean;
   modulePath?: string;
@@ -109,19 +79,15 @@ export type MpvRenderInfo = {
     available: boolean;
     bridge: string;
     renderApi: string;
+    renderBackend?: string;
     nodeApiVersion: number;
     mpvClientApiVersion: number;
   };
   probe?: MpvRenderProbe;
+  textureProbe?: MpvTextureProbe;
 };
 
-export type BackendEvent = {
-  type: string;
-  message?: string;
-  scanned?: number;
-  indexed?: number;
-  processed?: number;
-  total?: number;
+export type BackendEvent = GeneratedBackendEvent & {
   summary?: Partial<ScanResponse["summary"]> & {
     scanned_files?: number;
   };

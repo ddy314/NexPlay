@@ -31,6 +31,7 @@ contextBridge.exposeInMainWorld("nexplay", {
   mpvStop: () => ipcRenderer.invoke("mpv:stop"),
   mpvState: () => ipcRenderer.invoke("mpv:state"),
   mpvRenderInfo: () => ipcRenderer.invoke("mpv-render:info"),
+  mpvProbeWebglTextureRenderer: () => ipcRenderer.invoke("mpv-render:probe-webgl-texture"),
   mpvRenderFrame: (width, height) => ipcRenderer.invoke("mpv-render:frame", { width, height }),
   onBackendEvent: (callback) => {
     const listener = (_event, payload) => callback(payload);

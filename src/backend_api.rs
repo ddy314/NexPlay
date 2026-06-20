@@ -1,12 +1,14 @@
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use ts_rs::{Config as TsConfig, TS};
 
 use crate::app::AppContext;
 use crate::config::{AppConfig, BangumiConfig, DandanplayConfig, DatabaseConfig, LoggingConfig};
 use crate::domain::{ScanSummary, UiSeriesCardData};
 use crate::error::AppResult;
+use crate::task::AppEvent;
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct BackendSnapshot {
     pub subjects: Vec<FrontendSubject>,
@@ -14,7 +16,7 @@ pub struct BackendSnapshot {
     pub settings: FrontendSettings,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct LibraryStats {
     pub total: usize,
@@ -23,7 +25,7 @@ pub struct LibraryStats {
     pub tentative: usize,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct FrontendSettings {
     pub bangumi_enabled: bool,
@@ -32,7 +34,16 @@ pub struct FrontendSettings {
     pub dandanplay_configured: bool,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub enum FrontendMatchStatus {
+    Matched,
+    Tentative,
+    Unmatched,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct FrontendSubject {
     pub id: String,
@@ -48,13 +59,15 @@ pub struct FrontendSubject {
     pub summary: String,
     pub poster: String,
     pub hero: String,
-    pub status: String,
+    pub status: FrontendMatchStatus,
     pub episodes: usize,
     pub watched_episodes: usize,
+    #[ts(optional)]
     pub current_episode: Option<usize>,
     pub progress: f64,
     pub files: usize,
     pub total_size: String,
+    #[ts(optional)]
     pub last_played: Option<String>,
     pub new_episode: bool,
     pub metadata_ready: bool,
@@ -63,17 +76,18 @@ pub struct FrontendSubject {
     pub episodes_detail: Vec<FrontendEpisode>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct FrontendLocalFile {
     pub media_id: i64,
     pub file_name: String,
     pub file_size: String,
+    #[ts(optional)]
     pub episode: Option<usize>,
     pub modified_at: i64,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct FrontendEpisode {
     pub episode: usize,
@@ -81,12 +95,15 @@ pub struct FrontendEpisode {
     pub title_cn: String,
     pub air_date: String,
     pub cached: bool,
+    #[ts(optional)]
     pub media_id: Option<i64>,
+    #[ts(optional)]
     pub file_name: Option<String>,
+    #[ts(optional)]
     pub file_size: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct FrontendEditableSettings {
     pub media_libraries: Vec<String>,
@@ -104,7 +121,7 @@ pub struct FrontendEditableSettings {
     pub logging_level: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct ScanResponse {
     pub summary: ScanSummary,
@@ -112,31 +129,76 @@ pub struct ScanResponse {
     pub snapshot: BackendSnapshot,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct OpenMediaRequest {
     pub media_id: i64,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct OpenMediaResponse {
     pub opened: bool,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct MediaSourceRequest {
     pub media_id: i64,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct MediaSourceResponse {
     pub media_id: i64,
     pub file_name: String,
     pub file_size: String,
     pub source_url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct BackendEvent {
+    #[serde(rename = "type")]
+    pub event_type: String,
+    #[ts(optional)]
+    pub message: Option<String>,
+    #[ts(optional)]
+    pub scanned: Option<usize>,
+    #[ts(optional)]
+    pub indexed: Option<usize>,
+    #[ts(optional)]
+    pub processed: Option<usize>,
+    #[ts(optional)]
+    pub total: Option<usize>,
+    #[ts(optional)]
+    pub summary: Option<ScanSummary>,
+    #[ts(optional)]
+    pub media_id: Option<i64>,
+    #[ts(optional)]
+    pub subject_id: Option<i64>,
+    #[ts(optional)]
+    pub image_kind: Option<String>,
+    #[ts(optional)]
+    pub target_id: Option<i64>,
+}
+
+impl BackendEvent {
+    fn new(event_type: impl Into<String>) -> Self {
+        Self {
+            event_type: event_type.into(),
+            message: None,
+            scanned: None,
+            indexed: None,
+            processed: None,
+            total: None,
+            summary: None,
+            media_id: None,
+            subject_id: None,
+            image_kind: None,
+            target_id: None,
+        }
+    }
 }
 
 pub fn settings_config(context: &AppContext) -> AppResult<FrontendEditableSettings> {
@@ -266,7 +328,7 @@ fn frontend_subject_from_series(card: UiSeriesCardData) -> FrontendSubject {
         summary: card.summary,
         poster: normalize_asset_path(&card.poster_path),
         hero: normalize_asset_path(&card.hero_path),
-        status: "matched".to_string(),
+        status: FrontendMatchStatus::Matched,
         episodes: card.episode_count,
         watched_episodes: card.linked_episode_count,
         current_episode: None,
@@ -280,6 +342,117 @@ fn frontend_subject_from_series(card: UiSeriesCardData) -> FrontendSubject {
         local_files,
         episodes_detail,
     }
+}
+
+pub fn frontend_event_from_app(event: AppEvent) -> BackendEvent {
+    match event {
+        AppEvent::Log(message) => BackendEvent {
+            message: Some(message),
+            ..BackendEvent::new("log")
+        },
+        AppEvent::ScanStarted => BackendEvent {
+            message: Some("扫描已开始".to_string()),
+            ..BackendEvent::new("scanStarted")
+        },
+        AppEvent::ScanProgress { scanned, indexed } => BackendEvent {
+            scanned: Some(scanned),
+            indexed: Some(indexed),
+            message: Some(format!("已扫描 {scanned} 个文件")),
+            ..BackendEvent::new("scanProgress")
+        },
+        AppEvent::ScanFinished { summary, .. } => BackendEvent {
+            message: Some(format!("文件扫描完成：{} 个文件", summary.scanned_files)),
+            summary: Some(summary),
+            ..BackendEvent::new("scanFinished")
+        },
+        AppEvent::ScanFailed(error) => BackendEvent {
+            message: Some(error),
+            ..BackendEvent::new("scanFailed")
+        },
+        AppEvent::DanmakuMatched(match_result) => BackendEvent {
+            message: Some(match_result.title),
+            ..BackendEvent::new("danmakuMatched")
+        },
+        AppEvent::MetadataMatchStarted { media_id } => BackendEvent {
+            media_id: Some(media_id),
+            ..BackendEvent::new("metadataStarted")
+        },
+        AppEvent::MetadataMatchProgress { processed, total } => BackendEvent {
+            processed: Some(processed),
+            total: Some(total),
+            message: Some(format!("元数据整理 {processed}/{total}")),
+            ..BackendEvent::new("metadataProgress")
+        },
+        AppEvent::MetadataMatchFinished {
+            media_id,
+            subject_id,
+            title,
+        } => BackendEvent {
+            media_id: Some(media_id),
+            subject_id,
+            message: Some(title.unwrap_or_else(|| format!("media #{media_id}"))),
+            ..BackendEvent::new("metadataFinished")
+        },
+        AppEvent::SubjectUpdated { subject_id } => BackendEvent {
+            subject_id: Some(subject_id),
+            ..BackendEvent::new("subjectUpdated")
+        },
+        AppEvent::ImageCached {
+            subject_id,
+            image_kind,
+        } => BackendEvent {
+            subject_id: Some(subject_id),
+            image_kind: Some(image_kind),
+            ..BackendEvent::new("imageCached")
+        },
+        AppEvent::MetadataFailed { target_id, error } => BackendEvent {
+            target_id: Some(target_id),
+            message: Some(error),
+            ..BackendEvent::new("metadataFailed")
+        },
+        AppEvent::MetadataStatus(message) => BackendEvent {
+            message: Some(message),
+            ..BackendEvent::new("metadataStatus")
+        },
+    }
+}
+
+pub fn export_types(output_path: impl AsRef<Path>) -> AppResult<()> {
+    let output_path = output_path.as_ref();
+    if let Some(parent) = output_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|error| crate::error::io_error(parent, error))?;
+    }
+
+    let ts_config = TsConfig::default().with_large_int("number");
+    let mut declarations = [
+        ScanSummary::decl(&ts_config),
+        LibraryStats::decl(&ts_config),
+        FrontendSettings::decl(&ts_config),
+        FrontendMatchStatus::decl(&ts_config),
+        FrontendLocalFile::decl(&ts_config),
+        FrontendEpisode::decl(&ts_config),
+        FrontendSubject::decl(&ts_config),
+        BackendSnapshot::decl(&ts_config),
+        FrontendEditableSettings::decl(&ts_config),
+        ScanResponse::decl(&ts_config),
+        OpenMediaRequest::decl(&ts_config),
+        OpenMediaResponse::decl(&ts_config),
+        MediaSourceRequest::decl(&ts_config),
+        MediaSourceResponse::decl(&ts_config),
+        BackendEvent::decl(&ts_config),
+    ]
+    .join("\n\n")
+    .replace("\ntype ", "\nexport type ");
+    if declarations.starts_with("type ") {
+        declarations = format!("export {declarations}");
+    }
+
+    let content = format!(
+        "/* eslint-disable */\n// This file is generated by `cargo run --quiet -- export-types`.\n\n{declarations}\n"
+    );
+    std::fs::write(output_path, content)
+        .map_err(|error| crate::error::io_error(output_path, error))?;
+    Ok(())
 }
 
 fn frontend_settings_from_config(config: AppConfig) -> FrontendEditableSettings {

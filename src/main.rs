@@ -2,6 +2,7 @@
 
 mod app;
 mod backend_api;
+mod backend_daemon;
 mod config;
 mod domain;
 mod error;
@@ -13,8 +14,9 @@ mod task;
 
 use crate::app::AppContext;
 use crate::backend_api::{
-    FrontendEditableSettings, MediaSourceRequest, OpenMediaRequest, media_source, open_media,
-    save_settings_config, scan, settings_config, snapshot,
+    FrontendEditableSettings, MediaSourceRequest, OpenMediaRequest, export_types,
+    frontend_event_from_app, media_source, open_media, save_settings_config, scan, settings_config,
+    snapshot,
 };
 use crate::config::ConfigStore;
 use crate::error::{AppResult, io_error};
@@ -62,6 +64,13 @@ fn main() -> AppResult<()> {
             let input: MediaSourceRequest = serde_json::from_str(&raw)?;
             print_json(&media_source(&context, input)?)?;
         }
+        "backend-daemon" => backend_daemon::run_backend_daemon(context)?,
+        "export-types" => {
+            let output_path = std::env::args()
+                .nth(2)
+                .unwrap_or_else(|| "frontend/src/generated/backend.ts".to_string());
+            export_types(output_path)?;
+        }
         "player-daemon" => player_daemon::run_player_daemon()?,
         "help" | "--help" | "-h" => {
             println!("NexPlay backend commands:");
@@ -73,6 +82,8 @@ fn main() -> AppResult<()> {
             );
             println!("  open-media  read media id JSON from stdin and open with default player");
             println!("  media-source  read media id JSON from stdin and print playback source");
+            println!("  backend-daemon  run a persistent JSON-RPC backend over stdio");
+            println!("  export-types [path]  generate frontend TypeScript DTOs");
             println!("  player-daemon  run a persistent libmpv JSON-lines control process");
         }
         other => {
@@ -105,76 +116,9 @@ fn start_event_forwarder(context: &AppContext) {
 
 fn forward_events(receiver: mpsc::Receiver<AppEvent>) {
     for event in receiver {
-        let value = match event {
-            AppEvent::Log(message) => serde_json::json!({
-                "type": "log",
-                "message": message,
-            }),
-            AppEvent::ScanStarted => serde_json::json!({
-                "type": "scanStarted",
-                "message": "扫描已开始",
-            }),
-            AppEvent::ScanProgress { scanned, indexed } => serde_json::json!({
-                "type": "scanProgress",
-                "scanned": scanned,
-                "indexed": indexed,
-                "message": format!("已扫描 {scanned} 个文件"),
-            }),
-            AppEvent::ScanFinished { summary, .. } => serde_json::json!({
-                "type": "scanFinished",
-                "summary": summary,
-                "message": format!("文件扫描完成：{} 个文件", summary.scanned_files),
-            }),
-            AppEvent::ScanFailed(error) => serde_json::json!({
-                "type": "scanFailed",
-                "message": error,
-            }),
-            AppEvent::DanmakuMatched(match_result) => serde_json::json!({
-                "type": "danmakuMatched",
-                "message": match_result.title,
-            }),
-            AppEvent::MetadataMatchStarted { media_id } => serde_json::json!({
-                "type": "metadataStarted",
-                "mediaId": media_id,
-            }),
-            AppEvent::MetadataMatchProgress { processed, total } => serde_json::json!({
-                "type": "metadataProgress",
-                "processed": processed,
-                "total": total,
-                "message": format!("元数据整理 {processed}/{total}"),
-            }),
-            AppEvent::MetadataMatchFinished {
-                media_id,
-                subject_id,
-                title,
-            } => serde_json::json!({
-                "type": "metadataFinished",
-                "mediaId": media_id,
-                "subjectId": subject_id,
-                "message": title.unwrap_or_else(|| format!("media #{media_id}")),
-            }),
-            AppEvent::SubjectUpdated { subject_id } => serde_json::json!({
-                "type": "subjectUpdated",
-                "subjectId": subject_id,
-            }),
-            AppEvent::ImageCached {
-                subject_id,
-                image_kind,
-            } => serde_json::json!({
-                "type": "imageCached",
-                "subjectId": subject_id,
-                "imageKind": image_kind,
-            }),
-            AppEvent::MetadataFailed { target_id, error } => serde_json::json!({
-                "type": "metadataFailed",
-                "targetId": target_id,
-                "message": error,
-            }),
-            AppEvent::MetadataStatus(message) => serde_json::json!({
-                "type": "metadataStatus",
-                "message": message,
-            }),
-        };
+        let value = serde_json::to_value(frontend_event_from_app(event)).unwrap_or_else(
+            |error| serde_json::json!({ "type": "metadataFailed", "message": error.to_string() }),
+        );
 
         eprintln!("{value}");
     }

@@ -17,6 +17,7 @@ interface Window {
     mpvStop: () => Promise<import("./backend").MpvState>;
     mpvState: () => Promise<import("./backend").MpvState>;
     mpvRenderInfo: () => Promise<import("./backend").MpvRenderInfo>;
+    mpvProbeWebglTextureRenderer: () => Promise<import("./backend").MpvTextureProbe>;
     mpvRenderFrame: (width: number, height: number) => Promise<import("./backend").MpvFrame>;
     onBackendEvent: (callback: (event: import("./backend").BackendEvent) => void) => () => void;
     resolveAssetUrl: (value: string) => string;

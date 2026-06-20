@@ -10,6 +10,8 @@ pub enum AppError {
     Config(String),
     #[error("database error: {0}")]
     Database(#[from] rusqlite::Error),
+    #[error("database migration error: {0}")]
+    Migration(#[from] rusqlite_migration::Error),
     #[error("io error at {path}: {source}")]
     Io {
         path: PathBuf,
