@@ -9,7 +9,11 @@ const { RenderBridge } = require("./render-bridge.cjs");
 
 const isDev = !app.isPackaged;
 const useDevRenderer = isDev && process.env.NEXPLAY_RENDERER_MODE !== "production";
-const projectRoot = path.join(__dirname, "..");
+const projectRoot = app.isPackaged ? process.resourcesPath : path.join(__dirname, "..");
+
+if (app.isPackaged && !process.env.NEXPLAY_CONFIG) {
+  process.env.NEXPLAY_CONFIG = path.join(app.getPath("userData"), "config.toml");
+}
 
 app.commandLine.appendSwitch("no-sandbox");
 

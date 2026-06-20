@@ -123,7 +123,7 @@ class PlayerControl {
       return this.playerDaemon;
     }
 
-    const { executable, args } = backendArgs("player-daemon");
+    const { executable, args } = backendArgs("player-daemon", this.projectRoot);
     const child = spawn(executable, args, {
       cwd: this.projectRoot,
       env: process.env,

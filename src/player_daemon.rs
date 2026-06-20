@@ -1,3 +1,5 @@
+#[cfg(not(target_os = "windows"))]
+mod imp {
 use serde::{Deserialize, Serialize};
 use std::ffi::{CStr, CString, c_char, c_double, c_int, c_void};
 use std::io::{BufRead, Write};
@@ -494,4 +496,15 @@ fn check_mpv(code: c_int) -> Result<(), String> {
         };
         Err(message)
     }
+}
+}
+
+#[cfg(not(target_os = "windows"))]
+pub use imp::run_player_daemon;
+
+#[cfg(target_os = "windows")]
+pub fn run_player_daemon() -> crate::error::AppResult<()> {
+    Err(crate::error::AppError::Api(
+        "libmpv player daemon is not available in Windows release builds yet".to_string(),
+    ))
 }

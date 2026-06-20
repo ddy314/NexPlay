@@ -1,10 +1,19 @@
 const { EventEmitter } = require("node:events");
 const { spawn } = require("node:child_process");
+const fs = require("node:fs");
+const path = require("node:path");
 
-function backendArgs(command) {
+function packagedBackendPath(projectRoot) {
+  const executableName = process.platform === "win32" ? "nexplay.exe" : "nexplay";
+  const candidate = path.join(projectRoot, "backend", executableName);
+  return fs.existsSync(candidate) ? candidate : null;
+}
+
+function backendArgs(command, projectRoot = path.join(__dirname, "..")) {
   const backendBin = process.env.NEXPLAY_BACKEND_BIN;
-  const executable = backendBin || "cargo";
-  const args = backendBin ? [command] : ["run", "--quiet", "--", command];
+  const packagedBackend = backendBin || packagedBackendPath(projectRoot);
+  const executable = packagedBackend || "cargo";
+  const args = packagedBackend ? [command] : ["run", "--quiet", "--", command];
   return { executable, args };
 }
 
@@ -44,7 +53,7 @@ class BackendRpcClient extends EventEmitter {
       return this.child;
     }
 
-    const { executable, args } = backendArgs("backend-daemon");
+    const { executable, args } = backendArgs("backend-daemon", this.projectRoot);
     const child = spawn(executable, args, {
       cwd: this.projectRoot,
       env: process.env,

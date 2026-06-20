@@ -16,6 +16,10 @@
     "diagnose:danmaku": "node scripts/diagnose-danmaku.cjs",
     "diagnose:player:discover": "node scripts/diagnose-player.cjs --discover",
     "build": "tsc --noEmit && vite build",
+    "build:backend": "cargo build --release",
+    "prepare:release-assets": "node scripts/prepare-release-assets.cjs",
+    "package": "npm run build && npm run build:backend && npm run prepare:release-assets && electron-builder --dir",
+    "dist": "npm run build && npm run build:backend && npm run prepare:release-assets && electron-builder --publish never",
     "start": "NEXPLAY_RENDERER_MODE=production electron --no-sandbox .",
     "preview": "vite preview --host 127.0.0.1 --port 4173 --strictPort"
   },
@@ -37,10 +41,60 @@
     "@types/react-dom": "19.2.3",
     "concurrently": "9.2.1",
     "electron": "38.8.1",
+    "electron-builder": "^26.15.3",
     "tailwindcss": "4.1.17",
     "typescript": "5.9.3",
     "vite": "7.3.2",
     "vite-plugin-singlefile": "2.3.0",
     "wait-on": "9.0.3"
+  },
+  "build": {
+    "appId": "dev.nexplay.app",
+    "productName": "NexPlay",
+    "artifactName": "${productName}-${version}-${arch}.${ext}",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "electron/**/*",
+      "dist/renderer/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "dist/backend",
+        "to": "backend"
+      },
+      {
+        "from": "dist/native",
+        "to": "native"
+      }
+    ],
+    "asar": true,
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.entertainment"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb",
+        "tar.gz"
+      ],
+      "category": "AudioVideo"
+    }
   }
 }
