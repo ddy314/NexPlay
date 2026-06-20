@@ -63,6 +63,49 @@ pub struct DanmakuMatch {
     pub exact: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum DanmakuMode {
+    Scroll,
+    Top,
+    Bottom,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DanmakuItem {
+    pub id: String,
+    pub time: f64,
+    pub mode: DanmakuMode,
+    pub color: i64,
+    pub text: String,
+    pub user_hash: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DanmakuTrack {
+    pub media_id: i64,
+    pub provider: String,
+    pub episode_id: i64,
+    pub title: String,
+    pub fetched_at: i64,
+    pub expires_at: i64,
+    pub stale: bool,
+    pub items: Vec<DanmakuItem>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DanmakuCommentCache {
+    pub provider: String,
+    pub episode_id: i64,
+    pub variant: String,
+    pub payload_json: String,
+    pub comment_count: usize,
+    pub fetched_at: i64,
+    pub expires_at: i64,
+    pub error: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct SubjectEpisode {
     pub provider_episode_id: String,

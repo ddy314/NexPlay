@@ -8,7 +8,9 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::config::{ConfigStore, DandanplayConfig};
-use crate::domain::{DanmakuMatch, MediaItem};
+use crate::domain::{
+    DanmakuCommentCache, DanmakuItem, DanmakuMatch, DanmakuMode, DanmakuTrack, MediaItem,
+};
 use crate::error::{AppError, AppResult};
 use crate::repository::Repository;
 use crate::task::{self, AppEvent};
@@ -20,6 +22,10 @@ pub struct DanmakuService {
     client: Client,
     events: mpsc::Sender<AppEvent>,
 }
+
+const COMMENT_CACHE_VARIANT: &str = "withRelated=true;chConvert=1";
+const COMMENT_CACHE_TTL_MS: i64 = 7 * 24 * 60 * 60 * 1000;
+const DANDANPLAY_PROVIDER: &str = "dandanplay";
 
 impl DanmakuService {
     pub fn new(
@@ -79,6 +85,59 @@ impl DanmakuService {
 
     pub fn cached_dandanplay(&self, media: &MediaItem) -> AppResult<Option<DanmakuMatch>> {
         self.repository.danmaku_match_for_media(media.id)
+    }
+
+    pub fn track_for_media(&self, media: &MediaItem) -> AppResult<DanmakuTrack> {
+        if media.deleted_at.is_some() {
+            return Err(AppError::MediaNotFound);
+        }
+        let config = self.config.snapshot().dandanplay;
+        validate_dandanplay_config(&config)?;
+
+        let match_result = self.cached_or_match_dandanplay(media)?.ok_or_else(|| {
+            AppError::Api("dandanplay returned no match for this media".to_string())
+        })?;
+        let episode_id = match_result.episode_id.ok_or_else(|| {
+            AppError::Api("dandanplay match does not include episodeId".to_string())
+        })?;
+        let title = match_result.title.clone();
+        let now = task::unix_timestamp_ms();
+
+        if let Some(cache) = self.repository.danmaku_comment_cache(
+            DANDANPLAY_PROVIDER,
+            episode_id,
+            COMMENT_CACHE_VARIANT,
+        )? {
+            if cache.expires_at > now {
+                return track_from_cache(media.id, title, cache, false);
+            }
+
+            match self.fetch_comment_items(episode_id, &config) {
+                Ok(items) => {
+                    let cache = cache_for_items(episode_id, now, &items)?;
+                    self.repository.upsert_danmaku_comment_cache(&cache)?;
+                    return track_from_cache(media.id, title, cache, false);
+                }
+                Err(error) => {
+                    let message = error.to_string();
+                    let _ = self.repository.mark_danmaku_comment_cache_error(
+                        DANDANPLAY_PROVIDER,
+                        episode_id,
+                        COMMENT_CACHE_VARIANT,
+                        &message,
+                    );
+                    let _ = self.events.send(AppEvent::Log(format!(
+                        "danmaku refresh failed, using stale cache: {message}"
+                    )));
+                    return track_from_cache(media.id, title, cache, true);
+                }
+            }
+        }
+
+        let items = self.fetch_comment_items(episode_id, &config)?;
+        let cache = cache_for_items(episode_id, now, &items)?;
+        self.repository.upsert_danmaku_comment_cache(&cache)?;
+        track_from_cache(media.id, title, cache, false)
     }
 
     pub fn match_dandanplay(&self, media: &MediaItem) -> AppResult<DanmakuMatch> {
@@ -162,6 +221,46 @@ impl DanmakuService {
     }
 
     fn fetch_comment_count(&self, episode_id: i64, config: &DandanplayConfig) -> AppResult<usize> {
+        let response = self.fetch_comments(episode_id, config)?;
+        Ok(response
+            .comments
+            .map(|comments| comments.len())
+            .unwrap_or(response.count.max(0) as usize))
+    }
+
+    fn fetch_comment_items(
+        &self,
+        episode_id: i64,
+        config: &DandanplayConfig,
+    ) -> AppResult<Vec<DanmakuItem>> {
+        let response = self.fetch_comments(episode_id, config)?;
+        let mut dropped = 0usize;
+        let mut items = Vec::with_capacity(response.count.max(0) as usize);
+        for comment in response.comments.unwrap_or_default() {
+            match parse_comment_data(comment) {
+                Some(item) => items.push(item),
+                None => dropped += 1,
+            }
+        }
+        items.sort_by(|left, right| {
+            left.time
+                .partial_cmp(&right.time)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| left.id.cmp(&right.id))
+        });
+        if dropped > 0 {
+            let _ = self.events.send(AppEvent::Log(format!(
+                "ignored {dropped} unsupported or malformed danmaku comments"
+            )));
+        }
+        Ok(items)
+    }
+
+    fn fetch_comments(
+        &self,
+        episode_id: i64,
+        config: &DandanplayConfig,
+    ) -> AppResult<CommentResponse> {
         let path = format!("/api/v2/comment/{episode_id}");
         let url = format!("{DANDANPLAY_BASE_URL}{path}");
         let response = self
@@ -188,11 +287,7 @@ impl DanmakuService {
             )));
         }
 
-        let response = response.json::<CommentResponse>()?;
-        Ok(response
-            .comments
-            .map(|comments| comments.len())
-            .unwrap_or(response.count.max(0) as usize))
+        response.json::<CommentResponse>().map_err(Into::into)
     }
 
     fn signed_headers(
@@ -253,8 +348,83 @@ struct CommentResponse {
 
 #[derive(Debug, Deserialize)]
 struct CommentData {
-    #[allow(dead_code)]
     cid: i64,
+    p: Option<String>,
+    m: Option<String>,
+}
+
+fn cache_for_items(
+    episode_id: i64,
+    now: i64,
+    items: &[DanmakuItem],
+) -> AppResult<DanmakuCommentCache> {
+    Ok(DanmakuCommentCache {
+        provider: DANDANPLAY_PROVIDER.to_string(),
+        episode_id,
+        variant: COMMENT_CACHE_VARIANT.to_string(),
+        payload_json: serde_json::to_string(items)?,
+        comment_count: items.len(),
+        fetched_at: now,
+        expires_at: now + COMMENT_CACHE_TTL_MS,
+        error: None,
+    })
+}
+
+fn track_from_cache(
+    media_id: i64,
+    title: String,
+    cache: DanmakuCommentCache,
+    stale: bool,
+) -> AppResult<DanmakuTrack> {
+    let items = serde_json::from_str::<Vec<DanmakuItem>>(&cache.payload_json)?;
+    Ok(DanmakuTrack {
+        media_id,
+        provider: cache.provider,
+        episode_id: cache.episode_id,
+        title,
+        fetched_at: cache.fetched_at,
+        expires_at: cache.expires_at,
+        stale,
+        items,
+    })
+}
+
+fn parse_comment_data(comment: CommentData) -> Option<DanmakuItem> {
+    let text = comment.m?.trim().to_string();
+    if text.is_empty() {
+        return None;
+    }
+    let p = comment.p?;
+    let mut parts = p.split(',');
+    let time = parts.next()?.trim().parse::<f64>().ok()?;
+    if !time.is_finite() || time < 0.0 {
+        return None;
+    }
+    let mode = match parts.next()?.trim().parse::<i32>().ok()? {
+        1 => DanmakuMode::Scroll,
+        4 => DanmakuMode::Bottom,
+        5 => DanmakuMode::Top,
+        _ => return None,
+    };
+    let color = parts
+        .next()
+        .and_then(|raw| raw.trim().parse::<i64>().ok())
+        .filter(|value| (0..=0xFF_FF_FF).contains(value))
+        .unwrap_or(0xFF_FF_FF);
+    let user_hash = parts
+        .next()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
+
+    Some(DanmakuItem {
+        id: comment.cid.to_string(),
+        time,
+        mode,
+        color,
+        text,
+        user_hash,
+    })
 }
 
 fn validate_dandanplay_config(config: &DandanplayConfig) -> AppResult<()> {
@@ -313,6 +483,74 @@ mod tests {
         assert_eq!(
             dandanplay_signature("app", 1, "/api/v2/match", "secret"),
             "bhmxR4cp1CqSfgXiWkbRGGR1QtkhNnR7qvyB1CBFbRA="
+        );
+    }
+
+    #[test]
+    fn parses_scroll_comment_params() {
+        let item = parse_comment_data(CommentData {
+            cid: 42,
+            p: Some("12.34,1,16711680,10086".to_string()),
+            m: Some("前方高能".to_string()),
+        })
+        .expect("parsed comment");
+
+        assert_eq!(item.id, "42");
+        assert_eq!(item.time, 12.34);
+        assert!(matches!(item.mode, DanmakuMode::Scroll));
+        assert_eq!(item.color, 0xFF0000);
+        assert_eq!(item.text, "前方高能");
+        assert_eq!(item.user_hash.as_deref(), Some("10086"));
+    }
+
+    #[test]
+    fn maps_top_and_bottom_modes() {
+        let top = parse_comment_data(CommentData {
+            cid: 1,
+            p: Some("1,5,0,u".to_string()),
+            m: Some("top".to_string()),
+        })
+        .expect("top");
+        let bottom = parse_comment_data(CommentData {
+            cid: 2,
+            p: Some("1,4,0,u".to_string()),
+            m: Some("bottom".to_string()),
+        })
+        .expect("bottom");
+
+        assert!(matches!(top.mode, DanmakuMode::Top));
+        assert!(matches!(bottom.mode, DanmakuMode::Bottom));
+    }
+
+    #[test]
+    fn falls_back_for_invalid_color() {
+        let item = parse_comment_data(CommentData {
+            cid: 1,
+            p: Some("1,1,999999999,u".to_string()),
+            m: Some("white".to_string()),
+        })
+        .expect("comment");
+
+        assert_eq!(item.color, 0xFF_FF_FF);
+    }
+
+    #[test]
+    fn drops_unsupported_or_empty_comments() {
+        assert!(
+            parse_comment_data(CommentData {
+                cid: 1,
+                p: Some("1,7,0,u".to_string()),
+                m: Some("advanced".to_string()),
+            })
+            .is_none()
+        );
+        assert!(
+            parse_comment_data(CommentData {
+                cid: 2,
+                p: Some("1,1,0,u".to_string()),
+                m: Some("   ".to_string()),
+            })
+            .is_none()
         );
     }
 }

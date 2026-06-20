@@ -9,6 +9,7 @@ interface Window {
     saveSettings: (settings: import("./backend").EditableSettings) => Promise<import("./backend").EditableSettings>;
     openMedia: (mediaId: number) => Promise<{ opened: boolean }>;
     getMediaSource: (mediaId: number) => Promise<import("./backend").MediaSource>;
+    danmakuTrack: (mediaId: number) => Promise<import("./backend").DanmakuTrack>;
     mpvLoad: (mediaId: number) => Promise<import("./backend").MpvState>;
     mpvSetTrack: (kind: "audio" | "subtitle", id: number | null) => Promise<import("./backend").MpvState>;
     mpvSetPause: (paused: boolean) => Promise<import("./backend").MpvState>;

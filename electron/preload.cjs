@@ -88,6 +88,7 @@ contextBridge.exposeInMainWorld("nexplay", {
     const source = await ipcRenderer.invoke("backend:media-source", mediaId);
     return normalizeMediaSource(source);
   },
+  danmakuTrack: (mediaId) => ipcRenderer.invoke("backend:danmaku-track", mediaId),
   mpvLoad: (mediaId) => loadMpvMedia(mediaId),
   mpvSetTrack: (kind, id) => controlMpv(
     { type: "setTrack", kind, id },

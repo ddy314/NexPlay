@@ -19,6 +19,9 @@ function registerBackendIpc(backendClient) {
   ipcMain.handle("backend:media-source", (_event, mediaId) => (
     backendClient.request("mediaSource", { mediaId })
   ));
+  ipcMain.handle("backend:danmaku-track", (_event, mediaId) => (
+    backendClient.request("danmakuTrack", { mediaId })
+  ));
 }
 
 module.exports = {

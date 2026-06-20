@@ -92,20 +92,33 @@ function request(method, params = {}) {
   });
 }
 
+async function requestError(method, params = {}) {
+  try {
+    await request(method, params);
+  } catch (error) {
+    return error.message;
+  }
+  throw new Error(`${method} unexpectedly succeeded`);
+}
+
 async function main() {
   const pid = child.pid;
   const snapshot = await request("snapshot");
   const settings = await request("getSettings");
+  const danmakuError = await requestError("danmakuTrack", { mediaId: 999 });
   if (child.pid !== pid) {
     throw new Error("backend daemon process changed between requests");
   }
   if (!snapshot?.stats || !settings?.databasePath) {
     throw new Error("backend daemon returned invalid payloads");
   }
+  if (!danmakuError.includes("selected media item was not found")) {
+    throw new Error(`unexpected danmakuTrack error: ${danmakuError}`);
+  }
   console.log(JSON.stringify({
     ok: true,
     pid,
-    requests: 2,
+    requests: 3,
     notifications: notifications.length,
     databasePath: settings.databasePath,
   }, null, 2));

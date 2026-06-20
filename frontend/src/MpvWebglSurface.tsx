@@ -262,6 +262,8 @@ function chooseRenderSize(canvas: HTMLCanvasElement, videoWidth?: number, videoH
   const sourceWidth = Math.max(2, Math.round(videoWidth || canvasWidth));
   const sourceHeight = Math.max(2, Math.round(videoHeight || canvasHeight));
   const scale = Math.min(
+    canvasWidth / sourceWidth,
+    canvasHeight / sourceHeight,
     MAX_RENDER_WIDTH / sourceWidth,
     MAX_RENDER_HEIGHT / sourceHeight,
     Math.sqrt(MAX_RENDER_PIXELS / (sourceWidth * sourceHeight)),

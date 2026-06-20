@@ -7,8 +7,9 @@ use serde_json::Value;
 
 use crate::app::AppContext;
 use crate::backend_api::{
-    FrontendEditableSettings, MediaSourceRequest, OpenMediaRequest, frontend_event_from_app,
-    media_source, open_media, save_settings_config, scan, settings_config, snapshot,
+    DanmakuTrackRequest, FrontendEditableSettings, MediaSourceRequest, OpenMediaRequest,
+    danmaku_track, frontend_event_from_app, media_source, open_media, save_settings_config, scan,
+    settings_config, snapshot,
 };
 use crate::error::{AppError, AppResult, io_error};
 use crate::task::AppEvent;
@@ -131,6 +132,10 @@ fn dispatch(context: &AppContext, method: &str, params: Option<Value>) -> AppRes
         "mediaSource" => {
             let input: MediaSourceRequest = from_params(params)?;
             to_value(media_source(context, input)?)
+        }
+        "danmakuTrack" => {
+            let input: DanmakuTrackRequest = from_params(params)?;
+            to_value(danmaku_track(context, input)?)
         }
         other => Err(AppError::Api(format!("unknown JSON-RPC method: {other}"))),
     }
