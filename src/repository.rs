@@ -3,9 +3,10 @@ use std::path::{Path, PathBuf};
 use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::domain::{
-    DanmakuMatch, MediaFile, MediaItem, MetadataCandidate, ScanUpsertStatus, Subject,
-    SubjectEpisode, SubjectImageCache, UiCandidateData, UiMediaCardData, UiSeriesCardData,
-    UiSeriesEpisodeData, UiSeriesFileData, UiSubjectDetailData, WatchProgress,
+    DanmakuCommentCache, DanmakuMatch, MediaFile, MediaItem, MetadataCandidate,
+    ScanUpsertStatus, Subject, SubjectEpisode, SubjectImageCache, UiCandidateData,
+    UiMediaCardData, UiSeriesCardData, UiSeriesEpisodeData, UiSeriesFileData,
+    UiSubjectDetailData, WatchProgress,
 };
 use crate::error::AppResult;
 use crate::metadata::provider::{SubjectDetail, SubjectSearchResult};
@@ -1370,6 +1371,87 @@ impl Repository {
         .map_err(Into::into)
     }
 
+    pub fn danmaku_comment_cache(
+        &self,
+        provider: &str,
+        episode_id: i64,
+        variant: &str,
+    ) -> AppResult<Option<DanmakuCommentCache>> {
+        let conn = self.connect()?;
+        conn.query_row(
+            r#"
+            SELECT provider, episode_id, variant, payload_json, comment_count, fetched_at, expires_at, error
+            FROM danmaku_comment_cache
+            WHERE provider = ?1 AND episode_id = ?2 AND variant = ?3
+            "#,
+            params![provider, episode_id, variant],
+            |row| {
+                Ok(DanmakuCommentCache {
+                    provider: row.get(0)?,
+                    episode_id: row.get(1)?,
+                    variant: row.get(2)?,
+                    payload_json: row.get(3)?,
+                    comment_count: row.get::<_, i64>(4)? as usize,
+                    fetched_at: row.get(5)?,
+                    expires_at: row.get(6)?,
+                    error: row.get(7)?,
+                })
+            },
+        )
+        .optional()
+        .map_err(Into::into)
+    }
+
+    pub fn upsert_danmaku_comment_cache(
+        &self,
+        cache: &DanmakuCommentCache,
+    ) -> AppResult<()> {
+        let conn = self.connect()?;
+        conn.execute(
+            r#"
+            INSERT INTO danmaku_comment_cache
+                (provider, episode_id, variant, payload_json, comment_count, fetched_at, expires_at, error)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+            ON CONFLICT(provider, episode_id, variant) DO UPDATE SET
+                payload_json = excluded.payload_json,
+                comment_count = excluded.comment_count,
+                fetched_at = excluded.fetched_at,
+                expires_at = excluded.expires_at,
+                error = excluded.error
+            "#,
+            params![
+                cache.provider.as_str(),
+                cache.episode_id,
+                cache.variant.as_str(),
+                cache.payload_json.as_str(),
+                cache.comment_count as i64,
+                cache.fetched_at,
+                cache.expires_at,
+                cache.error.as_deref(),
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn mark_danmaku_comment_cache_error(
+        &self,
+        provider: &str,
+        episode_id: i64,
+        variant: &str,
+        error: &str,
+    ) -> AppResult<()> {
+        let conn = self.connect()?;
+        conn.execute(
+            r#"
+            UPDATE danmaku_comment_cache
+            SET error = ?4
+            WHERE provider = ?1 AND episode_id = ?2 AND variant = ?3
+            "#,
+            params![provider, episode_id, variant, error],
+        )?;
+        Ok(())
+    }
+
     fn connect(&self) -> AppResult<Connection> {
         if let Some(parent) = self
             .db_path
@@ -1519,6 +1601,56 @@ mod tests {
                 .expect("read cleared progress")
                 .is_none()
         );
+
+        let _ = fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn persists_danmaku_comment_cache() {
+        let db_path = std::env::temp_dir().join(format!(
+            "nexplay-danmaku-cache-test-{}.sqlite3",
+            std::process::id()
+        ));
+        let _ = fs::remove_file(&db_path);
+
+        let repository = Repository::new(db_path.clone());
+        repository.init().expect("init database");
+
+        let cache = DanmakuCommentCache {
+            provider: "dandanplay".to_string(),
+            episode_id: 123,
+            variant: "withRelated=true;chConvert=1".to_string(),
+            payload_json: "[]".to_string(),
+            comment_count: 0,
+            fetched_at: 1000,
+            expires_at: 2000,
+            error: None,
+        };
+        repository
+            .upsert_danmaku_comment_cache(&cache)
+            .expect("write cache");
+
+        let cached = repository
+            .danmaku_comment_cache("dandanplay", 123, "withRelated=true;chConvert=1")
+            .expect("read cache")
+            .expect("cache exists");
+        assert_eq!(cached.payload_json, "[]");
+        assert_eq!(cached.fetched_at, 1000);
+        assert_eq!(cached.expires_at, 2000);
+
+        repository
+            .mark_danmaku_comment_cache_error(
+                "dandanplay",
+                123,
+                "withRelated=true;chConvert=1",
+                "network failed",
+            )
+            .expect("mark error");
+        let cached = repository
+            .danmaku_comment_cache("dandanplay", 123, "withRelated=true;chConvert=1")
+            .expect("read cache")
+            .expect("cache exists");
+        assert_eq!(cached.error.as_deref(), Some("network failed"));
 
         let _ = fs::remove_file(db_path);
     }

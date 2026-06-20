@@ -163,6 +163,23 @@ CREATE TABLE IF NOT EXISTS external_subject_mappings (
 );
 "#;
 
+const DANMAKU_COMMENT_CACHE_SCHEMA: &str = r#"
+CREATE TABLE IF NOT EXISTS danmaku_comment_cache (
+    provider TEXT NOT NULL,
+    episode_id INTEGER NOT NULL,
+    variant TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    comment_count INTEGER NOT NULL DEFAULT 0,
+    fetched_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL,
+    error TEXT,
+    PRIMARY KEY(provider, episode_id, variant)
+);
+
+CREATE INDEX IF NOT EXISTS idx_danmaku_comment_cache_expires_at
+    ON danmaku_comment_cache(expires_at);
+"#;
+
 pub fn init_database(conn: &mut Connection) -> AppResult<()> {
     conn.execute_batch("PRAGMA foreign_keys = ON;")?;
     let migrations = Migrations::new(vec![
@@ -176,6 +193,7 @@ pub fn init_database(conn: &mut Connection) -> AppResult<()> {
             Ok(())
         })
         .comment("baseline NexPlay media library schema"),
+        M::up(DANMAKU_COMMENT_CACHE_SCHEMA).comment("cache normalized dandanplay comments"),
     ]);
     migrations.to_latest(conn)?;
     Ok(())
@@ -214,8 +232,9 @@ mod tests {
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .expect("read version");
-        assert_eq!(version, 1);
+        assert_eq!(version, 2);
         assert!(column_exists(&conn, "media_items", "match_ignored"));
+        assert!(table_exists(&conn, "danmaku_comment_cache"));
     }
 
     #[test]
@@ -243,8 +262,9 @@ mod tests {
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .expect("read version");
-        assert_eq!(version, 1);
+        assert_eq!(version, 2);
         assert!(column_exists(&conn, "media_items", "match_ignored"));
+        assert!(table_exists(&conn, "danmaku_comment_cache"));
     }
 
     fn column_exists(conn: &Connection, table: &str, column: &str) -> bool {
@@ -255,5 +275,14 @@ mod tests {
             .query_map([], |row| row.get::<_, String>(1))
             .expect("columns");
         rows.filter_map(Result::ok).any(|name| name == column)
+    }
+
+    fn table_exists(conn: &Connection, table: &str) -> bool {
+        conn.query_row(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1",
+            [table],
+            |_| Ok(()),
+        )
+        .is_ok()
     }
 }

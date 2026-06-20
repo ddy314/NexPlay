@@ -3,6 +3,7 @@ import type {
   BackendEvent as GeneratedBackendEvent,
   BackendSnapshot as GeneratedBackendSnapshot,
   FrontendEditableSettings,
+  DanmakuTrackResponse as GeneratedDanmakuTrackResponse,
   MediaSourceResponse,
   OpenMediaResponse,
   ScanResponse as GeneratedScanResponse,
@@ -12,6 +13,7 @@ export type BackendSnapshot = GeneratedBackendSnapshot;
 export type EditableSettings = FrontendEditableSettings;
 export type ScanResponse = GeneratedScanResponse;
 export type MediaSource = MediaSourceResponse;
+export type DanmakuTrack = GeneratedDanmakuTrackResponse;
 export type { OpenMediaResponse };
 
 export type MpvTrack = {
@@ -37,7 +39,7 @@ export type MpvState = {
   videoWidth?: number;
   videoHeight?: number;
   source?: MediaSource;
-  renderMode?: "webglTexture" | "externalMpv";
+  renderMode?: "browserVideo" | "webglTexture" | "externalMpv";
   textureProbe?: MpvTextureProbe;
 };
 

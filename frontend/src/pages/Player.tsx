@@ -6,7 +6,9 @@ import {
   ChevronDown,
   Clock3,
   ListVideo,
+  Maximize2,
   MessageCircle,
+  Minimize2,
   Pause,
   Play,
   SkipBack,
@@ -15,6 +17,7 @@ import {
   X,
 } from "lucide-react";
 import { makePlaybackEpisodes, type PlaybackEpisode, type Subject } from "../data";
+import { DanmakuOverlay } from "../DanmakuOverlay";
 import { Poster } from "../MediaCard";
 import { appleSpringSoft } from "../motion";
 import { MpvWebglSurface } from "../MpvWebglSurface";
@@ -22,6 +25,11 @@ import { cn } from "../utils/cn";
 import type { MediaSource, MpvRenderInfo, MpvState } from "../backend";
 
 const SEEK_COMMIT_DELAY_MS = 80;
+const DANMAKU_AREAS = [
+  { label: "1/4屏", value: 0.25 },
+  { label: "半屏", value: 0.5 },
+  { label: "满屏", value: 1 },
+] as const;
 
 export function PlayerPage({
   subject,
@@ -36,6 +44,8 @@ export function PlayerPage({
 }) {
   const episodes = useMemo(() => makePlaybackEpisodes(subject), [subject]);
   const seekInFlightRef = useRef(false);
+  const stageRef = useRef<HTMLDivElement | null>(null);
+  const browserVideoRef = useRef<HTMLVideoElement | null>(null);
   const pendingSeekPositionRef = useRef<number | null>(null);
   const latestSeekPositionRef = useRef<number | null>(null);
   const seekCommitTimerRef = useRef<number | null>(null);
@@ -45,10 +55,12 @@ export function PlayerPage({
   const [mpvState, setMpvState] = useState<MpvState | null>(null);
   const [loadingSource, setLoadingSource] = useState(true);
   const [danmakuVisible, setDanmakuVisible] = useState(false);
+  const [danmakuArea, setDanmakuArea] = useState<(typeof DANMAKU_AREAS)[number]["value"]>(0.5);
   const [episodeDrawerOpen, setEpisodeDrawerOpen] = useState(false);
   const [playbackError, setPlaybackError] = useState<string | null>(null);
   const [renderInfo, setRenderInfo] = useState<MpvRenderInfo | null>(null);
   const [paused, setPaused] = useState(false);
+  const [stageFullscreen, setStageFullscreen] = useState(false);
   const [seeking, setSeeking] = useState(false);
   const [scrubPosition, setScrubPosition] = useState<number | null>(null);
   const heroAsset = subject.hero || subject.poster;
@@ -70,6 +82,7 @@ export function PlayerPage({
   const nativeBridgeReady = Boolean(renderInfo?.available && renderInfo.probe?.ok);
   const textureProbe = mpvState?.textureProbe ?? renderInfo?.textureProbe;
   const renderMode = mpvState?.renderMode;
+  const browserVideoReady = renderMode === "browserVideo" && Boolean(source?.sourceUrl);
   const webglTextureReady = renderMode === "webglTexture" && Boolean(textureProbe?.ok);
   const renderBridgeError = textureProbe?.error ?? (renderInfo?.available
     ? renderInfo.probe?.error
@@ -126,7 +139,36 @@ export function PlayerPage({
 
       setLoadingSource(true);
       setPlaybackError(null);
+      const currentBrowserVideo = browserVideoRef.current;
+      if (currentBrowserVideo) {
+        currentBrowserVideo.pause();
+        currentBrowserVideo.removeAttribute("src");
+        currentBrowserVideo.load();
+      }
+      setSource(null);
+      setMpvState(null);
       try {
+        const nextSource = await window.nexplay.getMediaSource(currentEpisode.mediaId);
+        if (canUseBrowserVideoSource(nextSource)) {
+          if (!cancelled) {
+            setSource(nextSource);
+            setMpvState({
+              ok: true,
+              loaded: true,
+              audioTracks: [],
+              subtitleTracks: [],
+              duration: 0,
+              position: 0,
+              paused: false,
+              volume: 100,
+              source: nextSource,
+              renderMode: "browserVideo",
+            });
+            setPaused(false);
+          }
+          return;
+        }
+
         const nextState = await window.nexplay.mpvLoad(currentEpisode.mediaId);
         if (!cancelled) {
           setMpvState(nextState);
@@ -155,7 +197,7 @@ export function PlayerPage({
   }, [currentEpisode.mediaId, onSnack]);
 
   useEffect(() => {
-    if (loadingSource || playbackError || !window.nexplay?.mpvState) {
+    if (loadingSource || playbackError || !window.nexplay?.mpvState || mpvState?.renderMode === "browserVideo") {
       return;
     }
 
@@ -190,7 +232,7 @@ export function PlayerPage({
       disposed = true;
       window.clearInterval(timer);
     };
-  }, [loadingSource, playbackError, source]);
+  }, [loadingSource, mpvState?.renderMode, playbackError, source]);
 
   useEffect(() => {
     return () => {
@@ -198,6 +240,16 @@ export function PlayerPage({
         window.clearTimeout(seekCommitTimerRef.current);
       }
       void window.nexplay?.mpvStop();
+    };
+  }, []);
+
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setStageFullscreen(document.fullscreenElement === stageRef.current);
+    };
+    document.addEventListener("fullscreenchange", handleFullscreenChange);
+    return () => {
+      document.removeEventListener("fullscreenchange", handleFullscreenChange);
     };
   }, []);
 
@@ -229,6 +281,24 @@ export function PlayerPage({
   const togglePause = useCallback(async () => {
     if (!window.nexplay) return;
     const nextPaused = !paused;
+    if (mpvState?.renderMode === "browserVideo") {
+      const video = browserVideoRef.current;
+      if (!video) return;
+      try {
+        if (nextPaused) {
+          video.pause();
+        } else {
+          await video.play();
+        }
+        setPaused(nextPaused);
+        setMpvState((current) => current ? { ...current, paused: nextPaused } : current);
+      } catch (caught) {
+        const message = caught instanceof Error ? caught.message : String(caught);
+        onSnack(`播放控制失败：${message}`, "danger");
+      }
+      return;
+    }
+
     try {
       await window.nexplay.mpvSetPause(nextPaused);
       setPaused(nextPaused);
@@ -236,7 +306,7 @@ export function PlayerPage({
       const message = caught instanceof Error ? caught.message : String(caught);
       onSnack(`播放控制失败：${message}`, "danger");
     }
-  }, [onSnack, paused]);
+  }, [mpvState?.renderMode, onSnack, paused]);
 
   const flushPendingSeek = useCallback(async () => {
     if (!window.nexplay || seekInFlightRef.current) return;
@@ -287,6 +357,18 @@ export function PlayerPage({
   const commitSeek = useCallback((value: number) => {
     if (!window.nexplay || !Number.isFinite(value)) return;
     const nextPosition = Math.max(0, Math.min(duration || value, value));
+    if (mpvState?.renderMode === "browserVideo") {
+      const video = browserVideoRef.current;
+      if (!video) return;
+      video.currentTime = nextPosition;
+      latestSeekPositionRef.current = nextPosition;
+      seekingRef.current = false;
+      setSeeking(false);
+      setScrubPosition(null);
+      setMpvState((current) => current ? { ...current, position: nextPosition } : current);
+      return;
+    }
+
     latestSeekPositionRef.current = nextPosition;
     pendingSeekPositionRef.current = nextPosition;
     seekingRef.current = true;
@@ -301,11 +383,20 @@ export function PlayerPage({
       seekCommitTimerRef.current = null;
       void flushPendingSeek();
     }, SEEK_COMMIT_DELAY_MS);
-  }, [duration, flushPendingSeek]);
+  }, [duration, flushPendingSeek, mpvState?.renderMode]);
 
   const setVolume = useCallback(async (value: number) => {
     if (!window.nexplay) return;
     const nextVolume = Math.max(0, Math.min(100, value));
+    if (mpvState?.renderMode === "browserVideo") {
+      const video = browserVideoRef.current;
+      if (video) {
+        video.volume = nextVolume / 100;
+      }
+      setMpvState((current) => current ? { ...current, volume: nextVolume } : current);
+      return;
+    }
+
     setMpvState((current) => current ? { ...current, volume: nextVolume } : current);
     try {
       const nextState = await window.nexplay.mpvSetVolume(nextVolume);
@@ -319,10 +410,29 @@ export function PlayerPage({
       const message = caught instanceof Error ? caught.message : String(caught);
       onSnack(`音量调整失败：${message}`, "danger");
     }
-  }, [onSnack, source]);
+  }, [mpvState?.renderMode, onSnack, source]);
 
   const handleRenderSurfaceError = useCallback((message: string) => {
     onSnack(`WebGL 画面渲染失败：${message}`, "danger");
+  }, [onSnack]);
+
+  const handleDanmakuError = useCallback((message: string) => {
+    onSnack(message, message.includes("旧缓存") ? "neutral" : "danger");
+  }, [onSnack]);
+
+  const toggleStageFullscreen = useCallback(async () => {
+    const stage = stageRef.current;
+    if (!stage) return;
+    try {
+      if (document.fullscreenElement === stage) {
+        await document.exitFullscreen();
+      } else {
+        await stage.requestFullscreen();
+      }
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : String(caught);
+      onSnack(`全屏切换失败：${message}`, "danger");
+    }
   }, [onSnack]);
 
   return (
@@ -376,11 +486,56 @@ export function PlayerPage({
 
           <div className="grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_auto]">
             <div
+              ref={stageRef}
               className="player-stage relative min-h-0 overflow-hidden rounded-[28px]"
             >
               <div className="absolute inset-0 bg-black" />
-              <div className="absolute inset-x-0 top-0 bottom-[86px] overflow-hidden rounded-t-[28px] bg-black">
-                {webglTextureReady ? (
+              <div className="player-video-layer absolute inset-x-0 top-0 bottom-[86px] overflow-hidden rounded-t-[28px] bg-black">
+                {browserVideoReady ? (
+                  <video
+                    ref={browserVideoRef}
+                    src={source?.sourceUrl}
+                    className="absolute inset-0 size-full bg-black object-contain"
+                    autoPlay
+                    playsInline
+                    preload="auto"
+                    onLoadedMetadata={(event) => {
+                      const video = event.currentTarget;
+                      setMpvState((current) => current ? {
+                        ...current,
+                        duration: Number.isFinite(video.duration) ? video.duration : 0,
+                        position: video.currentTime || 0,
+                        paused: video.paused,
+                        volume: Math.round(video.volume * 100),
+                      } : current);
+                      setPaused(video.paused);
+                    }}
+                    onTimeUpdate={(event) => {
+                      const video = event.currentTarget;
+                      if (seekingRef.current) return;
+                      setMpvState((current) => current ? {
+                        ...current,
+                        duration: Number.isFinite(video.duration) ? video.duration : current.duration,
+                        position: video.currentTime || 0,
+                        paused: video.paused,
+                      } : current);
+                    }}
+                    onPlay={() => {
+                      setPaused(false);
+                      setMpvState((current) => current ? { ...current, paused: false } : current);
+                    }}
+                    onPause={() => {
+                      setPaused(true);
+                      setMpvState((current) => current ? { ...current, paused: true } : current);
+                    }}
+                    onError={(event) => {
+                      const error = event.currentTarget.error;
+                      const message = error?.message || "浏览器原生播放器无法解码当前文件";
+                      setPlaybackError(message);
+                      onSnack(`原生播放失败：${message}`, "danger");
+                    }}
+                  />
+                ) : webglTextureReady ? (
                   <MpvWebglSurface
                     active={webglTextureReady && !loadingSource && !playbackError && !seeking}
                     paused={paused}
@@ -397,11 +552,20 @@ export function PlayerPage({
                     draggable={false}
                   />
                 ) : null}
-                {!webglTextureReady && <div className="absolute inset-0 bg-black/62" />}
+                {!browserVideoReady && !webglTextureReady && <div className="absolute inset-0 bg-black/62" />}
 
-                <div className={cn("danmaku-plane pointer-events-none absolute inset-x-0 top-0 h-[42%]", danmakuVisible ? "opacity-100" : "opacity-0")} />
+                <DanmakuOverlay
+                  mediaId={currentEpisode.mediaId}
+                  visible={danmakuVisible && !loadingSource && !playbackError}
+                  paused={paused}
+                  seeking={seeking}
+                  position={position}
+                  duration={duration}
+                  area={danmakuArea}
+                  onError={handleDanmakuError}
+                />
 
-                {!webglTextureReady && <div className="absolute inset-0 flex items-center justify-center px-6 text-center text-white">
+                {!browserVideoReady && !webglTextureReady && <div className="absolute inset-0 flex items-center justify-center px-6 text-center text-white">
                   {loadingSource ? (
                     <div className="text-[14px] text-white/70">正在启动 libmpv</div>
                   ) : playbackError ? null : (
@@ -452,6 +616,23 @@ export function PlayerPage({
                   <MessageCircle size={15} />
                   弹幕
                 </button>
+                {danmakuVisible && (
+                  <div className="player-pill flex h-9 items-center gap-1 rounded-full px-1 text-[12px] font-semibold text-white">
+                    {DANMAKU_AREAS.map((option) => (
+                      <button
+                        key={option.value}
+                        type="button"
+                        className={cn(
+                          "h-7 rounded-full px-2.5 text-white/62 transition-colors hover:text-white",
+                          danmakuArea === option.value && "bg-white/18 text-white",
+                        )}
+                        onClick={() => setDanmakuArea(option.value)}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
                 <button
                   type="button"
                   className="player-pill flex h-9 items-center gap-2 rounded-full px-3 text-[12px] font-semibold text-white"
@@ -459,6 +640,14 @@ export function PlayerPage({
                 >
                   <ListVideo size={15} />
                   选集
+                </button>
+                <button
+                  type="button"
+                  className="player-pill flex size-9 items-center justify-center rounded-full text-white"
+                  onClick={() => void toggleStageFullscreen()}
+                  aria-label={stageFullscreen ? "退出全屏" : "全屏播放"}
+                >
+                  {stageFullscreen ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
                 </button>
               </div>
 
@@ -677,6 +866,22 @@ function episodeTitle(episode: PlaybackEpisode) {
 function selectedTrackValue(tracks: MpvState["audioTracks"] | undefined) {
   const selected = tracks?.find((track) => track.selected);
   return selected ? String(selected.id) : undefined;
+}
+
+function canUseBrowserVideoSource(source: MediaSource) {
+  const name = `${source.fileName || ""} ${source.sourceUrl || ""}`.toLowerCase();
+  const mime = name.includes(".webm")
+    ? "video/webm"
+    : name.includes(".mp4") || name.includes(".m4v")
+      ? "video/mp4"
+      : name.includes(".ogv") || name.includes(".ogg")
+        ? "video/ogg"
+        : "";
+  if (!mime) {
+    return false;
+  }
+  const video = document.createElement("video");
+  return video.canPlayType(mime) !== "";
 }
 
 function formatTime(value: number) {

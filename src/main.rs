@@ -14,9 +14,9 @@ mod task;
 
 use crate::app::AppContext;
 use crate::backend_api::{
-    FrontendEditableSettings, MediaSourceRequest, OpenMediaRequest, export_types,
-    frontend_event_from_app, media_source, open_media, save_settings_config, scan, settings_config,
-    snapshot,
+    DanmakuTrackRequest, FrontendEditableSettings, MediaSourceRequest, OpenMediaRequest,
+    danmaku_track, export_types, frontend_event_from_app, media_source, open_media,
+    save_settings_config, scan, settings_config, snapshot,
 };
 use crate::config::ConfigStore;
 use crate::error::{AppResult, io_error};
@@ -64,6 +64,14 @@ fn main() -> AppResult<()> {
             let input: MediaSourceRequest = serde_json::from_str(&raw)?;
             print_json(&media_source(&context, input)?)?;
         }
+        "danmaku-track" => {
+            let mut raw = String::new();
+            std::io::stdin()
+                .read_to_string(&mut raw)
+                .map_err(|err| io_error("<stdin>", err))?;
+            let input: DanmakuTrackRequest = serde_json::from_str(&raw)?;
+            print_json(&danmaku_track(&context, input)?)?;
+        }
         "backend-daemon" => backend_daemon::run_backend_daemon(context)?,
         "export-types" => {
             let output_path = std::env::args()
@@ -82,6 +90,7 @@ fn main() -> AppResult<()> {
             );
             println!("  open-media  read media id JSON from stdin and open with default player");
             println!("  media-source  read media id JSON from stdin and print playback source");
+            println!("  danmaku-track  read media id JSON from stdin and print normalized danmaku");
             println!("  backend-daemon  run a persistent JSON-RPC backend over stdio");
             println!("  export-types [path]  generate frontend TypeScript DTOs");
             println!("  player-daemon  run a persistent libmpv JSON-lines control process");

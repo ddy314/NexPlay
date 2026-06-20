@@ -254,6 +254,27 @@ body {
     inset 0 0 0 1px rgba(255, 255, 255, 0.08);
 }
 
+.player-stage:fullscreen {
+  width: 100vw;
+  height: 100vh;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.player-stage:fullscreen .player-video-layer {
+  border-radius: 0;
+}
+
+.player-stage:fullscreen .mpv-control-bar {
+  left: 24px;
+  right: 24px;
+  bottom: 24px;
+}
+
+.player-stage:fullscreen .player-pill {
+  background: rgba(20, 20, 22, 0.62);
+}
+
 .nexplay-media-controller {
   --media-primary-color: #ffffff;
   --media-secondary-color: rgba(255, 255, 255, 0.14);

@@ -29,4 +29,12 @@ export type MediaSourceRequest = { mediaId: number, };
 
 export type MediaSourceResponse = { mediaId: number, fileName: string, fileSize: string, sourceUrl: string, };
 
+export type DanmakuTrackRequest = { mediaId: number, };
+
+export type FrontendDanmakuMode = "scroll" | "top" | "bottom";
+
+export type FrontendDanmakuItem = { id: string, time: number, mode: FrontendDanmakuMode, color: number, text: string, userHash?: string, };
+
+export type DanmakuTrackResponse = { mediaId: number, provider: string, episodeId: number, title: string, fetchedAt: number, expiresAt: number, stale: boolean, items: Array<FrontendDanmakuItem>, };
+
 export type BackendEvent = { type: string, message?: string, scanned?: number, indexed?: number, processed?: number, total?: number, summary?: ScanSummary, mediaId?: number, subjectId?: number, imageKind?: string, targetId?: number, };

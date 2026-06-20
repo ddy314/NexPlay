@@ -4,7 +4,7 @@ use ts_rs::{Config as TsConfig, TS};
 
 use crate::app::AppContext;
 use crate::config::{AppConfig, BangumiConfig, DandanplayConfig, DatabaseConfig, LoggingConfig};
-use crate::domain::{ScanSummary, UiSeriesCardData};
+use crate::domain::{DanmakuMode, DanmakuTrack, ScanSummary, UiSeriesCardData};
 use crate::error::AppResult;
 use crate::task::AppEvent;
 
@@ -158,6 +158,45 @@ pub struct MediaSourceResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+pub struct DanmakuTrackRequest {
+    pub media_id: i64,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub enum FrontendDanmakuMode {
+    Scroll,
+    Top,
+    Bottom,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct FrontendDanmakuItem {
+    pub id: String,
+    pub time: f64,
+    pub mode: FrontendDanmakuMode,
+    pub color: i64,
+    pub text: String,
+    #[ts(optional)]
+    pub user_hash: Option<String>,
+}
+
+#[derive(Debug, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct DanmakuTrackResponse {
+    pub media_id: i64,
+    pub provider: String,
+    pub episode_id: i64,
+    pub title: String,
+    pub fetched_at: i64,
+    pub expires_at: i64,
+    pub stale: bool,
+    pub items: Vec<FrontendDanmakuItem>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
 pub struct BackendEvent {
     #[serde(rename = "type")]
     pub event_type: String,
@@ -273,6 +312,15 @@ pub fn media_source(
     })
 }
 
+pub fn danmaku_track(
+    context: &AppContext,
+    input: DanmakuTrackRequest,
+) -> AppResult<DanmakuTrackResponse> {
+    let media = context.media.playback_media_by_id(input.media_id)?;
+    let track = context.danmaku.track_for_media(&media)?;
+    Ok(frontend_danmaku_track_from_domain(track))
+}
+
 fn frontend_subject_from_series(card: UiSeriesCardData) -> FrontendSubject {
     let display_title = if card.title_cn.trim().is_empty() {
         card.title.clone()
@@ -341,6 +389,34 @@ fn frontend_subject_from_series(card: UiSeriesCardData) -> FrontendSubject {
         file_summary: card.latest_file_name,
         local_files,
         episodes_detail,
+    }
+}
+
+fn frontend_danmaku_track_from_domain(track: DanmakuTrack) -> DanmakuTrackResponse {
+    DanmakuTrackResponse {
+        media_id: track.media_id,
+        provider: track.provider,
+        episode_id: track.episode_id,
+        title: track.title,
+        fetched_at: track.fetched_at,
+        expires_at: track.expires_at,
+        stale: track.stale,
+        items: track
+            .items
+            .into_iter()
+            .map(|item| FrontendDanmakuItem {
+                id: item.id,
+                time: item.time,
+                mode: match item.mode {
+                    DanmakuMode::Scroll => FrontendDanmakuMode::Scroll,
+                    DanmakuMode::Top => FrontendDanmakuMode::Top,
+                    DanmakuMode::Bottom => FrontendDanmakuMode::Bottom,
+                },
+                color: item.color,
+                text: item.text,
+                user_hash: item.user_hash,
+            })
+            .collect(),
     }
 }
 
@@ -439,6 +515,10 @@ pub fn export_types(output_path: impl AsRef<Path>) -> AppResult<()> {
         OpenMediaResponse::decl(&ts_config),
         MediaSourceRequest::decl(&ts_config),
         MediaSourceResponse::decl(&ts_config),
+        DanmakuTrackRequest::decl(&ts_config),
+        FrontendDanmakuMode::decl(&ts_config),
+        FrontendDanmakuItem::decl(&ts_config),
+        DanmakuTrackResponse::decl(&ts_config),
         BackendEvent::decl(&ts_config),
     ]
     .join("\n\n")

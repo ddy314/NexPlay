@@ -547,10 +547,6 @@ napi_value RenderFrame(napi_env env, napi_callback_info info) {
   }
   mpv_render_context_report_swap(g_player->render_context);
 
-  for (size_t index = 3; index < byte_count; index += 4) {
-    pixels[index] = 255;
-  }
-
   napi_value result;
   napi_create_object(env, &result);
   SetBool(env, result, "ok", true);
