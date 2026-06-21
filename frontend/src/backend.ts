@@ -48,6 +48,7 @@ export type MpvFrame = {
   width: number;
   height: number;
   stride: number;
+  position?: number;
   pixels: Uint8Array;
 };
 

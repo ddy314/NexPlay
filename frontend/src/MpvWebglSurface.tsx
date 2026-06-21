@@ -14,6 +14,7 @@ type MpvWebglSurfaceProps = {
   fps?: number;
   className?: string;
   onError?: (message: string) => void;
+  onFrame?: (frame: MpvFrame) => void;
 };
 
 type GlState = {
@@ -33,6 +34,7 @@ export function MpvWebglSurface({
   fps,
   className,
   onError,
+  onFrame,
 }: MpvWebglSurfaceProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const glStateRef = useRef<GlState | null>(null);
@@ -40,6 +42,7 @@ export function MpvWebglSurface({
   const pausedRef = useRef(paused);
   const dimensionsRef = useRef({ width: videoWidth, height: videoHeight, fps });
   const onErrorRef = useRef(onError);
+  const onFrameRef = useRef(onFrame);
 
   useEffect(() => {
     activeRef.current = active;
@@ -56,6 +59,10 @@ export function MpvWebglSurface({
   useEffect(() => {
     onErrorRef.current = onError;
   }, [onError]);
+
+  useEffect(() => {
+    onFrameRef.current = onFrame;
+  }, [onFrame]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -102,6 +109,7 @@ export function MpvWebglSurface({
               return;
             }
             uploadFrame(glState, frame);
+            onFrameRef.current?.(frame);
             hasFrame = true;
             lastError = "";
           })

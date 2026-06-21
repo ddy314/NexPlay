@@ -324,6 +324,8 @@ async function diagnoseMedia(currentMediaPath, { includeSubtitles = true, native
     sizeMode: nativeSize ? "native" : "diagnostic",
     ms: Number(renderMs.toFixed(2)),
     measuredAt: measurement.position,
+    framePosition: Number((frame.position ?? measurement.position).toFixed(3)),
+    framePositionDelta: Number(Math.abs((frame.position ?? measurement.position) - measurement.position).toFixed(3)),
     avgMs: Number(avgRenderMs.toFixed(2)),
     maxMs: Number(Math.max(...renderSamples).toFixed(2)),
     sourceFrameBudgetMs: Number((1000 / Math.max(1, state.fps || 24)).toFixed(2)),
@@ -332,12 +334,17 @@ async function diagnoseMedia(currentMediaPath, { includeSubtitles = true, native
   result.playback = playback;
 
   const seekStart = performance.now();
-  await request({ type: "seek", position: Math.min(300, Math.max(20, (load.duration || 600) / 3)) }, 30000);
+  const seekTarget = Math.min(300, Math.max(20, (load.duration || 600) / 3));
+  await request({ type: "seek", position: seekTarget }, 30000);
   const seekDone = performance.now();
-  await request({ type: "renderFrame", width: frameSize.width, height: frameSize.height }, 30000);
+  const seekFrame = await request({ type: "renderFrame", width: frameSize.width, height: frameSize.height }, 30000);
+  const seekFramePosition = typeof seekFrame.position === "number" ? seekFrame.position : seekTarget;
   result.seek = {
     commandMs: Number((seekDone - seekStart).toFixed(2)),
     firstFrameMs: Number((performance.now() - seekDone).toFixed(2)),
+    targetPosition: Number(seekTarget.toFixed(3)),
+    framePosition: Number(seekFramePosition.toFixed(3)),
+    framePositionDelta: Number(Math.abs(seekFramePosition - seekTarget).toFixed(3)),
   };
 
   const seekPositions = [30, 90, 180, 300, 420].filter((position) => position < (load.duration || Infinity));
@@ -346,10 +353,13 @@ async function diagnoseMedia(currentMediaPath, { includeSubtitles = true, native
     const start = performance.now();
     await request({ type: "seek", position }, 30000);
     const seekCommandDone = performance.now();
-    await request({ type: "renderFrame", width: frameSize.width, height: frameSize.height }, 30000);
+    const seekFrame = await request({ type: "renderFrame", width: frameSize.width, height: frameSize.height }, 30000);
     const frameDone = performance.now();
+    const framePosition = typeof seekFrame.position === "number" ? seekFrame.position : position;
     seekSamples.push({
       position,
+      framePosition: Number(framePosition.toFixed(3)),
+      framePositionDelta: Number(Math.abs(framePosition - position).toFixed(3)),
       commandMs: Number((seekCommandDone - start).toFixed(2)),
       firstFrameMs: Number((frameDone - seekCommandDone).toFixed(2)),
     });
