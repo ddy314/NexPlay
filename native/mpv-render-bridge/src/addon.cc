@@ -553,6 +553,10 @@ napi_value RenderFrame(napi_env env, napi_callback_info info) {
   SetNumber(env, result, "width", width);
   SetNumber(env, result, "height", height);
   SetNumber(env, result, "stride", static_cast<double>(stride));
+  double position = 0;
+  if (GetPropertyDouble(*g_player, "time-pos", position)) {
+    SetNumber(env, result, "position", position);
+  }
 
   napi_value buffer;
   napi_create_external_buffer(env, byte_count, pixels, FinalizeFrameBuffer, nullptr, &buffer);
