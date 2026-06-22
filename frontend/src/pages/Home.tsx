@@ -3,6 +3,7 @@ import { type Subject } from "../data";
 import { Badge, Button, Card, Progress } from "../ui";
 import { MediaCard, Poster } from "../MediaCard";
 import { SparkleIcon } from "../icons";
+import { resolveAssetUrl } from "../utils/assets";
 import { cn } from "../utils/cn";
 
 export function HomePage({
@@ -67,7 +68,7 @@ export function HomePage({
         <Section title="最近添加" subtitle="Recently Added">
           <HorizontalRow>
             {recentlyAdded.map((s) => (
-              <MediaCard key={s.id} subject={s} onClick={() => onOpen(s)} />
+              <MediaCard key={s.id} subject={s} onOpen={onOpen} />
             ))}
           </HorizontalRow>
         </Section>
@@ -104,7 +105,7 @@ function HeroSection({
   onOpen: () => void;
 }) {
   const imageSrc = featured.hero || featured.poster;
-  const resolvedImageSrc = imageSrc ? window.nexplay?.resolveAssetUrl(imageSrc) ?? imageSrc : "";
+  const resolvedImageSrc = resolveAssetUrl(imageSrc);
 
   return (
     <div className="relative h-[560px] w-full overflow-hidden">

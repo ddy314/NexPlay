@@ -6,6 +6,7 @@ import { Poster } from "../MediaCard";
 import { useIncrementalItems } from "../hooks/useIncrementalItems";
 import { usePosterPalette } from "../hooks/usePosterPalette";
 import { appleSpring, appleSpringBouncy, appleSpringSoft } from "../motion";
+import { resolveAssetUrl } from "../utils/assets";
 import { cn } from "../utils/cn";
 
 export function DetailPage({
@@ -37,7 +38,7 @@ export function DetailPage({
     resetKey: subject.id,
   });
   const heroAsset = subject.hero || subject.poster;
-  const heroSrc = heroAsset ? window.nexplay?.resolveAssetUrl(heroAsset) ?? heroAsset : "";
+  const heroSrc = resolveAssetUrl(heroAsset);
   const palette = usePosterPalette(heroSrc);
   const visibleTags = subject.tags.slice(0, 5);
   const progressPercent = Math.min(100, Math.max(0, subject.progress * 100));
@@ -239,11 +240,10 @@ export function DetailPage({
               </span>
             </div>
             <div className="grid gap-1.5">
-              {visibleRows.map((row, index) => (
+              {visibleRows.map((row) => (
                 <EpisodeRow
                   key={row.key}
                   row={row}
-                  index={index}
                   isNext={row.key === nextPlayableRow?.key}
                   onOpen={() => openEpisode(row)}
                 />
@@ -273,21 +273,19 @@ function MetaSep() {
 
 const EpisodeRow = memo(function EpisodeRow({
   row,
-  index,
   isNext,
   onOpen,
 }: {
   row: PlaybackEpisode;
-  index: number;
   isNext: boolean;
   onOpen: () => void;
 }) {
   const title = row.titleCn || row.title || `Episode ${row.episode}`;
   return (
-    <motion.button
+    <button
       type="button"
       className={cn(
-        "group flex items-center gap-4 rounded-[14px] border-[0.5px] px-4 py-3 text-left transition-all duration-200",
+        "cv-episode-row episode-row-action group flex items-center gap-4 rounded-[14px] border-[0.5px] px-4 py-3 text-left transition-all duration-200",
         row.cached
           ? "cursor-pointer hover:border-black/[0.03] hover:bg-black/[0.025]"
           : "cursor-default opacity-65",
@@ -296,11 +294,7 @@ const EpisodeRow = memo(function EpisodeRow({
           : "border-transparent"
       )}
       disabled={!row.cached}
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      transition={{ duration: 0.16, delay: Math.min(index, 16) * 0.006 }}
       onClick={onOpen}
-      whileTap={{ scale: 0.995 }}
     >
       <div
         className={cn(
@@ -332,6 +326,6 @@ const EpisodeRow = memo(function EpisodeRow({
           </span>
         )}
       </div>
-    </motion.button>
+    </button>
   );
 });

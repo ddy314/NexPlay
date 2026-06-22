@@ -1,4 +1,4 @@
-import { useDeferredValue, useMemo, useState } from "react";
+import { memo, useDeferredValue, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { RefreshCw, Search, Sparkles } from "lucide-react";
 import type { BackendLogEntry, ScanStatus } from "../backend";
@@ -8,9 +8,14 @@ import { MediaCard } from "../MediaCard";
 import { useIncrementalItems } from "../hooks/useIncrementalItems";
 import { appleSpringBouncy, appleSpringSoft } from "../motion";
 import { Button } from "../ui";
+import { resolveAssetUrl } from "../utils/assets";
 import { cn } from "../utils/cn";
 
 type CatalogRoute = Exclude<Route, "settings">;
+type SearchIndexEntry = {
+  subject: Subject;
+  text: string;
+};
 
 const pageCopy: Record<CatalogRoute, { title: string; subtitle?: string }> = {
   search: {
@@ -60,19 +65,28 @@ export function LibraryPage({
     [subjects]
   );
   const recent = useMemo(() => subjects.slice(0, 18), [subjects]);
+  const completedPreview = useMemo(() => completed.slice(0, 18), [completed]);
   const heroSubject = watching[heroIndex % Math.max(1, watching.length)] ?? subjects[0];
+  const searchIndex = useMemo<SearchIndexEntry[]>(
+    () => subjects.map((subject) => ({
+      subject,
+      text: [
+        subject.title,
+        subject.titleCn,
+        subject.fileSummary,
+        ...subject.tags,
+      ].join("\n").toLowerCase(),
+    })),
+    [subjects]
+  );
 
   const searchResults = useMemo(() => {
     const q = deferredQuery.trim().toLowerCase();
     if (!q) return [];
-    return subjects.filter(
-      (subject) =>
-        subject.title.toLowerCase().includes(q) ||
-        subject.titleCn.toLowerCase().includes(q) ||
-        subject.fileSummary.toLowerCase().includes(q) ||
-        subject.tags.some((tag) => tag.toLowerCase().includes(q))
-    );
-  }, [deferredQuery, subjects]);
+    return searchIndex
+      .filter((entry) => entry.text.includes(q))
+      .map((entry) => entry.subject);
+  }, [deferredQuery, searchIndex]);
 
   const displayItems = route === "search" ? searchResults : subjects;
   const {
@@ -171,7 +185,7 @@ export function LibraryPage({
               )}
               {completed.length > 0 && (
                 <Section title="已完成">
-                  <CardGrid subjects={completed.slice(0, 18)} onOpen={onOpen} />
+                  <CardGrid subjects={completedPreview} onOpen={onOpen} />
                 </Section>
               )}
               <Section title="全部番剧">
@@ -317,7 +331,7 @@ function HeroBanner({
   onNext: () => void;
 }) {
   const heroAsset = subject.hero || subject.poster;
-  const heroSrc = heroAsset ? window.nexplay?.resolveAssetUrl(heroAsset) ?? heroAsset : "";
+  const heroSrc = resolveAssetUrl(heroAsset);
 
   return (
     <motion.button
@@ -405,7 +419,7 @@ function Section({
   );
 }
 
-function CardGrid({
+const CardGrid = memo(function CardGrid({
   subjects,
   onOpen,
   offset = 0,
@@ -421,14 +435,14 @@ function CardGrid({
           key={subject.id}
           subject={subject}
           index={index + offset}
-          onClick={() => onOpen(subject)}
+          onOpen={onOpen}
           imageLoading={index < 8 ? "eager" : "lazy"}
           imageFetchPriority={index < 8 ? "high" : "auto"}
         />
       ))}
     </div>
   );
-}
+});
 
 function LoadMore({
   remainingCount,

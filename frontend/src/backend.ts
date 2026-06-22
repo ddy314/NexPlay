@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   BackendEvent as GeneratedBackendEvent,
   BackendSnapshot as GeneratedBackendSnapshot,
@@ -129,6 +129,8 @@ const fallbackSnapshot: BackendSnapshot = {
     dandanplayConfigured: false,
   },
 };
+const BACKEND_EVENT_UI_FLUSH_MS = 120;
+type ScanStatusUpdater = (current: ScanStatus) => ScanStatus;
 
 function normalizeScanSummary(summary: BackendEvent["summary"] | ScanResponse["summary"] | undefined): ScanResponse["summary"] {
   const raw = summary as
@@ -165,9 +167,77 @@ export function useBackendSnapshot() {
     processed: 0,
     total: 0,
   });
+  const pendingLogsRef = useRef<BackendLogEntry[]>([]);
+  const logFlushTimerRef = useRef<number | null>(null);
+  const scanStatusThrottleRef = useRef<{
+    lastCommitAt: number;
+    timer: number | null;
+    pending: ScanStatusUpdater | null;
+  }>({
+    lastCommitAt: 0,
+    timer: null,
+    pending: null,
+  });
+
+  const flushLogs = useCallback(() => {
+    if (logFlushTimerRef.current !== null) {
+      window.clearTimeout(logFlushTimerRef.current);
+      logFlushTimerRef.current = null;
+    }
+
+    const nextLogs = pendingLogsRef.current;
+    if (!nextLogs.length) {
+      return;
+    }
+
+    pendingLogsRef.current = [];
+    setLogs((current) => [...current, ...nextLogs].slice(-120));
+  }, []);
 
   const appendLog = useCallback((text: string, tone?: BackendLogEntry["tone"]) => {
-    setLogs((current) => [...current.slice(-119), { id: Date.now() + Math.random(), text, tone }]);
+    pendingLogsRef.current.push({ id: Date.now() + Math.random(), text, tone });
+    if (logFlushTimerRef.current === null) {
+      logFlushTimerRef.current = window.setTimeout(flushLogs, BACKEND_EVENT_UI_FLUSH_MS);
+    }
+  }, [flushLogs]);
+
+  const commitScanStatus = useCallback((updater: ScanStatusUpdater) => {
+    const throttle = scanStatusThrottleRef.current;
+    if (throttle.timer !== null) {
+      window.clearTimeout(throttle.timer);
+      throttle.timer = null;
+    }
+    throttle.pending = null;
+    throttle.lastCommitAt = performance.now();
+    setScanStatus(updater);
+  }, []);
+
+  const queueScanStatus = useCallback((updater: ScanStatusUpdater) => {
+    const throttle = scanStatusThrottleRef.current;
+    const now = performance.now();
+    const elapsed = now - throttle.lastCommitAt;
+    throttle.pending = updater;
+
+    if (elapsed >= BACKEND_EVENT_UI_FLUSH_MS) {
+      throttle.pending = null;
+      throttle.lastCommitAt = now;
+      setScanStatus(updater);
+      return;
+    }
+
+    if (throttle.timer !== null) {
+      return;
+    }
+
+    throttle.timer = window.setTimeout(() => {
+      const pending = throttle.pending;
+      throttle.pending = null;
+      throttle.timer = null;
+      throttle.lastCommitAt = performance.now();
+      if (pending) {
+        setScanStatus(pending);
+      }
+    }, BACKEND_EVENT_UI_FLUSH_MS - elapsed);
   }, []);
 
   const refresh = useCallback(async () => {
@@ -199,8 +269,13 @@ export function useBackendSnapshot() {
       return null;
     }
 
+    if (logFlushTimerRef.current !== null) {
+      window.clearTimeout(logFlushTimerRef.current);
+      logFlushTimerRef.current = null;
+    }
+    pendingLogsRef.current = [];
     setLogs([]);
-    setScanStatus({
+    commitScanStatus(() => ({
       running: true,
       stage: "scan",
       message: "正在启动扫描",
@@ -208,18 +283,18 @@ export function useBackendSnapshot() {
       indexed: 0,
       processed: 0,
       total: 0,
-    });
+    }));
     const response = normalizeScanResponse(await window.nexplay.scanLibrary());
     setSnapshot(response.snapshot);
     setError(null);
-    setScanStatus((current) => ({
+    commitScanStatus((current) => ({
       ...current,
       running: false,
       stage: "done",
       message: `扫描完成：${response.summary.scannedFiles} 个文件，整理 ${response.scraped} 个`,
     }));
     return response;
-  }, []);
+  }, [commitScanStatus]);
 
   useEffect(() => {
     void refresh();
@@ -237,7 +312,7 @@ export function useBackendSnapshot() {
 
       switch (event.type) {
         case "scanStarted":
-          setScanStatus({
+          commitScanStatus(() => ({
             running: true,
             stage: "scan",
             message: event.message || "扫描已开始",
@@ -245,10 +320,10 @@ export function useBackendSnapshot() {
             indexed: 0,
             processed: 0,
             total: 0,
-          });
+          }));
           break;
         case "scanProgress":
-          setScanStatus((current) => ({
+          queueScanStatus((current) => ({
             ...current,
             running: true,
             stage: "scan",
@@ -259,7 +334,7 @@ export function useBackendSnapshot() {
           break;
         case "scanFinished":
           const summary = normalizeScanSummary(event.summary);
-          setScanStatus((current) => ({
+          commitScanStatus((current) => ({
             ...current,
             running: true,
             stage: "metadata",
@@ -269,7 +344,7 @@ export function useBackendSnapshot() {
           }));
           break;
         case "metadataProgress":
-          setScanStatus((current) => ({
+          queueScanStatus((current) => ({
             ...current,
             running: true,
             stage: "metadata",
@@ -280,7 +355,7 @@ export function useBackendSnapshot() {
           break;
         case "scanFailed":
         case "metadataFailed":
-          setScanStatus((current) => ({
+          commitScanStatus((current) => ({
             ...current,
             running: false,
             stage: "failed",
@@ -289,7 +364,20 @@ export function useBackendSnapshot() {
           break;
       }
     });
-  }, [appendLog]);
+  }, [appendLog, commitScanStatus, queueScanStatus]);
+
+  useEffect(() => () => {
+    if (logFlushTimerRef.current !== null) {
+      window.clearTimeout(logFlushTimerRef.current);
+      logFlushTimerRef.current = null;
+    }
+    pendingLogsRef.current = [];
+    const throttle = scanStatusThrottleRef.current;
+    if (throttle.timer !== null) {
+      window.clearTimeout(throttle.timer);
+      throttle.timer = null;
+    }
+  }, []);
 
   return {
     ...snapshot,

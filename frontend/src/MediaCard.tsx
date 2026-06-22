@@ -1,10 +1,9 @@
-import { memo, useState } from "react";
-import { motion } from "framer-motion";
+import { memo, useCallback, useState, type CSSProperties } from "react";
 import { Play } from "lucide-react";
-import { appleSpring, appleSpringBouncy } from "./motion";
 import { cn } from "./utils/cn";
 import { Badge } from "./ui";
 import { STATUS_COLOR, STATUS_LABEL, type Subject } from "./data";
+import { resolveAssetUrl } from "./utils/assets";
 
 type ImageLoading = "eager" | "lazy";
 type ImageFetchPriority = "auto" | "high" | "low";
@@ -24,7 +23,7 @@ export const Poster = memo(function Poster({
 }) {
   const [loaded, setLoaded] = useState(false);
   const [failed, setFailed] = useState(false);
-  const resolvedSrc = src ? window.nexplay?.resolveAssetUrl(src) ?? src : src;
+  const resolvedSrc = resolveAssetUrl(src);
   if (!src || failed) {
     return (
       <div
@@ -64,35 +63,40 @@ export const Poster = memo(function Poster({
 
 export const MediaCard = memo(function MediaCard({
   subject,
-  onClick,
+  onOpen,
   selected,
   index = 0,
   imageLoading = "lazy",
   imageFetchPriority = "auto",
 }: {
   subject: Subject;
-  onClick?: () => void;
+  onOpen?: (subject: Subject) => void;
   selected?: boolean;
   index?: number;
   imageLoading?: ImageLoading;
   imageFetchPriority?: ImageFetchPriority;
 }) {
   const progressText = `${subject.watchedEpisodes} / ${subject.episodes || subject.files || "?"} 话`;
-  const resolvedPoster = subject.poster
-    ? window.nexplay?.resolveAssetUrl(subject.poster) ?? subject.poster
-    : "";
+  const resolvedPoster = resolveAssetUrl(subject.poster);
+  const handleClick = useCallback(() => {
+    onOpen?.(subject);
+  }, [onOpen, subject]);
+  const progressStyle = {
+    "--media-card-progress": `${Math.min(100, Math.max(0, subject.progress * 100))}%`,
+  } as CSSProperties;
+  const entryStyle = {
+    "--media-card-enter-delay": `${Math.min(index, 12) * 12}ms`,
+  } as CSSProperties;
 
   return (
-    <motion.button
+    <button
       type="button"
-      onClick={onClick}
+      onClick={handleClick}
       className={cn(
-        "group relative min-w-0 cursor-pointer text-left focus:outline-none",
+        "media-card cv-media-card group relative min-w-0 cursor-pointer text-left focus:outline-none",
         selected && "ring-2 ring-[var(--color-primary)] ring-offset-2 ring-offset-[var(--color-bg)]"
       )}
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      transition={{ duration: 0.18, delay: Math.min(index, 12) * 0.012 }}
+      style={entryStyle}
     >
       <div className="relative mb-2.5">
         {resolvedPoster && (
@@ -101,20 +105,7 @@ export const MediaCard = memo(function MediaCard({
             style={{ backgroundImage: `url(${resolvedPoster})` }}
           />
         )}
-        <motion.div
-          className="relative aspect-[3/4] overflow-hidden rounded-[var(--radius-card)] bg-[var(--color-surface-elevated)]"
-          style={{
-            boxShadow:
-              "0 1px 2px rgba(0,0,0,0.08), 0 10px 22px rgba(0,0,0,0.10)",
-          }}
-          whileHover={{
-            scale: 1.01,
-            boxShadow:
-              "0 2px 8px rgba(0,0,0,0.10), 0 14px 28px rgba(0,0,0,0.14)",
-          }}
-          whileTap={{ scale: 0.96 }}
-          transition={appleSpringBouncy}
-        >
+        <div className="media-card-poster relative aspect-[3/4] overflow-hidden rounded-[var(--radius-card)] bg-[var(--color-surface-elevated)]">
           <Poster
             src={subject.poster}
             alt={subject.title}
@@ -150,33 +141,19 @@ export const MediaCard = memo(function MediaCard({
           )}
 
           <div className="absolute inset-0 flex scale-75 items-center justify-center opacity-0 transition-all duration-300 group-hover:scale-100 group-hover:opacity-100">
-            <motion.div
-              className="relative flex size-12 items-center justify-center rounded-full bg-white/92"
-              style={{
-                boxShadow:
-                  "0 4px 18px rgba(0,0,0,0.18), 0 1px 3px rgba(0,0,0,0.1)",
-              }}
-              whileHover={{ scale: 1.04 }}
-              transition={appleSpringBouncy}
-            >
+            <div className="media-card-play relative flex size-12 items-center justify-center rounded-full bg-white/92">
               <Play size={18} className="ml-0.5 text-[var(--color-text-primary)]" fill="currentColor" />
-            </motion.div>
+            </div>
           </div>
 
           {subject.progress > 0 && (
             <div className="absolute inset-x-0 bottom-0 h-[3px] bg-black/20">
-              <motion.div
-                className="h-full rounded-r-full"
-                style={{ background: "var(--color-primary)" }}
-                initial={{ width: 0 }}
-                animate={{ width: `${Math.min(100, Math.max(0, subject.progress * 100))}%` }}
-                transition={appleSpring}
-              />
+              <div className="media-card-progress h-full rounded-r-full" style={progressStyle} />
             </div>
           )}
 
           <div className="pointer-events-none absolute inset-0 rounded-[var(--radius-card)] ring-1 ring-inset ring-black/[0.05]" />
-        </motion.div>
+        </div>
       </div>
 
       <div className="px-0.5">
@@ -197,6 +174,6 @@ export const MediaCard = memo(function MediaCard({
           </p>
         )}
       </div>
-    </motion.button>
+    </button>
   );
 });
