@@ -22,6 +22,7 @@ import { DanmakuOverlay } from "../DanmakuOverlay";
 import { Poster } from "../MediaCard";
 import { appleSpringSoft } from "../motion";
 import { MpvWebglSurface } from "../MpvWebglSurface";
+import { resolveAssetUrl } from "../utils/assets";
 import { cn } from "../utils/cn";
 import type { MediaSource, MpvFrame, MpvRenderInfo, MpvState, MpvTrack } from "../backend";
 
@@ -82,20 +83,41 @@ export function PlayerPage({
   const [danmakuSeekSuspended, setDanmakuSeekSuspended] = useState(false);
   const [danmakuSeekReset, setDanmakuSeekReset] = useState<{ version: number; position: number } | null>(null);
   const heroAsset = subject.hero || subject.poster;
-  const heroSrc = heroAsset ? window.nexplay?.resolveAssetUrl(heroAsset) ?? heroAsset : "";
+  const heroSrc = resolveAssetUrl(heroAsset);
   const playableEpisodes = useMemo(() => episodes.filter((episode) => episode.cached && episode.mediaId), [episodes]);
-  const currentEpisode = useMemo(
-    () => episodes.find((episode) => episode.key === currentKey) ?? initialEpisode,
-    [currentKey, episodes, initialEpisode]
-  );
-  const currentIndex = episodes.findIndex((episode) => episode.key === currentEpisode.key);
-  const previousEpisode = [...episodes]
-    .slice(0, Math.max(0, currentIndex))
-    .reverse()
-    .find((episode) => episode.cached && episode.mediaId);
-  const nextEpisode = episodes
-    .slice(Math.max(0, currentIndex + 1))
-    .find((episode) => episode.cached && episode.mediaId);
+  const {
+    currentEpisode,
+    previousEpisode,
+    nextEpisode,
+  } = useMemo(() => {
+    const index = episodes.findIndex((episode) => episode.key === currentKey);
+    const safeIndex = index >= 0 ? index : -1;
+    const selectedEpisode = safeIndex >= 0 ? episodes[safeIndex] : initialEpisode;
+    let previous: PlaybackEpisode | undefined;
+    let next: PlaybackEpisode | undefined;
+
+    for (let i = safeIndex - 1; i >= 0; i -= 1) {
+      const episode = episodes[i];
+      if (episode.cached && episode.mediaId) {
+        previous = episode;
+        break;
+      }
+    }
+
+    for (let i = Math.max(0, safeIndex + 1); i < episodes.length; i += 1) {
+      const episode = episodes[i];
+      if (episode.cached && episode.mediaId) {
+        next = episode;
+        break;
+      }
+    }
+
+    return {
+      currentEpisode: selectedEpisode,
+      previousEpisode: previous,
+      nextEpisode: next,
+    };
+  }, [currentKey, episodes, initialEpisode]);
   const displayEpisodeTitle = episodeTitle(currentEpisode);
   const nativeBridgeReady = Boolean(renderInfo?.available && renderInfo.probe?.ok);
   const textureProbe = mpvState?.textureProbe ?? renderInfo?.textureProbe;
@@ -1005,9 +1027,12 @@ function EpisodeRail({
 }) {
   const [onlyPlayable, setOnlyPlayable] = useState(false);
   const selectedEpisodeRef = useRef<HTMLButtonElement | null>(null);
-  const visibleEpisodes = onlyPlayable
-    ? episodes.filter((episode) => episode.cached && episode.mediaId)
-    : episodes;
+  const visibleEpisodes = useMemo(
+    () => onlyPlayable
+      ? episodes.filter((episode) => episode.cached && episode.mediaId)
+      : episodes,
+    [episodes, onlyPlayable]
+  );
 
   useEffect(() => {
     if (!open) return;
@@ -1096,18 +1121,17 @@ function EpisodeRail({
                 const playable = Boolean(episode.cached && episode.mediaId);
                 const title = episodeTitle(episode);
                 return (
-                  <motion.button
+                  <button
                     key={episode.key}
                     ref={selected ? selectedEpisodeRef : undefined}
                     type="button"
                     className={cn(
-                      "player-episode-row group relative mb-2.5 flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left transition-colors",
+                      "cv-episode-row player-episode-row group relative mb-2.5 flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left transition-colors",
                       playable ? "hover:bg-black/[0.035]" : "cursor-default opacity-54",
                       selected && "is-selected bg-[var(--color-primary-soft)] hover:bg-[var(--color-primary-soft)]"
                     )}
                     disabled={!playable}
                     onClick={() => onSelect(episode)}
-                    whileTap={{ scale: 0.985 }}
                   >
                     <span
                       className={cn(
@@ -1142,7 +1166,7 @@ function EpisodeRail({
                         </span>
                       </span>
                     </span>
-                  </motion.button>
+                  </button>
                 );
               })}
               {!visibleEpisodes.length && (

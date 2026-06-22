@@ -22,7 +22,9 @@ export function useIncrementalItems<T>(
   const observerRef = useRef<IntersectionObserver | null>(null);
 
   useEffect(() => {
-    setVisibleCount(normalizedInitialCount);
+    setVisibleCount((current) => (
+      current === normalizedInitialCount ? current : normalizedInitialCount
+    ));
   }, [normalizedInitialCount, resetKey]);
 
   useEffect(() => {

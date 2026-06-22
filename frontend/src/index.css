@@ -129,6 +129,56 @@ body {
   gap: 24px;
 }
 
+.media-card {
+  opacity: 0;
+  contain: layout paint style;
+  animation: media-card-enter 180ms ease-out var(--media-card-enter-delay, 0ms) both;
+}
+
+.media-card-poster {
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.08),
+    0 10px 22px rgba(0, 0, 0, 0.10);
+  transform: translateZ(0);
+  transition:
+    transform 180ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    box-shadow 180ms ease;
+  will-change: transform;
+}
+
+.media-card:hover .media-card-poster {
+  box-shadow:
+    0 2px 8px rgba(0, 0, 0, 0.10),
+    0 14px 28px rgba(0, 0, 0, 0.14);
+  transform: scale(1.01);
+}
+
+.media-card:active .media-card-poster {
+  transform: scale(0.96);
+}
+
+.media-card-play {
+  box-shadow:
+    0 4px 18px rgba(0, 0, 0, 0.18),
+    0 1px 3px rgba(0, 0, 0, 0.10);
+  transition: transform 160ms ease;
+}
+
+.media-card:hover .media-card-play {
+  transform: scale(1.04);
+}
+
+.media-card-progress {
+  width: var(--media-card-progress, 0%);
+  background: var(--color-primary);
+  transition: width 220ms ease;
+}
+
+.episode-row-action:active,
+.player-episode-row:active:not(:disabled) {
+  transform: scale(0.995);
+}
+
 .search-page-header {
   display: flex;
   align-items: center;
@@ -1226,6 +1276,15 @@ body {
   0% { background-position: -400px 0; }
   100% { background-position: 400px 0; }
 }
+
+@keyframes media-card-enter {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
 .skeleton {
   background: linear-gradient(90deg, var(--color-surface-2) 0%, var(--color-surface-4) 50%, var(--color-surface-2) 100%);
   background-size: 800px 100%;
@@ -1238,4 +1297,17 @@ body {
 }
 .anim-snackbar {
   animation: snackbarIn 0.3s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .media-card {
+    animation: none;
+    opacity: 1;
+  }
+
+  .media-card-poster,
+  .media-card-play,
+  .media-card-progress {
+    transition: none;
+  }
 }

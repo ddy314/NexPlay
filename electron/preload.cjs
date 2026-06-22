@@ -8,6 +8,8 @@ const projectRoot = path.join(__dirname, "..");
 const renderBridge = new RenderBridge({ projectRoot });
 let activeMpvMode = null;
 let activeTextureProbe = null;
+let renderInfoPromise = null;
+let textureProbePromise = null;
 
 function resolveAssetUrl(value) {
   if (typeof value !== "string" || !value.startsWith("file://")) {
@@ -31,10 +33,32 @@ function normalizeMediaSource(source) {
   };
 }
 
+function getRenderInfoCached() {
+  if (!renderInfoPromise) {
+    renderInfoPromise = renderBridge.getInfo().catch((error) => {
+      renderInfoPromise = null;
+      throw error;
+    });
+  }
+  return renderInfoPromise;
+}
+
+function probeWebglTextureRendererCached() {
+  if (!textureProbePromise) {
+    textureProbePromise = renderBridge.probeWebglTextureRenderer().catch((error) => {
+      textureProbePromise = null;
+      throw error;
+    });
+  }
+  return textureProbePromise;
+}
+
 async function loadMpvMedia(mediaId) {
   const source = await ipcRenderer.invoke("backend:media-source", mediaId);
-  const bridgeInfo = await renderBridge.getInfo();
-  const textureProbe = await renderBridge.probeWebglTextureRenderer();
+  const [bridgeInfo, textureProbe] = await Promise.all([
+    getRenderInfoCached(),
+    probeWebglTextureRendererCached(),
+  ]);
   const canUseTextureRenderer = Boolean(bridgeInfo.available && textureProbe.ok);
 
   if (!canUseTextureRenderer) {
@@ -119,9 +143,13 @@ contextBridge.exposeInMainWorld("nexplay", {
     { type: "state" },
     () => ipcRenderer.invoke("mpv:state"),
   ),
-  mpvRenderInfo: () => renderBridge.getInfo(),
+  mpvRenderInfo: () => getRenderInfoCached(),
   mpvProbeWebglTextureRenderer: async () => {
-    activeTextureProbe = await renderBridge.probeWebglTextureRenderer();
+    textureProbePromise = renderBridge.probeWebglTextureRenderer().catch((error) => {
+      textureProbePromise = null;
+      throw error;
+    });
+    activeTextureProbe = await textureProbePromise;
     return activeTextureProbe;
   },
   mpvRenderFrame: async (width, height) => {

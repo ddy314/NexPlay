@@ -1,10 +1,57 @@
 const { BrowserWindow, ipcMain } = require("electron");
 
+const PROGRESS_EVENT_THROTTLE_MS = 100;
+const throttledEventTypes = new Set(["scanProgress", "metadataProgress"]);
+const flushBeforeEventTypes = new Set(["scanStarted", "scanFinished", "scanFailed", "metadataFailed"]);
+
 function registerBackendIpc(backendClient) {
-  backendClient.on("backend:event", (event) => {
+  let pendingProgressEvents = new Map();
+  let progressFlushTimer = null;
+  let lastProgressFlushAt = 0;
+
+  const sendBackendEvent = (event) => {
     for (const window of BrowserWindow.getAllWindows()) {
       window.webContents.send("backend:event", event);
     }
+  };
+
+  const flushProgressEvents = () => {
+    if (progressFlushTimer !== null) {
+      clearTimeout(progressFlushTimer);
+      progressFlushTimer = null;
+    }
+    if (pendingProgressEvents.size === 0) {
+      return;
+    }
+    const events = Array.from(pendingProgressEvents.values());
+    pendingProgressEvents = new Map();
+    lastProgressFlushAt = Date.now();
+    for (const event of events) {
+      sendBackendEvent(event);
+    }
+  };
+
+  const queueProgressEvent = (event) => {
+    pendingProgressEvents.set(event.type, event);
+    const elapsed = Date.now() - lastProgressFlushAt;
+    if (elapsed >= PROGRESS_EVENT_THROTTLE_MS) {
+      flushProgressEvents();
+      return;
+    }
+    if (progressFlushTimer === null) {
+      progressFlushTimer = setTimeout(flushProgressEvents, PROGRESS_EVENT_THROTTLE_MS - elapsed);
+    }
+  };
+
+  backendClient.on("backend:event", (event) => {
+    if (throttledEventTypes.has(event.type)) {
+      queueProgressEvent(event);
+      return;
+    }
+    if (flushBeforeEventTypes.has(event.type)) {
+      flushProgressEvents();
+    }
+    sendBackendEvent(event);
   });
 
   ipcMain.handle("backend:snapshot", () => backendClient.request("snapshot"));

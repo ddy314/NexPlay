@@ -5,6 +5,7 @@ import { cn } from "./utils/cn";
 const MAX_RENDER_WIDTH = 3840;
 const MAX_RENDER_HEIGHT = 2160;
 const MAX_RENDER_PIXELS = MAX_RENDER_WIDTH * MAX_RENDER_HEIGHT;
+const MAX_TEXTURE_RENDER_FPS = 60;
 
 type MpvWebglSurfaceProps = {
   active: boolean;
@@ -84,6 +85,7 @@ export function MpvWebglSurface({
     let lastSubmitAt = 0;
     let hasFrame = false;
     let lastError = "";
+    let adaptiveFrameInterval = 0;
 
     const renderLoop = (now: number) => {
       if (disposed) {
@@ -91,9 +93,9 @@ export function MpvWebglSurface({
       }
 
       const { fps: currentFps } = dimensionsRef.current;
-      const targetFps = Math.max(1, Math.min(240, currentFps || 30));
+      const targetFps = Math.max(1, Math.min(MAX_TEXTURE_RENDER_FPS, currentFps || 30));
       const frameInterval = 1000 / targetFps;
-      const fetchInterval = pausedRef.current ? 250 : frameInterval;
+      const fetchInterval = pausedRef.current ? 250 : Math.max(frameInterval, adaptiveFrameInterval);
       const shouldFetch = activeRef.current && !inFlight && (
         !hasFrame || now - lastSubmitAt >= fetchInterval
       );
@@ -103,6 +105,7 @@ export function MpvWebglSurface({
         inFlight = true;
         lastSubmitAt = now;
         const { width, height } = chooseRenderSize(canvas, dimensionsRef.current.width, dimensionsRef.current.height);
+        const requestStartedAt = performance.now();
         mpvRenderFrame(width, height)
           .then((frame) => {
             if (disposed || frame.ok === false) {
@@ -121,6 +124,11 @@ export function MpvWebglSurface({
             }
           })
           .finally(() => {
+            const requestMs = performance.now() - requestStartedAt;
+            const nextAdaptiveInterval = Math.min(250, Math.max(0, requestMs * 1.15));
+            adaptiveFrameInterval = adaptiveFrameInterval <= 0
+              ? nextAdaptiveInterval
+              : adaptiveFrameInterval * 0.82 + nextAdaptiveInterval * 0.18;
             inFlight = false;
           });
       } else if (resized && hasFrame) {
