@@ -7,6 +7,12 @@ interface Window {
     scanLibrary: () => Promise<import("./backend").ScanResponse>;
     getSettings: () => Promise<import("./backend").EditableSettings>;
     saveSettings: (settings: import("./backend").EditableSettings) => Promise<import("./backend").EditableSettings>;
+    searchCatalog: (payload: import("./generated/backend").CatalogSearchRequest) => Promise<import("./backend").CatalogSearch>;
+    onlineSubject: (payload: import("./generated/backend").OnlineSubjectRequest) => Promise<import("./data").Subject>;
+    episodeResources: (payload: import("./generated/backend").EpisodeResourcesRequest) => Promise<import("./backend").EpisodeResources>;
+    startResourceDownload: (payload: import("./generated/backend").StartResourceDownloadRequest) => Promise<import("./backend").DownloadTask>;
+    downloadTasks: () => Promise<import("./backend").DownloadTasks>;
+    testQbittorrentConnection: () => Promise<import("./backend").ConnectionTest>;
     openMedia: (mediaId: number) => Promise<{ opened: boolean }>;
     getMediaSource: (mediaId: number) => Promise<import("./backend").MediaSource>;
     danmakuTrack: (mediaId: number) => Promise<import("./backend").DanmakuTrack>;

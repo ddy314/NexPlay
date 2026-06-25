@@ -13,6 +13,8 @@ pub struct SubjectSearchResult {
     pub rank: Option<i64>,
     pub image_large: Option<String>,
     pub image_common: Option<String>,
+    pub aliases: Vec<String>,
+    pub episode_count: Option<usize>,
 }
 
 #[derive(Debug, Clone)]
@@ -26,6 +28,8 @@ pub struct SubjectDetail {
     pub rating: Option<f64>,
     pub rank: Option<i64>,
     pub tags: Vec<String>,
+    pub aliases: Vec<String>,
+    pub episode_count: Option<usize>,
     pub images: SubjectImages,
 }
 

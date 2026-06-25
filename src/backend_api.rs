@@ -3,9 +3,13 @@ use std::path::{Path, PathBuf};
 use ts_rs::{Config as TsConfig, TS};
 
 use crate::app::AppContext;
-use crate::config::{AppConfig, BangumiConfig, DandanplayConfig, DatabaseConfig, LoggingConfig};
+use crate::config::{
+    AppConfig, BangumiConfig, DandanplayConfig, DatabaseConfig, LoggingConfig, NyaaConfig,
+    QbittorrentConfig,
+};
 use crate::domain::{DanmakuMode, DanmakuTrack, ScanSummary, UiSeriesCardData};
 use crate::error::AppResult;
+use crate::service::{CatalogSubjectData, DownloadTaskData, EpisodeResourceData};
 use crate::task::AppEvent;
 
 #[derive(Debug, Serialize, TS)]
@@ -49,6 +53,11 @@ pub struct FrontendSubject {
     pub id: String,
     pub media_id: i64,
     pub subject_id: i64,
+    pub source: String,
+    pub provider: String,
+    pub provider_subject_id: String,
+    pub local: bool,
+    pub aliases: Vec<String>,
     pub title: String,
     pub title_cn: String,
     pub year: i32,
@@ -118,6 +127,16 @@ pub struct FrontendEditableSettings {
     pub dandanplay_app_id: String,
     pub dandanplay_app_secret: String,
     pub dandanplay_api_key: String,
+    pub nyaa_enabled: bool,
+    pub nyaa_base_url: String,
+    pub nyaa_category: String,
+    pub qbittorrent_enabled: bool,
+    pub qbittorrent_base_url: String,
+    pub qbittorrent_username: String,
+    pub qbittorrent_password: String,
+    pub qbittorrent_save_path: String,
+    pub qbittorrent_category: String,
+    pub qbittorrent_tags: String,
     pub logging_level: String,
 }
 
@@ -160,6 +179,67 @@ pub struct MediaSourceResponse {
 #[serde(rename_all = "camelCase")]
 pub struct DanmakuTrackRequest {
     pub media_id: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct CatalogSearchRequest {
+    pub query: String,
+    pub limit: usize,
+}
+
+#[derive(Debug, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct CatalogSearchResponse {
+    pub subjects: Vec<FrontendSubject>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct OnlineSubjectRequest {
+    pub provider: String,
+    pub provider_subject_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct EpisodeResourcesRequest {
+    pub subject_provider: String,
+    pub provider_subject_id: String,
+    pub title: String,
+    pub title_cn: String,
+    pub aliases: Vec<String>,
+    pub episode_number: f64,
+    pub limit: usize,
+}
+
+#[derive(Debug, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct EpisodeResourcesResponse {
+    pub resources: Vec<EpisodeResourceData>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct StartResourceDownloadRequest {
+    pub resource: EpisodeResourceData,
+    pub subject_provider: String,
+    pub provider_subject_id: String,
+    #[ts(optional)]
+    pub episode_number: Option<f64>,
+}
+
+#[derive(Debug, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct DownloadTasksResponse {
+    pub tasks: Vec<DownloadTaskData>,
+}
+
+#[derive(Debug, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectionTestResponse {
+    pub ok: bool,
+    pub message: String,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, TS)]
@@ -321,6 +401,77 @@ pub fn danmaku_track(
     Ok(frontend_danmaku_track_from_domain(track))
 }
 
+pub fn search_catalog(
+    context: &AppContext,
+    input: CatalogSearchRequest,
+) -> AppResult<CatalogSearchResponse> {
+    let subjects = context
+        .catalog
+        .search_catalog(&input.query, input.limit)?
+        .into_iter()
+        .map(frontend_subject_from_catalog)
+        .collect();
+    Ok(CatalogSearchResponse { subjects })
+}
+
+pub fn online_subject(
+    context: &AppContext,
+    input: OnlineSubjectRequest,
+) -> AppResult<FrontendSubject> {
+    context
+        .catalog
+        .online_subject(&input.provider, &input.provider_subject_id)
+        .map(frontend_subject_from_catalog)
+}
+
+pub fn episode_resources(
+    context: &AppContext,
+    input: EpisodeResourcesRequest,
+) -> AppResult<EpisodeResourcesResponse> {
+    Ok(EpisodeResourcesResponse {
+        resources: context.catalog.search_episode_resources(
+            &input.subject_provider,
+            &input.provider_subject_id,
+            &input.title,
+            &input.title_cn,
+            &input.aliases,
+            input.episode_number,
+            input.limit,
+        )?,
+    })
+}
+
+pub fn start_resource_download(
+    context: &AppContext,
+    input: StartResourceDownloadRequest,
+) -> AppResult<DownloadTaskData> {
+    context.catalog.start_resource_download(
+        &input.resource,
+        &input.subject_provider,
+        &input.provider_subject_id,
+        input.episode_number,
+    )
+}
+
+pub fn download_tasks(context: &AppContext) -> AppResult<DownloadTasksResponse> {
+    Ok(DownloadTasksResponse {
+        tasks: context.catalog.list_download_tasks()?,
+    })
+}
+
+pub fn test_qbittorrent_connection(context: &AppContext) -> ConnectionTestResponse {
+    match context.catalog.test_qbittorrent_connection() {
+        Ok(()) => ConnectionTestResponse {
+            ok: true,
+            message: "qBittorrent connection ok".to_string(),
+        },
+        Err(error) => ConnectionTestResponse {
+            ok: false,
+            message: error.to_string(),
+        },
+    }
+}
+
 fn frontend_subject_from_series(card: UiSeriesCardData) -> FrontendSubject {
     let display_title = if card.title_cn.trim().is_empty() {
         card.title.clone()
@@ -362,6 +513,11 @@ fn frontend_subject_from_series(card: UiSeriesCardData) -> FrontendSubject {
         id: format!("subject-{}", card.subject_id),
         media_id: 0,
         subject_id: card.subject_id,
+        source: "local".to_string(),
+        provider: card.provider,
+        provider_subject_id: card.provider_subject_id,
+        local: true,
+        aliases: Vec::new(),
         title: display_title,
         title_cn: card.title,
         year: card
@@ -388,6 +544,71 @@ fn frontend_subject_from_series(card: UiSeriesCardData) -> FrontendSubject {
         metadata_ready: true,
         file_summary: card.latest_file_name,
         local_files,
+        episodes_detail,
+    }
+}
+
+fn frontend_subject_from_catalog(subject: CatalogSubjectData) -> FrontendSubject {
+    let display_title = if subject.title_cn.trim().is_empty() {
+        subject.title.clone()
+    } else {
+        subject.title_cn.clone()
+    };
+    let subject_id = subject
+        .provider_subject_id
+        .parse::<i64>()
+        .unwrap_or_default();
+    let episodes_detail = (1..=subject.episodes)
+        .map(|episode| FrontendEpisode {
+            episode,
+            title: format!("Episode {episode}"),
+            title_cn: String::new(),
+            air_date: String::new(),
+            cached: false,
+            media_id: None,
+            file_name: None,
+            file_size: None,
+        })
+        .collect();
+    FrontendSubject {
+        id: subject.id,
+        media_id: 0,
+        subject_id,
+        source: subject.source,
+        provider: subject.provider,
+        provider_subject_id: subject.provider_subject_id,
+        local: subject.local,
+        aliases: subject.aliases,
+        title: display_title,
+        title_cn: subject.title,
+        year: subject
+            .air_date
+            .get(0..4)
+            .and_then(|year| year.parse().ok())
+            .unwrap_or_default(),
+        air_date: subject.air_date,
+        rating: subject.rating,
+        rank: subject.rank,
+        tags: subject.tags,
+        summary: subject.summary,
+        poster: normalize_asset_path(&subject.poster),
+        hero: normalize_asset_path(&subject.hero),
+        status: FrontendMatchStatus::Matched,
+        episodes: subject.episodes,
+        watched_episodes: 0,
+        current_episode: None,
+        progress: 0.0,
+        files: subject.files,
+        total_size: String::new(),
+        last_played: None,
+        new_episode: false,
+        metadata_ready: subject.metadata_ready,
+        file_summary: if subject.local {
+            "本地资料库".to_string()
+        } else {
+            "在线资料库".to_string()
+        },
+        local_files: Vec::new(),
         episodes_detail,
     }
 }
@@ -519,6 +740,17 @@ pub fn export_types(output_path: impl AsRef<Path>) -> AppResult<()> {
         FrontendDanmakuMode::decl(&ts_config),
         FrontendDanmakuItem::decl(&ts_config),
         DanmakuTrackResponse::decl(&ts_config),
+        CatalogSubjectData::decl(&ts_config),
+        EpisodeResourceData::decl(&ts_config),
+        DownloadTaskData::decl(&ts_config),
+        CatalogSearchRequest::decl(&ts_config),
+        CatalogSearchResponse::decl(&ts_config),
+        OnlineSubjectRequest::decl(&ts_config),
+        EpisodeResourcesRequest::decl(&ts_config),
+        EpisodeResourcesResponse::decl(&ts_config),
+        StartResourceDownloadRequest::decl(&ts_config),
+        DownloadTasksResponse::decl(&ts_config),
+        ConnectionTestResponse::decl(&ts_config),
         BackendEvent::decl(&ts_config),
     ]
     .join("\n\n")
@@ -553,6 +785,16 @@ fn frontend_settings_from_config(config: AppConfig) -> FrontendEditableSettings 
         dandanplay_app_id: config.dandanplay.app_id,
         dandanplay_app_secret: config.dandanplay.app_secret,
         dandanplay_api_key: config.dandanplay.api_key,
+        nyaa_enabled: config.nyaa.enabled,
+        nyaa_base_url: config.nyaa.base_url,
+        nyaa_category: config.nyaa.category,
+        qbittorrent_enabled: config.qbittorrent.enabled,
+        qbittorrent_base_url: config.qbittorrent.base_url,
+        qbittorrent_username: config.qbittorrent.username,
+        qbittorrent_password: config.qbittorrent.password,
+        qbittorrent_save_path: config.qbittorrent.save_path,
+        qbittorrent_category: config.qbittorrent.category,
+        qbittorrent_tags: config.qbittorrent.tags,
         logging_level: config.logging.level,
     }
 }
@@ -581,6 +823,20 @@ fn config_from_frontend_settings(input: FrontendEditableSettings) -> AppConfig {
             request_timeout_secs: input.bangumi_request_timeout_secs.max(1),
             auto_match: input.bangumi_auto_match,
             cache_images: input.bangumi_cache_images,
+        },
+        nyaa: NyaaConfig {
+            enabled: input.nyaa_enabled,
+            base_url: input.nyaa_base_url,
+            category: input.nyaa_category,
+        },
+        qbittorrent: QbittorrentConfig {
+            enabled: input.qbittorrent_enabled,
+            base_url: input.qbittorrent_base_url,
+            username: input.qbittorrent_username,
+            password: input.qbittorrent_password,
+            save_path: input.qbittorrent_save_path,
+            category: input.qbittorrent_category,
+            tags: input.qbittorrent_tags,
         },
         logging: LoggingConfig {
             level: input.logging_level,

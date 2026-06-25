@@ -180,6 +180,8 @@ pub struct UiMediaCardData {
 #[derive(Debug, Clone, Serialize)]
 pub struct UiSeriesCardData {
     pub subject_id: i64,
+    pub provider: String,
+    pub provider_subject_id: String,
     pub title: String,
     pub title_cn: String,
     pub summary: String,
@@ -245,4 +247,45 @@ pub struct UiCandidateData {
     pub summary: String,
     pub score_text: String,
     pub selected: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct ResourceCandidate {
+    pub id: i64,
+    pub subject_provider: String,
+    pub provider_subject_id: String,
+    pub episode_number: Option<f64>,
+    pub provider: String,
+    pub title: String,
+    pub subtitle_group: Option<String>,
+    pub resolution: Option<String>,
+    pub torrent_url: String,
+    pub page_url: Option<String>,
+    pub info_hash: Option<String>,
+    pub size_text: Option<String>,
+    pub seeders: i64,
+    pub leechers: i64,
+    pub downloads: i64,
+    pub trusted: bool,
+    pub remake: bool,
+    pub batch: bool,
+    pub published_at: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DownloadTask {
+    pub id: i64,
+    pub resource_id: Option<i64>,
+    pub subject_provider: String,
+    pub provider_subject_id: String,
+    pub episode_number: Option<f64>,
+    pub title: String,
+    pub torrent_url: String,
+    pub info_hash: Option<String>,
+    pub qbittorrent_hash: Option<String>,
+    pub status: String,
+    pub progress: f64,
+    pub save_path: Option<String>,
+    pub error: Option<String>,
+    pub updated_at: i64,
 }

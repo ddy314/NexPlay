@@ -14,9 +14,11 @@ use crate::metadata::provider::{MetadataProvider, SubjectDetail};
 use crate::repository::Repository;
 use crate::task::{self, AppEvent};
 
+mod catalog;
 mod danmaku;
 mod watch_history;
 
+pub use catalog::{CatalogService, CatalogSubjectData, DownloadTaskData, EpisodeResourceData};
 pub use danmaku::DanmakuService;
 pub use watch_history::WatchHistoryService;
 

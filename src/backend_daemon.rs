@@ -7,9 +7,11 @@ use serde_json::Value;
 
 use crate::app::AppContext;
 use crate::backend_api::{
-    DanmakuTrackRequest, FrontendEditableSettings, MediaSourceRequest, OpenMediaRequest,
-    danmaku_track, frontend_event_from_app, media_source, open_media, save_settings_config, scan,
-    settings_config, snapshot,
+    CatalogSearchRequest, DanmakuTrackRequest, EpisodeResourcesRequest, FrontendEditableSettings,
+    MediaSourceRequest, OnlineSubjectRequest, OpenMediaRequest, StartResourceDownloadRequest,
+    danmaku_track, download_tasks, episode_resources, frontend_event_from_app, media_source,
+    online_subject, open_media, save_settings_config, scan, search_catalog, settings_config,
+    snapshot, start_resource_download, test_qbittorrent_connection,
 };
 use crate::error::{AppError, AppResult, io_error};
 use crate::task::AppEvent;
@@ -137,6 +139,24 @@ fn dispatch(context: &AppContext, method: &str, params: Option<Value>) -> AppRes
             let input: DanmakuTrackRequest = from_params(params)?;
             to_value(danmaku_track(context, input)?)
         }
+        "searchCatalog" => {
+            let input: CatalogSearchRequest = from_params(params)?;
+            to_value(search_catalog(context, input)?)
+        }
+        "onlineSubject" => {
+            let input: OnlineSubjectRequest = from_params(params)?;
+            to_value(online_subject(context, input)?)
+        }
+        "episodeResources" => {
+            let input: EpisodeResourcesRequest = from_params(params)?;
+            to_value(episode_resources(context, input)?)
+        }
+        "startResourceDownload" => {
+            let input: StartResourceDownloadRequest = from_params(params)?;
+            to_value(start_resource_download(context, input)?)
+        }
+        "downloadTasks" => to_value(download_tasks(context)?),
+        "testQbittorrentConnection" => to_value(test_qbittorrent_connection(context)),
         other => Err(AppError::Api(format!("unknown JSON-RPC method: {other}"))),
     }
 }

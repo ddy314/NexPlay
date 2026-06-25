@@ -188,10 +188,13 @@ struct BangumiSubject {
     name_cn: Option<String>,
     summary: Option<String>,
     date: Option<String>,
+    eps: Option<i64>,
+    total_episodes: Option<i64>,
     rank: Option<i64>,
     rating: Option<BangumiRating>,
     images: Option<BangumiImages>,
     tags: Option<Vec<BangumiTag>>,
+    infobox: Option<Vec<BangumiInfoboxItem>>,
 }
 
 impl BangumiSubject {
@@ -208,6 +211,8 @@ impl BangumiSubject {
             rank: self.rank,
             image_large: non_empty(images.large),
             image_common: non_empty(images.common),
+            aliases: aliases_from_infobox(self.infobox.as_deref()),
+            episode_count: subject_episode_count(self.eps, self.total_episodes),
         }
     }
 
@@ -229,6 +234,8 @@ impl BangumiSubject {
                 .map(|tag| tag.name)
                 .filter(|tag| !tag.trim().is_empty())
                 .collect(),
+            aliases: aliases_from_infobox(self.infobox.as_deref()),
+            episode_count: subject_episode_count(self.eps, self.total_episodes),
             images: SubjectImages {
                 large: non_empty(images.large),
                 common: non_empty(images.common),
@@ -251,6 +258,24 @@ struct BangumiRating {
 #[derive(Debug, Deserialize)]
 struct BangumiTag {
     name: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct BangumiInfoboxItem {
+    key: String,
+    value: BangumiInfoboxValue,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum BangumiInfoboxValue {
+    String(String),
+    List(Vec<BangumiInfoboxAlias>),
+}
+
+#[derive(Debug, Deserialize)]
+struct BangumiInfoboxAlias {
+    v: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -293,6 +318,38 @@ fn non_empty(value: Option<String>) -> Option<String> {
             Some(trimmed.to_string())
         }
     })
+}
+
+fn aliases_from_infobox(infobox: Option<&[BangumiInfoboxItem]>) -> Vec<String> {
+    let mut aliases = Vec::new();
+    for item in infobox.unwrap_or_default() {
+        if item.key != "别名" {
+            continue;
+        }
+        match &item.value {
+            BangumiInfoboxValue::String(value) => push_non_empty(&mut aliases, value),
+            BangumiInfoboxValue::List(values) => {
+                for value in values {
+                    push_non_empty(&mut aliases, &value.v);
+                }
+            }
+        }
+    }
+    aliases
+}
+
+fn push_non_empty(values: &mut Vec<String>, value: &str) {
+    let trimmed = value.trim();
+    if !trimmed.is_empty() && !values.iter().any(|item| item == trimmed) {
+        values.push(trimmed.to_string());
+    }
+}
+
+fn subject_episode_count(eps: Option<i64>, total_episodes: Option<i64>) -> Option<usize> {
+    total_episodes
+        .or(eps)
+        .filter(|value| *value > 0)
+        .map(|value| value as usize)
 }
 
 #[cfg(test)]

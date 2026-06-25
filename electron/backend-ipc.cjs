@@ -69,6 +69,20 @@ function registerBackendIpc(backendClient) {
   ipcMain.handle("backend:danmaku-track", (_event, mediaId) => (
     backendClient.request("danmakuTrack", { mediaId })
   ));
+  ipcMain.handle("backend:search-catalog", (_event, payload) => (
+    backendClient.request("searchCatalog", payload)
+  ));
+  ipcMain.handle("backend:online-subject", (_event, payload) => (
+    backendClient.request("onlineSubject", payload)
+  ));
+  ipcMain.handle("backend:episode-resources", (_event, payload) => (
+    backendClient.request("episodeResources", payload)
+  ));
+  ipcMain.handle("backend:start-resource-download", (_event, payload) => (
+    backendClient.request("startResourceDownload", payload)
+  ));
+  ipcMain.handle("backend:download-tasks", () => backendClient.request("downloadTasks"));
+  ipcMain.handle("backend:test-qbittorrent", () => backendClient.request("testQbittorrentConnection"));
 }
 
 module.exports = {

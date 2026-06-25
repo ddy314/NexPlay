@@ -3,9 +3,9 @@ use std::path::{Path, PathBuf};
 use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::domain::{
-    DanmakuCommentCache, DanmakuMatch, MediaFile, MediaItem, MetadataCandidate,
-    ScanUpsertStatus, Subject, SubjectEpisode, SubjectImageCache, UiCandidateData,
-    UiMediaCardData, UiSeriesCardData, UiSeriesEpisodeData, UiSeriesFileData,
+    DanmakuCommentCache, DanmakuMatch, DownloadTask, MediaFile, MediaItem, MetadataCandidate,
+    ResourceCandidate, ScanUpsertStatus, Subject, SubjectEpisode, SubjectImageCache,
+    UiCandidateData, UiMediaCardData, UiSeriesCardData, UiSeriesEpisodeData, UiSeriesFileData,
     UiSubjectDetailData, WatchProgress,
 };
 use crate::error::AppResult;
@@ -61,6 +61,8 @@ impl Repository {
             )
             SELECT
                 s.id,
+                s.provider,
+                s.provider_subject_id,
                 s.title,
                 COALESCE(s.title_cn, ''),
                 COALESCE(s.summary, ''),
@@ -88,24 +90,26 @@ impl Repository {
             "#,
         )?;
         let rows = stmt.query_map([], |row| {
-            let tags_json: String = row.get(7)?;
+            let tags_json: String = row.get(9)?;
             let tags = serde_json::from_str::<Vec<String>>(&tags_json).unwrap_or_default();
             Ok(UiSeriesCardData {
                 subject_id: row.get(0)?,
-                title: row.get(1)?,
-                title_cn: row.get(2)?,
-                summary: row.get(3)?,
-                air_date: row.get(4)?,
-                rating: row.get(5)?,
-                rank: row.get(6)?,
+                provider: row.get(1)?,
+                provider_subject_id: row.get(2)?,
+                title: row.get(3)?,
+                title_cn: row.get(4)?,
+                summary: row.get(5)?,
+                air_date: row.get(6)?,
+                rating: row.get(7)?,
+                rank: row.get(8)?,
                 tags,
-                poster_path: row.get(8)?,
-                hero_path: row.get(9)?,
-                file_count: row.get::<_, i64>(10)? as usize,
-                episode_count: row.get::<_, i64>(11)? as usize,
-                linked_episode_count: row.get::<_, i64>(12)? as usize,
-                total_size: row.get::<_, i64>(13)? as u64,
-                latest_file_name: row.get(14)?,
+                poster_path: row.get(10)?,
+                hero_path: row.get(11)?,
+                file_count: row.get::<_, i64>(12)? as usize,
+                episode_count: row.get::<_, i64>(13)? as usize,
+                linked_episode_count: row.get::<_, i64>(14)? as usize,
+                total_size: row.get::<_, i64>(15)? as u64,
+                latest_file_name: row.get(16)?,
                 local_files: Vec::new(),
                 episodes: Vec::new(),
             })
@@ -539,6 +543,8 @@ impl Repository {
             rank: candidate.rank,
             image_large: candidate.image_large.clone(),
             image_common: candidate.image_common.clone(),
+            aliases: Vec::new(),
+            episode_count: None,
         };
         self.upsert_subject_from_search(&search, now)
     }
@@ -1402,10 +1408,7 @@ impl Repository {
         .map_err(Into::into)
     }
 
-    pub fn upsert_danmaku_comment_cache(
-        &self,
-        cache: &DanmakuCommentCache,
-    ) -> AppResult<()> {
+    pub fn upsert_danmaku_comment_cache(&self, cache: &DanmakuCommentCache) -> AppResult<()> {
         let conn = self.connect()?;
         conn.execute(
             r#"
@@ -1452,6 +1455,171 @@ impl Repository {
         Ok(())
     }
 
+    pub fn upsert_resource_candidate(
+        &self,
+        candidate: &ResourceCandidate,
+        now: i64,
+    ) -> AppResult<i64> {
+        let conn = self.connect()?;
+        conn.execute(
+            r#"
+            INSERT INTO resource_candidates
+                (subject_provider, provider_subject_id, episode_number, provider, title,
+                 subtitle_group, resolution, torrent_url, page_url, info_hash, size_text,
+                 seeders, leechers, downloads, trusted, remake, batch, published_at,
+                 created_at, updated_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
+                    ?15, ?16, ?17, ?18, ?19, ?19)
+            ON CONFLICT(provider, torrent_url) DO UPDATE SET
+                subject_provider = excluded.subject_provider,
+                provider_subject_id = excluded.provider_subject_id,
+                episode_number = excluded.episode_number,
+                title = excluded.title,
+                subtitle_group = excluded.subtitle_group,
+                resolution = excluded.resolution,
+                page_url = excluded.page_url,
+                info_hash = excluded.info_hash,
+                size_text = excluded.size_text,
+                seeders = excluded.seeders,
+                leechers = excluded.leechers,
+                downloads = excluded.downloads,
+                trusted = excluded.trusted,
+                remake = excluded.remake,
+                batch = excluded.batch,
+                published_at = excluded.published_at,
+                updated_at = excluded.updated_at
+            "#,
+            params![
+                candidate.subject_provider,
+                candidate.provider_subject_id,
+                candidate.episode_number,
+                candidate.provider,
+                candidate.title,
+                candidate.subtitle_group,
+                candidate.resolution,
+                candidate.torrent_url,
+                candidate.page_url,
+                candidate.info_hash,
+                candidate.size_text,
+                candidate.seeders,
+                candidate.leechers,
+                candidate.downloads,
+                if candidate.trusted { 1 } else { 0 },
+                if candidate.remake { 1 } else { 0 },
+                if candidate.batch { 1 } else { 0 },
+                candidate.published_at,
+                now
+            ],
+        )?;
+        conn.query_row(
+            "SELECT id FROM resource_candidates WHERE provider = ?1 AND torrent_url = ?2",
+            params![candidate.provider, candidate.torrent_url],
+            |row| row.get(0),
+        )
+        .map_err(Into::into)
+    }
+
+    pub fn create_download_task(&self, task: &DownloadTask, now: i64) -> AppResult<DownloadTask> {
+        let conn = self.connect()?;
+        conn.execute(
+            r#"
+            INSERT INTO download_tasks
+                (resource_id, subject_provider, provider_subject_id, episode_number, title,
+                 torrent_url, info_hash, qbittorrent_hash, status, progress, save_path, error,
+                 created_at, updated_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?13)
+            "#,
+            params![
+                task.resource_id,
+                task.subject_provider,
+                task.provider_subject_id,
+                task.episode_number,
+                task.title,
+                task.torrent_url,
+                task.info_hash,
+                task.qbittorrent_hash,
+                task.status,
+                task.progress,
+                task.save_path,
+                task.error,
+                now
+            ],
+        )?;
+        let id = conn.last_insert_rowid();
+        drop(conn);
+        self.get_download_task(id)?.ok_or_else(|| {
+            crate::error::AppError::Api("download task was not inserted".to_string())
+        })
+    }
+
+    pub fn update_download_task_status(
+        &self,
+        task_id: i64,
+        status: &str,
+        progress: f64,
+        qbittorrent_hash: Option<&str>,
+        save_path: Option<&str>,
+        error: Option<&str>,
+        now: i64,
+    ) -> AppResult<()> {
+        let conn = self.connect()?;
+        conn.execute(
+            r#"
+            UPDATE download_tasks
+            SET status = ?2,
+                progress = ?3,
+                qbittorrent_hash = COALESCE(?4, qbittorrent_hash),
+                save_path = COALESCE(?5, save_path),
+                error = ?6,
+                updated_at = ?7
+            WHERE id = ?1
+            "#,
+            params![
+                task_id,
+                status,
+                progress,
+                qbittorrent_hash,
+                save_path,
+                error,
+                now
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_download_task(&self, task_id: i64) -> AppResult<Option<DownloadTask>> {
+        let conn = self.connect()?;
+        conn.query_row(
+            r#"
+            SELECT id, resource_id, subject_provider, provider_subject_id, episode_number,
+                   title, torrent_url, info_hash, qbittorrent_hash, status, progress,
+                   save_path, error, updated_at
+            FROM download_tasks
+            WHERE id = ?1
+            "#,
+            params![task_id],
+            map_download_task,
+        )
+        .optional()
+        .map_err(Into::into)
+    }
+
+    pub fn list_download_tasks(&self) -> AppResult<Vec<DownloadTask>> {
+        let conn = self.connect()?;
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT id, resource_id, subject_provider, provider_subject_id, episode_number,
+                   title, torrent_url, info_hash, qbittorrent_hash, status, progress,
+                   save_path, error, updated_at
+            FROM download_tasks
+            ORDER BY updated_at DESC, id DESC
+            LIMIT 100
+            "#,
+        )?;
+        let rows = stmt.query_map([], map_download_task)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
     fn connect(&self) -> AppResult<Connection> {
         if let Some(parent) = self
             .db_path
@@ -1477,6 +1645,25 @@ fn map_media_item(row: &rusqlite::Row<'_>) -> rusqlite::Result<MediaItem> {
         file_hash: row.get(5)?,
         match_ignored: row.get::<_, i64>(6)? != 0,
         deleted_at: row.get(7)?,
+    })
+}
+
+fn map_download_task(row: &rusqlite::Row<'_>) -> rusqlite::Result<DownloadTask> {
+    Ok(DownloadTask {
+        id: row.get(0)?,
+        resource_id: row.get(1)?,
+        subject_provider: row.get(2)?,
+        provider_subject_id: row.get(3)?,
+        episode_number: row.get(4)?,
+        title: row.get(5)?,
+        torrent_url: row.get(6)?,
+        info_hash: row.get(7)?,
+        qbittorrent_hash: row.get(8)?,
+        status: row.get(9)?,
+        progress: row.get(10)?,
+        save_path: row.get(11)?,
+        error: row.get(12)?,
+        updated_at: row.get(13)?,
     })
 }
 
