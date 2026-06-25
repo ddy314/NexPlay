@@ -34,6 +34,8 @@ const pageCopy: Record<CatalogRoute, { title: string; subtitle?: string }> = {
 export function LibraryPage({
   route,
   subjects,
+  searchQuery,
+  onSearchQueryChange,
   scanStatus,
   logs,
   loading,
@@ -44,6 +46,8 @@ export function LibraryPage({
 }: {
   route: CatalogRoute;
   subjects: Subject[];
+  searchQuery: string;
+  onSearchQueryChange: (query: string) => void;
   scanStatus: ScanStatus;
   logs: BackendLogEntry[];
   loading?: boolean;
@@ -52,12 +56,11 @@ export function LibraryPage({
   onSnack: (text: string, tone?: "neutral" | "success" | "danger") => void;
   onScan: () => void | Promise<void>;
 }) {
-  const [query, setQuery] = useState("");
   const [onlineResults, setOnlineResults] = useState<Subject[]>([]);
   const [onlineLoading, setOnlineLoading] = useState(false);
   const [onlineError, setOnlineError] = useState<string | null>(null);
   const [heroIndex, setHeroIndex] = useState(0);
-  const deferredQuery = useDeferredValue(query);
+  const deferredQuery = useDeferredValue(searchQuery);
 
   const watching = useMemo(
     () => subjects.filter((subject) => subject.progress > 0 && subject.progress < 1),
@@ -183,7 +186,7 @@ export function LibraryPage({
           transition={appleSpringSoft}
         >
           {route === "search" && (
-            <SearchHeader query={query} setQuery={setQuery} />
+            <SearchHeader query={searchQuery} setQuery={onSearchQueryChange} />
           )}
 
           {route !== "search" && (

@@ -70,7 +70,12 @@ impl MetadataProvider for BangumiProvider {
             .send()?;
         let status = response.status();
         if !status.is_success() {
-            return Err(AppError::Api(format!("bangumi search rejected: {status}")));
+            let message = if status.as_u16() == 401 {
+                format!("bangumi returned 401: access token may have expired. You can clear it in Settings → Bangumi and try again.")
+            } else {
+                format!("bangumi search rejected: {status}")
+            };
+            return Err(AppError::Api(message));
         }
 
         let response = response.json::<SearchResponse>()?;
@@ -92,7 +97,14 @@ impl MetadataProvider for BangumiProvider {
             .send()?;
         let status = response.status();
         if !status.is_success() {
-            return Err(AppError::Api(format!("bangumi subject rejected: {status}")));
+            let message = if status.as_u16() == 401 {
+                format!(
+                    "bangumi returned 401: access token may have expired. You can clear it in Settings → Bangumi and try again."
+                )
+            } else {
+                format!("bangumi subject rejected: {status}")
+            };
+            return Err(AppError::Api(message));
         }
 
         Ok(response.json::<BangumiSubject>()?.into_detail())

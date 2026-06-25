@@ -558,18 +558,38 @@ fn frontend_subject_from_catalog(subject: CatalogSubjectData) -> FrontendSubject
         .provider_subject_id
         .parse::<i64>()
         .unwrap_or_default();
-    let episodes_detail = (1..=subject.episodes)
-        .map(|episode| FrontendEpisode {
-            episode,
-            title: format!("Episode {episode}"),
-            title_cn: String::new(),
-            air_date: String::new(),
-            cached: false,
-            media_id: None,
-            file_name: None,
-            file_size: None,
-        })
-        .collect();
+    let episodes_detail: Vec<FrontendEpisode> = if subject.episode_list.is_empty() {
+        (1..=subject.episodes)
+            .map(|episode| FrontendEpisode {
+                episode,
+                title: format!("Episode {episode}"),
+                title_cn: String::new(),
+                air_date: String::new(),
+                cached: false,
+                media_id: None,
+                file_name: None,
+                file_size: None,
+            })
+            .collect()
+    } else {
+        subject
+            .episode_list
+            .into_iter()
+            .map(|ep| {
+                let episode = rounded_episode_number(ep.sort_number);
+                FrontendEpisode {
+                    episode,
+                    title: ep.title,
+                    title_cn: ep.title_cn.unwrap_or_default(),
+                    air_date: ep.air_date.unwrap_or_default(),
+                    cached: false,
+                    media_id: None,
+                    file_name: None,
+                    file_size: None,
+                }
+            })
+            .collect()
+    };
     FrontendSubject {
         id: subject.id,
         media_id: 0,
