@@ -13,11 +13,11 @@ export type FrontendLocalFile = { mediaId: number, fileName: string, fileSize: s
 
 export type FrontendEpisode = { episode: number, title: string, titleCn: string, airDate: string, cached: boolean, mediaId?: number, fileName?: string, fileSize?: string, };
 
-export type FrontendSubject = { id: string, mediaId: number, subjectId: number, title: string, titleCn: string, year: number, airDate: string, rating: number, rank: number, tags: Array<string>, summary: string, poster: string, hero: string, status: FrontendMatchStatus, episodes: number, watchedEpisodes: number, currentEpisode?: number, progress: number, files: number, totalSize: string, lastPlayed?: string, newEpisode: boolean, metadataReady: boolean, fileSummary: string, localFiles: Array<FrontendLocalFile>, episodesDetail: Array<FrontendEpisode>, };
+export type FrontendSubject = { id: string, mediaId: number, subjectId: number, source: string, provider: string, providerSubjectId: string, local: boolean, aliases: Array<string>, title: string, titleCn: string, year: number, airDate: string, rating: number, rank: number, tags: Array<string>, summary: string, poster: string, hero: string, status: FrontendMatchStatus, episodes: number, watchedEpisodes: number, currentEpisode?: number, progress: number, files: number, totalSize: string, lastPlayed?: string, newEpisode: boolean, metadataReady: boolean, fileSummary: string, localFiles: Array<FrontendLocalFile>, episodesDetail: Array<FrontendEpisode>, };
 
 export type BackendSnapshot = { subjects: Array<FrontendSubject>, stats: LibraryStats, settings: FrontendSettings, };
 
-export type FrontendEditableSettings = { mediaLibraries: Array<string>, databasePath: string, bangumiEnabled: boolean, bangumiBaseUrl: string, bangumiAccessToken: string, bangumiUserAgent: string, bangumiRequestTimeoutSecs: number, bangumiAutoMatch: boolean, bangumiCacheImages: boolean, dandanplayAppId: string, dandanplayAppSecret: string, dandanplayApiKey: string, loggingLevel: string, };
+export type FrontendEditableSettings = { mediaLibraries: Array<string>, databasePath: string, bangumiEnabled: boolean, bangumiBaseUrl: string, bangumiAccessToken: string, bangumiUserAgent: string, bangumiRequestTimeoutSecs: number, bangumiAutoMatch: boolean, bangumiCacheImages: boolean, dandanplayAppId: string, dandanplayAppSecret: string, dandanplayApiKey: string, nyaaEnabled: boolean, nyaaBaseUrl: string, nyaaCategory: string, qbittorrentEnabled: boolean, qbittorrentBaseUrl: string, qbittorrentUsername: string, qbittorrentPassword: string, qbittorrentSavePath: string, qbittorrentCategory: string, qbittorrentTags: string, loggingLevel: string, };
 
 export type ScanResponse = { summary: ScanSummary, scraped: number, snapshot: BackendSnapshot, };
 
@@ -36,5 +36,27 @@ export type FrontendDanmakuMode = "scroll" | "top" | "bottom";
 export type FrontendDanmakuItem = { id: string, time: number, mode: FrontendDanmakuMode, color: number, text: string, userHash?: string, };
 
 export type DanmakuTrackResponse = { mediaId: number, provider: string, episodeId: number, title: string, fetchedAt: number, expiresAt: number, stale: boolean, items: Array<FrontendDanmakuItem>, };
+
+export type CatalogSubjectData = { id: string, provider: string, providerSubjectId: string, source: string, title: string, titleCn: string, summary: string, airDate: string, rating: number, rank: number, poster: string, hero: string, episodes: number, files: number, local: boolean, metadataReady: boolean, tags: Array<string>, aliases: Array<string>, };
+
+export type EpisodeResourceData = { id: number, provider: string, title: string, subtitleGroup: string, resolution: string, torrentUrl: string, pageUrl: string, infoHash: string, size: string, seeders: number, leechers: number, downloads: number, trusted: boolean, remake: boolean, batch: boolean, episodeStart: number, episodeEnd: number, publishedAt: string, score: number, };
+
+export type DownloadTaskData = { id: number, resourceId?: number, subjectProvider: string, providerSubjectId: string, episodeNumber?: number, title: string, torrentUrl: string, infoHash: string, qbittorrentHash: string, status: string, progress: number, savePath: string, error: string, updatedAt: number, };
+
+export type CatalogSearchRequest = { query: string, limit: number, };
+
+export type CatalogSearchResponse = { subjects: Array<FrontendSubject>, };
+
+export type OnlineSubjectRequest = { provider: string, providerSubjectId: string, };
+
+export type EpisodeResourcesRequest = { subjectProvider: string, providerSubjectId: string, title: string, titleCn: string, aliases: Array<string>, episodeNumber: number, limit: number, };
+
+export type EpisodeResourcesResponse = { resources: Array<EpisodeResourceData>, };
+
+export type StartResourceDownloadRequest = { resource: EpisodeResourceData, subjectProvider: string, providerSubjectId: string, episodeNumber?: number, };
+
+export type DownloadTasksResponse = { tasks: Array<DownloadTaskData>, };
+
+export type ConnectionTestResponse = { ok: boolean, message: string, };
 
 export type BackendEvent = { type: string, message?: string, scanned?: number, indexed?: number, processed?: number, total?: number, summary?: ScanSummary, mediaId?: number, subjectId?: number, imageKind?: string, targetId?: number, };

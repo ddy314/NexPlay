@@ -180,6 +180,77 @@ CREATE INDEX IF NOT EXISTS idx_danmaku_comment_cache_expires_at
     ON danmaku_comment_cache(expires_at);
 "#;
 
+const ONLINE_CATALOG_SCHEMA: &str = r#"
+CREATE TABLE IF NOT EXISTS online_subjects (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    provider TEXT NOT NULL,
+    provider_subject_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    title_cn TEXT,
+    summary TEXT,
+    air_date TEXT,
+    rating REAL,
+    rank INTEGER,
+    image_large TEXT,
+    image_common TEXT,
+    episode_count INTEGER NOT NULL DEFAULT 0,
+    source_payload TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    UNIQUE(provider, provider_subject_id)
+);
+
+CREATE TABLE IF NOT EXISTS resource_candidates (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    subject_provider TEXT NOT NULL,
+    provider_subject_id TEXT NOT NULL,
+    episode_number REAL,
+    provider TEXT NOT NULL,
+    title TEXT NOT NULL,
+    subtitle_group TEXT,
+    resolution TEXT,
+    torrent_url TEXT NOT NULL,
+    page_url TEXT,
+    info_hash TEXT,
+    size_text TEXT,
+    seeders INTEGER NOT NULL DEFAULT 0,
+    leechers INTEGER NOT NULL DEFAULT 0,
+    downloads INTEGER NOT NULL DEFAULT 0,
+    trusted INTEGER NOT NULL DEFAULT 0,
+    remake INTEGER NOT NULL DEFAULT 0,
+    batch INTEGER NOT NULL DEFAULT 0,
+    published_at TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    UNIQUE(provider, torrent_url)
+);
+
+CREATE TABLE IF NOT EXISTS download_tasks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    resource_id INTEGER,
+    subject_provider TEXT NOT NULL,
+    provider_subject_id TEXT NOT NULL,
+    episode_number REAL,
+    title TEXT NOT NULL,
+    torrent_url TEXT NOT NULL,
+    info_hash TEXT,
+    qbittorrent_hash TEXT,
+    status TEXT NOT NULL,
+    progress REAL NOT NULL DEFAULT 0,
+    save_path TEXT,
+    error TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    FOREIGN KEY(resource_id) REFERENCES resource_candidates(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_resource_candidates_subject
+    ON resource_candidates(subject_provider, provider_subject_id, episode_number);
+
+CREATE INDEX IF NOT EXISTS idx_download_tasks_subject
+    ON download_tasks(subject_provider, provider_subject_id, episode_number);
+"#;
+
 pub fn init_database(conn: &mut Connection) -> AppResult<()> {
     conn.execute_batch("PRAGMA foreign_keys = ON;")?;
     let migrations = Migrations::new(vec![
@@ -194,6 +265,7 @@ pub fn init_database(conn: &mut Connection) -> AppResult<()> {
         })
         .comment("baseline NexPlay media library schema"),
         M::up(DANMAKU_COMMENT_CACHE_SCHEMA).comment("cache normalized dandanplay comments"),
+        M::up(ONLINE_CATALOG_SCHEMA).comment("cache online catalog resources and downloads"),
     ]);
     migrations.to_latest(conn)?;
     Ok(())
@@ -232,9 +304,12 @@ mod tests {
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .expect("read version");
-        assert_eq!(version, 2);
+        assert_eq!(version, 3);
         assert!(column_exists(&conn, "media_items", "match_ignored"));
         assert!(table_exists(&conn, "danmaku_comment_cache"));
+        assert!(table_exists(&conn, "online_subjects"));
+        assert!(table_exists(&conn, "resource_candidates"));
+        assert!(table_exists(&conn, "download_tasks"));
     }
 
     #[test]
@@ -262,9 +337,12 @@ mod tests {
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .expect("read version");
-        assert_eq!(version, 2);
+        assert_eq!(version, 3);
         assert!(column_exists(&conn, "media_items", "match_ignored"));
         assert!(table_exists(&conn, "danmaku_comment_cache"));
+        assert!(table_exists(&conn, "online_subjects"));
+        assert!(table_exists(&conn, "resource_candidates"));
+        assert!(table_exists(&conn, "download_tasks"));
     }
 
     fn column_exists(conn: &Connection, table: &str, column: &str) -> bool {

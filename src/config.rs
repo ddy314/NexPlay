@@ -13,6 +13,10 @@ pub struct AppConfig {
     pub dandanplay: DandanplayConfig,
     #[serde(default)]
     pub bangumi: BangumiConfig,
+    #[serde(default)]
+    pub nyaa: NyaaConfig,
+    #[serde(default)]
+    pub qbittorrent: QbittorrentConfig,
     pub logging: LoggingConfig,
 }
 
@@ -37,6 +41,48 @@ pub struct BangumiConfig {
     pub request_timeout_secs: u64,
     pub auto_match: bool,
     pub cache_images: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NyaaConfig {
+    pub enabled: bool,
+    pub base_url: String,
+    pub category: String,
+}
+
+impl Default for NyaaConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            base_url: "https://nyaa.si".to_string(),
+            category: "1_2".to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QbittorrentConfig {
+    pub enabled: bool,
+    pub base_url: String,
+    pub username: String,
+    pub password: String,
+    pub save_path: String,
+    pub category: String,
+    pub tags: String,
+}
+
+impl Default for QbittorrentConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            base_url: "http://127.0.0.1:8080".to_string(),
+            username: "admin".to_string(),
+            password: String::new(),
+            save_path: String::new(),
+            category: "NexPlay".to_string(),
+            tags: "nexplay".to_string(),
+        }
+    }
 }
 
 impl Default for BangumiConfig {
@@ -71,6 +117,8 @@ impl Default for AppConfig {
                 api_key: String::new(),
             },
             bangumi: BangumiConfig::default(),
+            nyaa: NyaaConfig::default(),
+            qbittorrent: QbittorrentConfig::default(),
             logging: LoggingConfig {
                 level: "info".to_string(),
             },

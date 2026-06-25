@@ -1,7 +1,7 @@
-import { memo, useDeferredValue, useMemo, useState } from "react";
+import { memo, useDeferredValue, useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { RefreshCw, Search, Sparkles } from "lucide-react";
-import type { BackendLogEntry, ScanStatus } from "../backend";
+import { loadOnlineSubject, searchCatalog, type BackendLogEntry, type ScanStatus } from "../backend";
 import type { Subject } from "../data";
 import type { Route } from "../NavRail";
 import { MediaCard } from "../MediaCard";
@@ -53,6 +53,9 @@ export function LibraryPage({
   onScan: () => void | Promise<void>;
 }) {
   const [query, setQuery] = useState("");
+  const [onlineResults, setOnlineResults] = useState<Subject[]>([]);
+  const [onlineLoading, setOnlineLoading] = useState(false);
+  const [onlineError, setOnlineError] = useState<string | null>(null);
   const [heroIndex, setHeroIndex] = useState(0);
   const deferredQuery = useDeferredValue(query);
 
@@ -75,6 +78,7 @@ export function LibraryPage({
         subject.titleCn,
         subject.fileSummary,
         ...subject.tags,
+        ...subject.aliases,
       ].join("\n").toLowerCase(),
     })),
     [subjects]
@@ -88,7 +92,58 @@ export function LibraryPage({
       .map((entry) => entry.subject);
   }, [deferredQuery, searchIndex]);
 
-  const displayItems = route === "search" ? searchResults : subjects;
+  useEffect(() => {
+    if (route !== "search") {
+      setOnlineResults([]);
+      setOnlineError(null);
+      setOnlineLoading(false);
+      return;
+    }
+
+    const q = deferredQuery.trim();
+    if (q.length < 2) {
+      setOnlineResults([]);
+      setOnlineError(null);
+      setOnlineLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setOnlineLoading(true);
+    const timer = window.setTimeout(() => {
+      searchCatalog(q, 24)
+        .then((response) => {
+          if (cancelled) return;
+          setOnlineResults(response.subjects);
+          setOnlineError(null);
+        })
+        .catch((caught) => {
+          if (cancelled) return;
+          const message = caught instanceof Error ? caught.message : String(caught);
+          setOnlineResults([]);
+          setOnlineError(message);
+        })
+        .finally(() => {
+          if (!cancelled) setOnlineLoading(false);
+        });
+    }, 240);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [deferredQuery, route]);
+
+  const mergedSearchResults = useMemo(() => {
+    if (route !== "search") return [];
+    const seen = new Set(searchResults.map((subject) => `${subject.provider}:${subject.providerSubjectId}`));
+    return [
+      ...searchResults,
+      ...onlineResults.filter((subject) => !seen.has(`${subject.provider}:${subject.providerSubjectId}`)),
+    ];
+  }, [onlineResults, route, searchResults]);
+
+  const displayItems = route === "search" ? mergedSearchResults : subjects;
   const {
     hasMore,
     loadMore,
@@ -102,6 +157,19 @@ export function LibraryPage({
   });
   const remainingCount = Math.max(0, displayItems.length - visibleCount);
   const copy = pageCopy[route];
+  const openSubject = async (subject: Subject) => {
+    if (subject.local) {
+      onOpen(subject);
+      return;
+    }
+    try {
+      const detail = await loadOnlineSubject(subject.provider, subject.providerSubjectId);
+      onOpen(detail);
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : String(caught);
+      onSnack(`读取在线详情失败：${message}`, "danger");
+    }
+  };
 
   return (
     <div className="h-full overflow-y-auto overflow-x-hidden">
@@ -144,12 +212,16 @@ export function LibraryPage({
             <SearchContent
               query={deferredQuery}
               results={visibleItems}
-              total={searchResults.length}
+              total={mergedSearchResults.length}
+              localCount={searchResults.length}
+              onlineCount={onlineResults.length}
+              onlineLoading={onlineLoading}
+              onlineError={onlineError}
               hasMore={hasMore}
               remainingCount={remainingCount}
               sentinelRef={sentinelRef}
               onLoadMore={loadMore}
-              onOpen={onOpen}
+              onOpen={(subject) => void openSubject(subject)}
             />
           ) : !subjects.length ? (
             <EmptyState
@@ -161,7 +233,7 @@ export function LibraryPage({
               {heroSubject && (
                 <HeroBanner
                   subject={heroSubject}
-                  onOpen={() => onOpen(heroSubject)}
+                  onOpen={() => void openSubject(heroSubject)}
                   current={heroIndex}
                   total={watching.length || 1}
                   onNext={() => setHeroIndex((index) => (index + 1) % Math.max(1, watching.length))}
@@ -169,11 +241,11 @@ export function LibraryPage({
               )}
               {watching.length > 0 && (
                 <Section title="继续观看">
-                  <CardGrid subjects={watching} onOpen={onOpen} />
+                  <CardGrid subjects={watching} onOpen={(subject) => void openSubject(subject)} />
                 </Section>
               )}
               <Section title="最近添加">
-                <CardGrid subjects={recent} onOpen={onOpen} offset={watching.length} />
+                <CardGrid subjects={recent} onOpen={(subject) => void openSubject(subject)} offset={watching.length} />
               </Section>
             </>
           ) : (
@@ -185,11 +257,11 @@ export function LibraryPage({
               )}
               {completed.length > 0 && (
                 <Section title="已完成">
-                  <CardGrid subjects={completedPreview} onOpen={onOpen} />
+                  <CardGrid subjects={completedPreview} onOpen={(subject) => void openSubject(subject)} />
                 </Section>
               )}
               <Section title="全部番剧">
-                <CardGrid subjects={visibleItems} onOpen={onOpen} />
+                <CardGrid subjects={visibleItems} onOpen={(subject) => void openSubject(subject)} />
                 {hasMore && (
                   <LoadMore
                     remainingCount={remainingCount}
@@ -226,8 +298,8 @@ function SearchHeader({
         />
       </label>
       <div className="search-scope">
-        <button type="button" className="active">NexPlay</button>
-        <button type="button">资料库</button>
+        <button type="button" className="active">全部</button>
+        <button type="button">在线自动</button>
       </div>
     </div>
   );
@@ -237,6 +309,10 @@ function SearchContent({
   query,
   results,
   total,
+  localCount,
+  onlineCount,
+  onlineLoading,
+  onlineError,
   hasMore,
   remainingCount,
   sentinelRef,
@@ -246,6 +322,10 @@ function SearchContent({
   query: string;
   results: Subject[];
   total: number;
+  localCount: number;
+  onlineCount: number;
+  onlineLoading: boolean;
+  onlineError: string | null;
   hasMore: boolean;
   remainingCount: number;
   sentinelRef: (node: HTMLDivElement | null) => void;
@@ -262,7 +342,19 @@ function SearchContent({
   }
 
   return (
-    <Section title="搜索结果" subtitle={`${total} 部`}>
+    <Section
+      title="搜索结果"
+      subtitle={
+        onlineLoading
+          ? `${localCount} 本地 · 正在搜索在线资料`
+          : `${total} 部 · 本地 ${localCount} · 在线 ${onlineCount}`
+      }
+    >
+      {onlineError && (
+        <div className="mb-4 rounded-[var(--radius-card)] bg-rose-500/8 px-4 py-2 text-[12px] font-medium text-rose-600">
+          在线搜索失败：{onlineError}
+        </div>
+      )}
       {results.length ? (
         <>
           <CardGrid subjects={results} onOpen={onOpen} />

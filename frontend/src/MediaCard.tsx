@@ -139,6 +139,11 @@ export const MediaCard = memo(function MediaCard({
               <Badge tone="primary">NEW</Badge>
             </div>
           )}
+          {!subject.local && (
+            <div className="absolute left-2.5 top-2.5">
+              <Badge tone="neutral">ONLINE</Badge>
+            </div>
+          )}
 
           <div className="absolute inset-0 flex scale-75 items-center justify-center opacity-0 transition-all duration-300 group-hover:scale-100 group-hover:opacity-100">
             <div className="media-card-play relative flex size-12 items-center justify-center rounded-full bg-white/92">

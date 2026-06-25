@@ -4,6 +4,12 @@ import type {
   BackendSnapshot as GeneratedBackendSnapshot,
   FrontendEditableSettings,
   DanmakuTrackResponse as GeneratedDanmakuTrackResponse,
+  CatalogSearchResponse,
+  ConnectionTestResponse,
+  DownloadTaskData,
+  DownloadTasksResponse,
+  EpisodeResourceData,
+  EpisodeResourcesResponse,
   MediaSourceResponse,
   OpenMediaResponse,
   ScanResponse as GeneratedScanResponse,
@@ -14,6 +20,12 @@ export type EditableSettings = FrontendEditableSettings;
 export type ScanResponse = GeneratedScanResponse;
 export type MediaSource = MediaSourceResponse;
 export type DanmakuTrack = GeneratedDanmakuTrackResponse;
+export type CatalogSearch = CatalogSearchResponse;
+export type EpisodeResource = EpisodeResourceData;
+export type EpisodeResources = EpisodeResourcesResponse;
+export type DownloadTask = DownloadTaskData;
+export type DownloadTasks = DownloadTasksResponse;
+export type ConnectionTest = ConnectionTestResponse;
 export type { OpenMediaResponse };
 
 export type MpvTrack = {
@@ -388,4 +400,52 @@ export function useBackendSnapshot() {
     refresh,
     scanLibrary,
   };
+}
+
+export async function searchCatalog(query: string, limit = 24): Promise<CatalogSearch> {
+  if (!window.nexplay) {
+    return { subjects: [] };
+  }
+  return window.nexplay.searchCatalog({ query, limit });
+}
+
+export async function loadOnlineSubject(provider: string, providerSubjectId: string) {
+  if (!window.nexplay) {
+    throw new Error("当前页面没有连接到 NexPlay 后端。");
+  }
+  return window.nexplay.onlineSubject({ provider, providerSubjectId });
+}
+
+export async function searchEpisodeResources(input: {
+  subjectProvider: string;
+  providerSubjectId: string;
+  title: string;
+  titleCn: string;
+  aliases?: string[];
+  episodeNumber: number;
+  limit?: number;
+}): Promise<EpisodeResources> {
+  if (!window.nexplay) {
+    return { resources: [] };
+  }
+  return window.nexplay.episodeResources({ ...input, aliases: input.aliases ?? [], limit: input.limit ?? 32 });
+}
+
+export async function startResourceDownload(input: {
+  resource: EpisodeResource;
+  subjectProvider: string;
+  providerSubjectId: string;
+  episodeNumber?: number;
+}): Promise<DownloadTask> {
+  if (!window.nexplay) {
+    throw new Error("当前页面没有连接到 NexPlay 后端。");
+  }
+  return window.nexplay.startResourceDownload(input);
+}
+
+export async function testQbittorrentConnection(): Promise<ConnectionTest> {
+  if (!window.nexplay) {
+    return { ok: false, message: "当前页面没有连接到 NexPlay 后端。" };
+  }
+  return window.nexplay.testQbittorrentConnection();
 }

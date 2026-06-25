@@ -107,6 +107,12 @@ contextBridge.exposeInMainWorld("nexplay", {
   scanLibrary: () => ipcRenderer.invoke("backend:scan"),
   getSettings: () => ipcRenderer.invoke("backend:settings"),
   saveSettings: (settings) => ipcRenderer.invoke("backend:save-settings", settings),
+  searchCatalog: (payload) => ipcRenderer.invoke("backend:search-catalog", payload),
+  onlineSubject: (payload) => ipcRenderer.invoke("backend:online-subject", payload),
+  episodeResources: (payload) => ipcRenderer.invoke("backend:episode-resources", payload),
+  startResourceDownload: (payload) => ipcRenderer.invoke("backend:start-resource-download", payload),
+  downloadTasks: () => ipcRenderer.invoke("backend:download-tasks"),
+  testQbittorrentConnection: () => ipcRenderer.invoke("backend:test-qbittorrent"),
   openMedia: (mediaId) => ipcRenderer.invoke("backend:open-media", mediaId),
   getMediaSource: async (mediaId) => {
     const source = await ipcRenderer.invoke("backend:media-source", mediaId);

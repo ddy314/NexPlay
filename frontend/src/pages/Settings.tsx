@@ -1,15 +1,17 @@
 import { useEffect, useMemo, useState } from "react";
-import type { EditableSettings } from "../backend";
+import { testQbittorrentConnection, type EditableSettings } from "../backend";
 import { Button, Card, Switch } from "../ui";
 import { ChevronRight, KeyIcon } from "../icons";
 import { cn } from "../utils/cn";
 
-type Section = "libraries" | "bangumi" | "dandanplay" | "about";
+type Section = "libraries" | "bangumi" | "dandanplay" | "resources" | "qbittorrent" | "about";
 
 const sections: { id: Section; label: string; desc: string }[] = [
   { id: "libraries", label: "Media Libraries", desc: "目录与数据库" },
   { id: "bangumi", label: "Bangumi", desc: "元数据、匹配、图片缓存" },
   { id: "dandanplay", label: "DanDanPlay", desc: "弹幕匹配凭证" },
+  { id: "resources", label: "Nyaa", desc: "在线资源搜索" },
+  { id: "qbittorrent", label: "qBittorrent", desc: "本地下载器" },
   { id: "about", label: "About", desc: "当前构建信息" },
 ];
 
@@ -26,6 +28,16 @@ const emptySettings: EditableSettings = {
   dandanplayAppId: "",
   dandanplayAppSecret: "",
   dandanplayApiKey: "",
+  nyaaEnabled: true,
+  nyaaBaseUrl: "https://nyaa.si",
+  nyaaCategory: "1_2",
+  qbittorrentEnabled: false,
+  qbittorrentBaseUrl: "http://127.0.0.1:8080",
+  qbittorrentUsername: "admin",
+  qbittorrentPassword: "",
+  qbittorrentSavePath: "",
+  qbittorrentCategory: "NexPlay",
+  qbittorrentTags: "nexplay",
   loggingLevel: "info",
 };
 
@@ -39,6 +51,7 @@ export function SettingsPage({
   const [librariesText, setLibrariesText] = useState("");
   const [loading, setLoading] = useState(Boolean(window.nexplay));
   const [saving, setSaving] = useState(false);
+  const [testingQbit, setTestingQbit] = useState(false);
   const [showSecrets, setShowSecrets] = useState(false);
 
   useEffect(() => {
@@ -102,6 +115,27 @@ export function SettingsPage({
 
   const update = <K extends keyof EditableSettings>(key: K, value: EditableSettings[K]) => {
     setSettings((current) => ({ ...current, [key]: value }));
+  };
+
+  const testQbit = async () => {
+    if (!window.nexplay) {
+      onSnack("当前不是 Electron 环境，无法测试 qBittorrent。", "danger");
+      return;
+    }
+
+    setTestingQbit(true);
+    try {
+      const saved = await window.nexplay.saveSettings(normalizedSettings);
+      setSettings(saved);
+      setLibrariesText(saved.mediaLibraries.join("\n"));
+      const result = await testQbittorrentConnection();
+      onSnack(result.message, result.ok ? "success" : "danger");
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : String(caught);
+      onSnack(`qBittorrent 连接失败：${message}`, "danger");
+    } finally {
+      setTestingQbit(false);
+    }
   };
 
   return (
@@ -290,6 +324,113 @@ export function SettingsPage({
                   />
                 }
               />
+            </Group>
+          )}
+
+          {section === "resources" && (
+            <Group title="Nyaa" desc="用于在线搜索番剧资源候选。">
+              <SettingsRow
+                title="启用 Nyaa"
+                control={<Switch checked={settings.nyaaEnabled} onChange={(value) => update("nyaaEnabled", value)} />}
+              />
+              <SettingsRow
+                title="RSS 地址"
+                desc="默认使用 nyaa.si 的 RSS 查询。"
+                control={
+                  <TextInput
+                    value={settings.nyaaBaseUrl}
+                    onChange={(value) => update("nyaaBaseUrl", value)}
+                    className="w-full font-mono"
+                  />
+                }
+              />
+              <SettingsRow
+                title="分类"
+                desc="Nyaa 分类 ID，默认 1_2 为 Anime - English-translated。"
+                control={
+                  <TextInput
+                    value={settings.nyaaCategory}
+                    onChange={(value) => update("nyaaCategory", value)}
+                    className="w-full font-mono"
+                  />
+                }
+              />
+            </Group>
+          )}
+
+          {section === "qbittorrent" && (
+            <Group title="qBittorrent" desc="通过 WebUI API 添加种子并回读任务状态。">
+              <SettingsRow
+                title="启用下载器"
+                control={<Switch checked={settings.qbittorrentEnabled} onChange={(value) => update("qbittorrentEnabled", value)} />}
+              />
+              <SettingsRow
+                title="WebUI 地址"
+                control={
+                  <TextInput
+                    value={settings.qbittorrentBaseUrl}
+                    onChange={(value) => update("qbittorrentBaseUrl", value)}
+                    className="w-full font-mono"
+                  />
+                }
+              />
+              <SettingsRow
+                title="用户名"
+                control={
+                  <TextInput
+                    value={settings.qbittorrentUsername}
+                    onChange={(value) => update("qbittorrentUsername", value)}
+                    className="w-full font-mono"
+                  />
+                }
+              />
+              <SettingsRow
+                title="密码"
+                control={
+                  <SecretInput
+                    value={settings.qbittorrentPassword}
+                    show={showSecrets}
+                    onToggleShow={() => setShowSecrets((value) => !value)}
+                    onChange={(value) => update("qbittorrentPassword", value)}
+                  />
+                }
+              />
+              <SettingsRow
+                title="保存路径"
+                desc="留空时使用 qBittorrent 默认路径。"
+                control={
+                  <TextInput
+                    value={settings.qbittorrentSavePath}
+                    onChange={(value) => update("qbittorrentSavePath", value)}
+                    className="w-full font-mono"
+                  />
+                }
+              />
+              <SettingsRow
+                title="分类"
+                control={
+                  <TextInput
+                    value={settings.qbittorrentCategory}
+                    onChange={(value) => update("qbittorrentCategory", value)}
+                    className="w-full font-mono"
+                  />
+                }
+              />
+              <SettingsRow
+                title="标签"
+                control={
+                  <TextInput
+                    value={settings.qbittorrentTags}
+                    onChange={(value) => update("qbittorrentTags", value)}
+                    className="w-full font-mono"
+                  />
+                }
+              />
+              <div className="px-6 py-4">
+                <Button onClick={testQbit} loading={testingQbit} className="h-9 px-4 text-[13px]">
+                  测试连接
+                </Button>
+              </div>
             </Group>
           )}
 

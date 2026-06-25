@@ -17,5 +17,19 @@ request_timeout_secs = 20
 auto_match = true
 cache_images = true
 
+[nyaa]
+enabled = true
+base_url = "https://nyaa.si"
+category = "1_2"
+
+[qbittorrent]
+enabled = false
+base_url = "http://127.0.0.1:8080"
+username = "admin"
+password = ""
+save_path = ""
+category = "NexPlay"
+tags = "nexplay"
+
 [logging]
 level = "info"
