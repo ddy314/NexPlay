@@ -19,6 +19,7 @@ export default function App() {
   const [route, setRoute] = useState<Route>("home");
   const [detail, setDetail] = useState<Subject | null>(null);
   const [playback, setPlayback] = useState<PlaybackState | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
   const [theme, setTheme] = useState<"light" | "dark">("light");
   const [navCollapsed, setNavCollapsed] = useState(false);
   const snack = useSnackbar();
@@ -33,6 +34,9 @@ export default function App() {
     setPlayback(null);
     setDetail(null);
     setRoute(r);
+    if (r !== "search") {
+      setSearchQuery("");
+    }
   }, []);
 
   return (
@@ -83,6 +87,8 @@ export default function App() {
               <LibraryPage
                 route={route}
                 subjects={backend.subjects}
+                searchQuery={searchQuery}
+                onSearchQueryChange={setSearchQuery}
                 scanStatus={backend.scanStatus}
                 logs={backend.logs}
                 loading={backend.loading}

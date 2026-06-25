@@ -13,7 +13,7 @@ use sha2::{Digest, Sha256};
 use ts_rs::TS;
 
 use crate::config::{ConfigStore, DandanplayConfig, QbittorrentConfig};
-use crate::domain::{DownloadTask, ResourceCandidate};
+use crate::domain::{DownloadTask, ResourceCandidate, SubjectEpisode};
 use crate::error::{AppError, AppResult};
 use crate::metadata::bangumi::BangumiProvider;
 use crate::metadata::provider::{MetadataProvider, SubjectSearchResult};
@@ -41,6 +41,9 @@ pub struct CatalogSubjectData {
     pub metadata_ready: bool,
     pub tags: Vec<String>,
     pub aliases: Vec<String>,
+    #[serde(skip)]
+    #[ts(skip)]
+    pub episode_list: Vec<SubjectEpisode>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -124,7 +127,6 @@ impl CatalogService {
         let variants = search_query_variants(query);
         let (bangumi_tx, bangumi_rx) = std::sync::mpsc::channel();
         let (dandan_tx, dandan_rx) = std::sync::mpsc::channel();
-        let (anilist_tx, anilist_rx) = std::sync::mpsc::channel();
 
         if let Ok(provider) = self.bangumi_provider() {
             let variants = variants.clone();
@@ -170,28 +172,10 @@ impl CatalogService {
             let _ = dandan_tx.send(Ok(Vec::new()));
         }
 
-        {
-            let service = self.clone();
-            let variants = variants.clone();
-            std::thread::spawn(move || {
-                let mut out = Vec::new();
-                for variant in variants.iter().take(4) {
-                    match service.search_anilist(variant) {
-                        Ok(subjects) => out.extend(subjects.into_iter().take(8)),
-                        Err(error) => {
-                            let _ = anilist_tx.send(Err(error));
-                            return;
-                        }
-                    }
-                }
-                let _ = anilist_tx.send(Ok(out));
-            });
-        }
-
         let mut results = Vec::new();
         let mut seen = HashSet::new();
         let deadline = Instant::now() + Duration::from_secs(8);
-        for receiver in [bangumi_rx, dandan_rx, anilist_rx] {
+        for receiver in [bangumi_rx, dandan_rx] {
             let remaining = deadline
                 .checked_duration_since(Instant::now())
                 .unwrap_or_else(|| Duration::from_millis(1));
@@ -241,7 +225,11 @@ impl CatalogService {
                     source: "bangumi".to_string(),
                     title: detail.title,
                     title_cn: detail.title_cn.unwrap_or_default(),
-                    summary: detail.summary.unwrap_or_default(),
+                    summary: detail
+                        .summary
+                        .as_deref()
+                        .map(strip_html)
+                        .unwrap_or_default(),
                     air_date: detail.air_date.unwrap_or_default(),
                     rating: detail.rating.unwrap_or_default(),
                     rank: detail.rank.unwrap_or_default(),
@@ -253,6 +241,7 @@ impl CatalogService {
                     metadata_ready: true,
                     tags: detail.tags,
                     aliases: detail.aliases,
+                    episode_list: episodes,
                 })
             }
             "dandanplay" => self.dandanplay_subject(provider_subject_id).or_else(|_| {
@@ -275,9 +264,9 @@ impl CatalogService {
                     metadata_ready: false,
                     tags: Vec::new(),
                     aliases: Vec::new(),
+                    episode_list: Vec::new(),
                 })
             }),
-            "anilist" => self.anilist_subject(provider_subject_id),
             other => Err(AppError::Api(format!(
                 "unsupported online provider: {other}"
             ))),
@@ -480,47 +469,6 @@ impl CatalogService {
             ));
         };
         Ok(catalog_from_dandanplay_detail(bangumi))
-    }
-
-    fn search_anilist(&self, query: &str) -> AppResult<Vec<CatalogSubjectData>> {
-        let response = self
-            .client
-            .post("https://graphql.anilist.co")
-            .json(&serde_json::json!({
-                "query": "query ($search: String) { Page(page: 1, perPage: 8) { media(search: $search, type: ANIME) { id title { romaji english native } synonyms description startDate { year month day } episodes coverImage { large extraLarge } averageScore popularity } } }",
-                "variables": { "search": query }
-            }))
-            .send()?;
-        ensure_http_success(response.status(), "AniList search")?;
-        let response = response.json::<AniListSearchResponse>()?;
-        Ok(response
-            .data
-            .page
-            .media
-            .into_iter()
-            .map(catalog_from_anilist)
-            .collect())
-    }
-
-    fn anilist_subject(&self, provider_subject_id: &str) -> AppResult<CatalogSubjectData> {
-        let id = provider_subject_id.parse::<i64>().map_err(|_| {
-            AppError::Api(format!("invalid AniList subject id: {provider_subject_id}"))
-        })?;
-        let response = self
-            .client
-            .post("https://graphql.anilist.co")
-            .json(&serde_json::json!({
-                "query": "query ($id: Int) { Media(id: $id, type: ANIME) { id title { romaji english native } synonyms description startDate { year month day } episodes coverImage { large extraLarge } averageScore popularity } }",
-                "variables": { "id": id }
-            }))
-            .send()?;
-        ensure_http_success(response.status(), "AniList detail")?;
-        let response = response.json::<AniListDetailResponse>()?;
-        response
-            .data
-            .media
-            .map(catalog_from_anilist)
-            .ok_or_else(|| AppError::Api("AniList detail returned no media".to_string()))
     }
 
     fn fetch_nyaa_rss(
@@ -742,7 +690,6 @@ fn provider_priority(provider: &str) -> i64 {
     match provider {
         "bangumi" => 3,
         "dandanplay" => 2,
-        "anilist" => 1,
         _ => 0,
     }
 }
@@ -755,7 +702,11 @@ fn catalog_from_bangumi_search(subject: SubjectSearchResult) -> CatalogSubjectDa
         source: "bangumi".to_string(),
         title: subject.title,
         title_cn: subject.title_cn.unwrap_or_default(),
-        summary: subject.summary.unwrap_or_default(),
+        summary: subject
+            .summary
+            .as_deref()
+            .map(strip_html)
+            .unwrap_or_default(),
         air_date: subject.air_date.unwrap_or_default(),
         rating: subject.rating.unwrap_or_default(),
         rank: subject.rank.unwrap_or_default(),
@@ -765,8 +716,9 @@ fn catalog_from_bangumi_search(subject: SubjectSearchResult) -> CatalogSubjectDa
         files: 0,
         local: false,
         metadata_ready: true,
-        tags: subject.aliases.clone(),
+        tags: Vec::new(),
         aliases: subject.aliases,
+        episode_list: Vec::new(),
     }
 }
 
@@ -791,6 +743,7 @@ fn catalog_from_dandanplay_search(subject: DandanSearchAnimeDetails) -> CatalogS
         metadata_ready: true,
         tags: Vec::new(),
         aliases: Vec::new(),
+        episode_list: Vec::new(),
     }
 }
 
@@ -819,55 +772,7 @@ fn catalog_from_dandanplay_detail(subject: DandanBangumiDetail) -> CatalogSubjec
         metadata_ready: true,
         tags: Vec::new(),
         aliases: Vec::new(),
-    }
-}
-
-fn catalog_from_anilist(subject: AniListMedia) -> CatalogSubjectData {
-    let aliases = subject.aliases();
-    let poster = subject
-        .cover_image
-        .as_ref()
-        .and_then(|image| image.extra_large.clone().or_else(|| image.large.clone()))
-        .unwrap_or_default();
-    CatalogSubjectData {
-        id: format!("online-anilist-{}", subject.id),
-        provider: "anilist".to_string(),
-        provider_subject_id: subject.id.to_string(),
-        source: "anilist".to_string(),
-        title: subject.title.romaji.clone().unwrap_or_else(|| {
-            subject
-                .title
-                .english
-                .clone()
-                .or(subject.title.native.clone())
-                .unwrap_or_default()
-        }),
-        title_cn: subject
-            .title
-            .native
-            .clone()
-            .or(subject.title.english.clone())
-            .unwrap_or_default(),
-        summary: subject
-            .description
-            .as_deref()
-            .map(strip_html)
-            .unwrap_or_default(),
-        air_date: subject
-            .start_date
-            .as_ref()
-            .and_then(AniListDate::to_iso_date)
-            .unwrap_or_default(),
-        rating: subject.average_score.unwrap_or_default() as f64 / 10.0,
-        rank: 0,
-        poster: poster.clone(),
-        hero: poster,
-        episodes: subject.episodes.unwrap_or_default().max(0) as usize,
-        files: 0,
-        local: false,
-        metadata_ready: true,
-        tags: aliases.clone(),
-        aliases,
+        episode_list: Vec::new(),
     }
 }
 
@@ -880,7 +785,6 @@ fn online_subject_score(subject: &CatalogSubjectData, query: &str) -> i64 {
     };
     let provider_boost = match subject.provider.as_str() {
         "bangumi" => 50,
-        "anilist" => 35,
         _ => 0,
     };
     rating + rank + provider_boost + subject_query_relevance(subject, query)
@@ -1355,15 +1259,6 @@ fn dedupe_strings(values: Vec<String>) -> Vec<String> {
     out
 }
 
-fn push_string(values: &mut Vec<String>, value: Option<String>) {
-    if let Some(value) = value {
-        let trimmed = value.trim();
-        if !trimmed.is_empty() {
-            values.push(trimmed.to_string());
-        }
-    }
-}
-
 fn strip_html(value: &str) -> String {
     let mut out = String::with_capacity(value.len());
     let mut in_tag = false;
@@ -1431,91 +1326,6 @@ fn dandanplay_signature(app_id: &str, timestamp: i64, path: &str, app_secret: &s
 }
 
 const DANDANPLAY_BASE_URL: &str = "https://api.dandanplay.net";
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct AniListSearchResponse {
-    data: AniListSearchData,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "PascalCase")]
-struct AniListSearchData {
-    page: AniListPage,
-}
-
-#[derive(Debug, Deserialize)]
-struct AniListPage {
-    media: Vec<AniListMedia>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct AniListDetailResponse {
-    data: AniListDetailData,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "PascalCase")]
-struct AniListDetailData {
-    media: Option<AniListMedia>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct AniListMedia {
-    id: i64,
-    title: AniListTitle,
-    #[serde(default)]
-    synonyms: Vec<String>,
-    description: Option<String>,
-    start_date: Option<AniListDate>,
-    episodes: Option<i64>,
-    cover_image: Option<AniListCover>,
-    average_score: Option<i64>,
-}
-
-impl AniListMedia {
-    fn aliases(&self) -> Vec<String> {
-        let mut aliases = self.synonyms.clone();
-        push_string(&mut aliases, self.title.romaji.clone());
-        push_string(&mut aliases, self.title.english.clone());
-        push_string(&mut aliases, self.title.native.clone());
-        dedupe_strings(aliases)
-    }
-}
-
-#[derive(Debug, Deserialize)]
-struct AniListTitle {
-    romaji: Option<String>,
-    english: Option<String>,
-    native: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct AniListDate {
-    year: Option<i32>,
-    month: Option<u8>,
-    day: Option<u8>,
-}
-
-impl AniListDate {
-    fn to_iso_date(&self) -> Option<String> {
-        Some(format!(
-            "{:04}-{:02}-{:02}",
-            self.year?,
-            self.month.unwrap_or(1),
-            self.day.unwrap_or(1)
-        ))
-    }
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct AniListCover {
-    large: Option<String>,
-    extra_large: Option<String>,
-}
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1679,6 +1489,7 @@ mod tests {
             metadata_ready: true,
             tags: Vec::new(),
             aliases: Vec::new(),
+            episode_list: Vec::new(),
         };
         let unrelated = CatalogSubjectData {
             title: "アニ＊クリ15".to_string(),
@@ -1691,59 +1502,5 @@ mod tests {
         assert!(online_subject_score(&matching, query) > online_subject_score(&unrelated, query));
     }
 
-    #[test]
-    fn merges_equivalent_subjects_across_providers() {
-        let bangumi = test_subject(
-            "bangumi",
-            "571784",
-            "スーパーの裏でヤニ吸うふたり",
-            "在超市后门吸烟的二人",
-            vec!["Super no Ura de Yani Suu Futari".to_string()],
-        );
-        let anilist = test_subject(
-            "anilist",
-            "196187",
-            "Super no Ura de Yani Suu Futari",
-            "スーパーの裏でヤニ吸うふたり",
-            vec!["Smoking Behind the Supermarket with You".to_string()],
-        );
-        let merged = merge_equivalent_subjects(vec![anilist, bangumi]);
-        assert_eq!(merged.len(), 1);
-        assert_eq!(merged[0].provider, "bangumi");
-        assert_eq!(merged[0].provider_subject_id, "571784");
-        assert!(
-            merged[0]
-                .aliases
-                .contains(&"Smoking Behind the Supermarket with You".to_string())
-        );
-    }
 
-    fn test_subject(
-        provider: &str,
-        provider_subject_id: &str,
-        title: &str,
-        title_cn: &str,
-        aliases: Vec<String>,
-    ) -> CatalogSubjectData {
-        CatalogSubjectData {
-            id: format!("{provider}-{provider_subject_id}"),
-            provider: provider.to_string(),
-            provider_subject_id: provider_subject_id.to_string(),
-            source: provider.to_string(),
-            title: title.to_string(),
-            title_cn: title_cn.to_string(),
-            summary: String::new(),
-            air_date: String::new(),
-            rating: 0.0,
-            rank: 0,
-            poster: String::new(),
-            hero: String::new(),
-            episodes: 0,
-            files: 0,
-            local: false,
-            metadata_ready: true,
-            tags: Vec::new(),
-            aliases,
-        }
-    }
 }
