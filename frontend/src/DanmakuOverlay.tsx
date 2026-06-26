@@ -123,6 +123,7 @@ export function DanmakuOverlay({
     paused: true,
   });
   const visibleRef = useRef(visible);
+  const pausedRef = useRef(paused);
   const seekingRef = useRef(seeking);
   const areaRef = useRef(area);
   const durationRef = useRef(duration);
@@ -131,6 +132,10 @@ export function DanmakuOverlay({
   useEffect(() => {
     visibleRef.current = visible;
   }, [visible]);
+
+  useEffect(() => {
+    pausedRef.current = paused;
+  }, [paused]);
 
   useEffect(() => {
     seekingRef.current = seeking;
@@ -152,15 +157,16 @@ export function DanmakuOverlay({
     if (!seekReset) return;
     const now = performance.now();
     const nextPosition = Number.isFinite(seekReset.position) ? Math.max(0, seekReset.position) : 0;
+    const resetPaused = pausedRef.current;
     clockRef.current = {
       mediaId,
       position: nextPosition,
       timestamp: now,
-      paused,
+      paused: resetPaused,
     };
-    postWorkerMessage({ type: "reset", position: nextPosition, paused });
+    postWorkerMessage({ type: "reset", position: nextPosition, paused: resetPaused });
     resetRendererToPosition(nextPosition);
-  }, [mediaId, paused, seekReset?.version]);
+  }, [mediaId, seekReset?.version]);
 
   useEffect(() => {
     const now = performance.now();
@@ -181,9 +187,12 @@ export function DanmakuOverlay({
     }
 
     if (paused) {
+      const pausedPosition = clockRef.current.paused
+        ? nextPosition
+        : current;
       clockRef.current = {
         mediaId,
-        position: clockRef.current.paused ? clockRef.current.position : current,
+        position: pausedPosition,
         timestamp: now,
         paused: true,
       };
@@ -358,11 +367,7 @@ export function DanmakuOverlay({
       return;
     }
 
-    if (
-      clockRef.current.paused
-      && Math.abs(state.drawnPosition - currentPosition) < 0.001
-      && state.canvasDirty
-    ) {
+    if (clockRef.current.paused && state.canvasDirty) {
       state.lastPosition = currentPosition;
       return;
     }
@@ -371,6 +376,7 @@ export function DanmakuOverlay({
       resetRendererToPosition(currentPosition);
     }
 
+    rebuildActiveItemsAtPosition(ctx, currentPosition);
     emitDueItems(ctx, currentPosition);
     drawActiveItems(ctx, currentPosition);
     prewarmUpcomingBitmaps(ctx, currentPosition);
@@ -406,6 +412,28 @@ export function DanmakuOverlay({
     if (state.prewarmCursor < state.cursor) {
       state.prewarmCursor = state.cursor;
     }
+  }
+
+  function rebuildActiveItemsAtPosition(ctx: CanvasRenderingContext2D, currentPosition: number) {
+    const state = stateRef.current;
+    if (state.drawnPosition >= 0 || state.active.length > 0) return;
+
+    const items = itemsRef.current;
+    const startCursor = lowerBoundByTime(items, Math.max(0, currentPosition - SCROLL_DURATION));
+    const endCursor = upperBoundByTime(items, currentPosition);
+    if (endCursor <= startCursor) return;
+
+    pruneLaneReservations(currentPosition);
+    for (let index = startCursor; index < endCursor && state.active.length < MAX_VISIBLE; index += 1) {
+      const item = items[index];
+      if (!item) continue;
+      const duration = item.mode === "scroll" ? SCROLL_DURATION : FIXED_DURATION;
+      const elapsed = currentPosition - item.time;
+      if (elapsed < -0.05 || elapsed > duration) continue;
+      emitOne(ctx, item, currentPosition);
+    }
+    state.cursor = Math.max(state.cursor, endCursor);
+    state.prewarmCursor = Math.max(state.prewarmCursor, state.cursor);
   }
 
   function prewarmUpcomingBitmaps(ctx: CanvasRenderingContext2D, currentPosition: number) {
@@ -455,7 +483,7 @@ export function DanmakuOverlay({
       duration: item.mode === "scroll" ? SCROLL_DURATION : FIXED_DURATION,
       bitmap,
     };
-    reserveLane(active, currentPosition);
+    reserveLane(active);
     state.active.push(active);
   }
 
@@ -585,16 +613,16 @@ export function DanmakuOverlay({
     return -1;
   }
 
-  function reserveLane(item: ActiveDanmaku, currentPosition: number) {
+  function reserveLane(item: ActiveDanmaku) {
     const lane = stateRef.current.lanes[item.lane];
     if (!lane) return;
     if (item.mode === "scroll") {
-      lane.nextAt = currentPosition + (item.width + SCROLL_GAP) / item.speed;
-      lane.clearAt = currentPosition + item.duration;
+      lane.nextAt = item.time + (item.width + SCROLL_GAP) / item.speed;
+      lane.clearAt = item.time + item.duration;
       return;
     }
-    lane.nextAt = currentPosition + item.duration;
-    lane.clearAt = currentPosition + item.duration;
+    lane.nextAt = item.time + item.duration;
+    lane.clearAt = item.time + item.duration;
   }
 
   function pruneLaneReservations(currentPosition: number) {

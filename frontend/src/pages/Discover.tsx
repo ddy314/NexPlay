@@ -1,13 +1,15 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { motion } from "framer-motion";
 import {
   Activity,
   AlertCircle,
   ArrowRight,
+  CalendarDays,
   CheckCircle2,
   Clock3,
   Compass,
   DownloadCloud,
+  Flame,
   HardDrive,
   Library,
   Loader2,
@@ -27,6 +29,7 @@ import {
   type BangumiSyncStatus,
 } from "../backend";
 import type { Subject } from "../data";
+import { fetchBangumiDiscovery, type DiscoveryFeed } from "../discover";
 import { appleSpringBouncy, appleSpringSoft } from "../motion";
 import { Button, Progress } from "../ui";
 import { resolveAssetUrl } from "../utils/assets";
@@ -60,13 +63,27 @@ export function DiscoverPage({
   onNavigate?: (route: HomeRoute) => void;
 }) {
   const [syncing, setSyncing] = useState(false);
+  const [discovery, setDiscovery] = useState<DiscoveryFeed | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    void fetchBangumiDiscovery()
+      .then((feed) => {
+        if (!cancelled) setDiscovery(feed);
+      })
+      .catch(() => {
+        // Discovery is best-effort; the home page still works from local/BGM data.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   const allSubjects = useMemo(
     () => mergeSubjects(collectionSubjects, localSubjects),
     [collectionSubjects, localSubjects]
   );
   const profile = useMemo(
-    () => buildHomeProfile(collectionSubjects, allSubjects),
-    [allSubjects, collectionSubjects]
+    () => buildHomeProfile(collectionSubjects, allSubjects, discovery),
+    [allSubjects, collectionSubjects, discovery]
   );
   const spotlight = profile.continuing[0]
     ?? profile.highlights[0]
@@ -74,7 +91,9 @@ export function DiscoverPage({
     ?? profile.watching[0]
     ?? profile.wish[0]
     ?? profile.localPlayable[0]
-    ?? profile.popular[0];
+    ?? profile.popular[0]
+    ?? discovery?.today[0]
+    ?? discovery?.trending[0];
   const shelves = useMemo(() => buildShelves(profile, auth.authenticated), [auth.authenticated, profile]);
   const isSyncing = syncStatus.running || syncing;
 
@@ -710,7 +729,7 @@ function Pill({ icon, children }: { icon?: ReactNode; children: ReactNode }) {
 
 type HomeProfile = ReturnType<typeof buildHomeProfile>;
 
-function buildHomeProfile(collectionSubjects: Subject[], allSubjects: Subject[]) {
+function buildHomeProfile(collectionSubjects: Subject[], allSubjects: Subject[], discovery?: DiscoveryFeed | null) {
   const statusCounts = [3, 1, 2, 4, 5].map((type) => ({
     type,
     label: statusMeta[type].label,
@@ -746,7 +765,15 @@ function buildHomeProfile(collectionSubjects: Subject[], allSubjects: Subject[])
     .sort(popularSorter)
     .slice(0, 16);
   const tags = buildTags(collectionSubjects.length ? collectionSubjects : allSubjects);
-  const recommendations = recommendSubjects(allSubjects, tags, collectionSubjects)
+
+  // The recommendation candidate pool blends the user's own subjects with the public
+  // Bangumi discovery feed, so recommendations are never limited to local anime.
+  const ownedKeys = new Set(allSubjects.map(subjectKey));
+  const today = (discovery?.today ?? []).filter((subject) => !ownedKeys.has(subjectKey(subject))).slice(0, 16);
+  const trending = (discovery?.trending ?? []).filter((subject) => !ownedKeys.has(subjectKey(subject))).slice(0, 16);
+  const recommendationPool = mergeSubjects(allSubjects, discovery?.trending ?? []);
+  const collectionKeys = new Set(collectionSubjects.map(subjectKey));
+  const recommendations = recommendSubjects(recommendationPool, tags, collectionKeys)
     .filter((subject) => subject.bgmCollectionType !== 5)
     .slice(0, 16);
   const primaryStatus = [...statusCounts].sort((left, right) => right.count - left.count)[0];
@@ -764,6 +791,8 @@ function buildHomeProfile(collectionSubjects: Subject[], allSubjects: Subject[])
     highlights,
     popular,
     recommendations,
+    today,
+    trending,
     tags,
   };
 }
@@ -785,6 +814,15 @@ function buildShelves(profile: HomeProfile, authenticated: boolean) {
       icon: <PlayCircle size={18} />,
       subjects: profile.continuing,
       layout: "wide",
+    });
+  }
+  if (profile.today.length) {
+    shelves.push({
+      id: "today",
+      title: "今日放送",
+      subtitle: "Bangumi 每日放送 · 今天更新",
+      icon: <CalendarDays size={18} />,
+      subjects: profile.today,
     });
   }
   if (profile.completed.length) {
@@ -827,10 +865,19 @@ function buildShelves(profile: HomeProfile, authenticated: boolean) {
   if (profile.recommendations.length) {
     shelves.push({
       id: "recommendations",
-      title: authenticated ? "基于标签的推荐" : "可能感兴趣",
-      subtitle: profile.tags.length ? "根据云端标签和评分权重排序" : "根据评分与排名排序",
+      title: authenticated ? "为你推荐" : "可能感兴趣",
+      subtitle: profile.tags.length ? "结合你的标签偏好与当季热度" : "结合公开评分、排名与当季热度",
       icon: <Sparkles size={18} />,
       subjects: profile.recommendations,
+    });
+  }
+  if (profile.trending.length) {
+    shelves.push({
+      id: "trending",
+      title: "热门新番",
+      subtitle: "Bangumi 当季热度排行",
+      icon: <Flame size={18} />,
+      subjects: profile.trending,
     });
   }
   if (profile.localPlayable.length) {
@@ -852,7 +899,7 @@ function buildShelves(profile: HomeProfile, authenticated: boolean) {
       subjects: profile.popular,
     });
   }
-  return dedupeShelves(shelves).slice(0, 7);
+  return dedupeShelves(shelves).slice(0, 8);
 }
 
 function hasDistinctSubjects(subjects: Subject[], baseline: Subject[]) {
@@ -889,10 +936,9 @@ function buildTags(subjects: Subject[]) {
   return [...weights.entries()].sort((a, b) => b[1] - a[1]);
 }
 
-function recommendSubjects(allSubjects: Subject[], tags: Array<[string, number]>, collections: Subject[]) {
+function recommendSubjects(pool: Subject[], tags: Array<[string, number]>, collectionKeys: Set<string>) {
   const tagScore = new Map(tags);
-  const collectionKeys = new Set(collections.map(subjectKey));
-  return [...allSubjects].sort((left, right) => (
+  return [...pool].sort((left, right) => (
     recommendationScore(right, tagScore, collectionKeys) - recommendationScore(left, tagScore, collectionKeys)
   ));
 }
@@ -903,8 +949,10 @@ function recommendationScore(subject: Subject, tagScore: Map<string, number>, co
   const publicScore = subject.rating > 0 ? subject.rating : 0;
   const userScore = subject.bgmRate > 0 ? subject.bgmRate * 2 : 0;
   const rankScore = subject.rank > 0 ? Math.max(0, 10 - Math.log10(subject.rank + 1)) : 0;
-  const collectionBoost = collectionKeys.has(key) ? 1.5 : 0;
-  return tagValue + publicScore + userScore + rankScore + collectionBoost;
+  // Recommendations should surface fresh titles: things already in the user's
+  // collection are pushed down so discovery results can rise to the top.
+  const collectedPenalty = collectionKeys.has(key) ? 1000 : 0;
+  return tagValue + publicScore + userScore + rankScore - collectedPenalty;
 }
 
 function mergeSubjects(primary: Subject[], secondary: Subject[]) {

@@ -10,6 +10,7 @@ let activeMpvMode = null;
 let activeTextureProbe = null;
 let renderInfoPromise = null;
 let textureProbePromise = null;
+const EMBEDDED_MPV_UNAVAILABLE_MESSAGE = "内嵌播放器不可用，已禁用外部 mpv fallback";
 
 function resolveAssetUrl(value) {
   if (typeof value !== "string" || !value.startsWith("file://")) {
@@ -30,6 +31,31 @@ function normalizeMediaSource(source) {
   return {
     ...source,
     sourceUrl: resolveAssetUrl(source.sourceUrl),
+  };
+}
+
+function embeddedMpvUnavailableError(detail) {
+  return new Error(detail
+    ? `${EMBEDDED_MPV_UNAVAILABLE_MESSAGE}：${detail}`
+    : EMBEDDED_MPV_UNAVAILABLE_MESSAGE);
+}
+
+function renderUnavailableDetail(bridgeInfo, textureProbe) {
+  return textureProbe?.error
+    || bridgeInfo?.textureProbe?.error
+    || bridgeInfo?.probe?.error
+    || bridgeInfo?.reason
+    || null;
+}
+
+function unloadedMpvState() {
+  return {
+    ok: true,
+    loaded: false,
+    audioTracks: [],
+    subtitleTracks: [],
+    paused: true,
+    volume: 100,
   };
 }
 
@@ -62,9 +88,9 @@ async function loadMpvMedia(mediaId) {
   const canUseTextureRenderer = Boolean(bridgeInfo.available && textureProbe.ok);
 
   if (!canUseTextureRenderer) {
-    activeMpvMode = "externalMpv";
+    activeMpvMode = null;
     activeTextureProbe = textureProbe;
-    return ipcRenderer.invoke("mpv:load", mediaId);
+    throw embeddedMpvUnavailableError(renderUnavailableDetail(bridgeInfo, textureProbe));
   }
 
   const state = await renderBridge.request({
@@ -85,9 +111,9 @@ async function loadMpvMedia(mediaId) {
   };
 }
 
-async function controlMpv(command, fallback) {
+async function controlMpv(command) {
   if (activeMpvMode !== "webglTexture") {
-    return fallback();
+    throw embeddedMpvUnavailableError(activeTextureProbe?.error);
   }
 
   const state = await renderBridge.request(command);
@@ -132,35 +158,26 @@ contextBridge.exposeInMainWorld("nexplay", {
   },
   danmakuTrack: (mediaId) => ipcRenderer.invoke("backend:danmaku-track", mediaId),
   mpvLoad: (mediaId) => loadMpvMedia(mediaId),
-  mpvSetTrack: (kind, id) => controlMpv(
-    { type: "setTrack", kind, id },
-    () => ipcRenderer.invoke("mpv:set-track", { kind, id }),
-  ),
-  mpvSetPause: (paused) => controlMpv(
-    { type: "setPause", paused },
-    () => ipcRenderer.invoke("mpv:set-pause", paused),
-  ),
-  mpvSeek: (position) => controlMpv(
-    { type: "seek", position },
-    () => ipcRenderer.invoke("mpv:seek", position),
-  ),
-  mpvSetVolume: (volume) => controlMpv(
-    { type: "setVolume", volume },
-    () => ipcRenderer.invoke("mpv:set-volume", volume),
-  ),
+  mpvSetTrack: (kind, id) => controlMpv({ type: "setTrack", kind, id }),
+  mpvSetPause: (paused) => controlMpv({ type: "setPause", paused }),
+  mpvSeek: (position) => controlMpv({ type: "seek", position }),
+  mpvSetVolume: (volume) => controlMpv({ type: "setVolume", volume }),
   mpvStop: async () => {
-    const state = await controlMpv(
-      { type: "stop" },
-      () => ipcRenderer.invoke("mpv:stop"),
-    );
-    activeMpvMode = null;
-    activeTextureProbe = null;
-    return state;
+    if (activeMpvMode !== "webglTexture") {
+      activeMpvMode = null;
+      activeTextureProbe = null;
+      return unloadedMpvState();
+    }
+    try {
+      return await controlMpv({ type: "stop" });
+    } finally {
+      activeMpvMode = null;
+      activeTextureProbe = null;
+    }
   },
-  mpvState: () => controlMpv(
-    { type: "state" },
-    () => ipcRenderer.invoke("mpv:state"),
-  ),
+  mpvState: () => activeMpvMode === "webglTexture"
+    ? controlMpv({ type: "state" })
+    : Promise.resolve(unloadedMpvState()),
   mpvRenderInfo: () => getRenderInfoCached(),
   mpvProbeWebglTextureRenderer: async () => {
     textureProbePromise = renderBridge.probeWebglTextureRenderer().catch((error) => {

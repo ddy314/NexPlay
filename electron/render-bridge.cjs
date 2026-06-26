@@ -7,6 +7,28 @@ const FAST_REQUEST_TIMEOUT_MS = 1800;
 const LOAD_REQUEST_TIMEOUT_MS = 15000;
 const RENDER_FRAME_TIMEOUT_MS = 1200;
 
+function renderDaemonExecOptions() {
+  if (process.env.NEXPLAY_NODE_BIN) {
+    return {
+      execPath: process.env.NEXPLAY_NODE_BIN,
+      env: process.env,
+    };
+  }
+  if (process.env.NEXPLAY_RENDER_DAEMON_ELECTRON_NODE === "1") {
+    return {
+      execPath: process.execPath,
+      env: {
+        ...process.env,
+        ELECTRON_RUN_AS_NODE: "1",
+      },
+    };
+  }
+  return {
+    execPath: "node",
+    env: process.env,
+  };
+}
+
 function timeoutForCommand(command) {
   switch (command?.type) {
     case "info":
@@ -102,11 +124,7 @@ class RenderBridge {
       throw new Error("native render bridge is not built");
     }
 
-    const execPath = process.env.NEXPLAY_NODE_BIN || process.execPath;
-    const env = { ...process.env };
-    if (!process.env.NEXPLAY_NODE_BIN) {
-      env.ELECTRON_RUN_AS_NODE = "1";
-    }
+    const { execPath, env } = renderDaemonExecOptions();
 
     const child = fork(daemonPath, [], {
       cwd: this.projectRoot,

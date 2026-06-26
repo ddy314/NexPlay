@@ -1,12 +1,12 @@
 const { ipcMain } = require("electron");
 const { spawn } = require("node:child_process");
-const { fileURLToPath } = require("node:url");
 
 const { backendArgs } = require("./backend-rpc-client.cjs");
 
 const DEFAULT_PLAYER_REQUEST_TIMEOUT_MS = 7000;
 const STATE_PLAYER_REQUEST_TIMEOUT_MS = 2500;
 const LOAD_PLAYER_REQUEST_TIMEOUT_MS = 18000;
+const EXTERNAL_MPV_DISABLED_MESSAGE = "外部 mpv fallback 已禁用，请使用内嵌 WebGL 纹理播放器";
 
 function timeoutForPlayerCommand(command) {
   switch (command?.type) {
@@ -30,17 +30,13 @@ class PlayerControl {
   }
 
   registerIpc() {
-    ipcMain.handle("mpv:load", (_event, mediaId) => this.loadMpvMedia(mediaId));
-    ipcMain.handle("mpv:set-track", (_event, payload) => this.playerRequest({
-      type: "setTrack",
-      kind: payload.kind,
-      id: payload.id ?? null,
-    }));
-    ipcMain.handle("mpv:set-pause", (_event, paused) => this.playerRequest({ type: "setPause", paused }));
-    ipcMain.handle("mpv:seek", (_event, position) => this.playerRequest({ type: "seek", position }));
-    ipcMain.handle("mpv:set-volume", (_event, volume) => this.playerRequest({ type: "setVolume", volume }));
-    ipcMain.handle("mpv:stop", () => this.playerRequest({ type: "stop" }));
-    ipcMain.handle("mpv:state", () => this.playerRequest({ type: "state" }));
+    ipcMain.handle("mpv:load", () => this.rejectExternalMpvFallback());
+    ipcMain.handle("mpv:set-track", () => this.rejectExternalMpvFallback());
+    ipcMain.handle("mpv:set-pause", () => this.rejectExternalMpvFallback());
+    ipcMain.handle("mpv:seek", () => this.rejectExternalMpvFallback());
+    ipcMain.handle("mpv:set-volume", () => this.rejectExternalMpvFallback());
+    ipcMain.handle("mpv:stop", () => this.externalMpvDisabledState());
+    ipcMain.handle("mpv:state", () => this.externalMpvDisabledState());
     ipcMain.handle("mpv-render:info", () => this.renderBridge.getInfo());
     ipcMain.handle("mpv-render:probe-webgl-texture", () => (
       this.renderBridge.probeWebglTextureRenderer()
@@ -59,22 +55,30 @@ class PlayerControl {
     });
   }
 
-  async loadMpvMedia(mediaId) {
-    const source = await this.backendClient.request("mediaSource", { mediaId });
-    const mediaPath = source.sourceUrl.startsWith("file://")
-      ? fileURLToPath(source.sourceUrl)
-      : source.sourceUrl;
-    const textureProbe = await this.renderBridge.probeWebglTextureRenderer();
-    const state = await this.playerRequest({ type: "load", path: mediaPath });
-    if (state && state.ok === false) {
-      throw new Error(state.error || "libmpv failed to load media");
-    }
+  rejectExternalMpvFallback() {
+    this.shutdownExternalMpvFallback();
+    throw new Error(EXTERNAL_MPV_DISABLED_MESSAGE);
+  }
+
+  externalMpvDisabledState() {
+    this.shutdownExternalMpvFallback();
     return {
-      ...state,
-      source,
-      renderMode: "externalMpv",
-      textureProbe,
+      ok: true,
+      loaded: false,
+      audioTracks: [],
+      subtitleTracks: [],
+      paused: true,
+      volume: 100,
     };
+  }
+
+  shutdownExternalMpvFallback() {
+    if (!this.playerDaemon) {
+      return;
+    }
+    this.playerDaemon.kill();
+    this.playerDaemon = null;
+    this.rejectPendingPlayerRequests(new Error(EXTERNAL_MPV_DISABLED_MESSAGE));
   }
 
   ensurePlayerDaemon() {

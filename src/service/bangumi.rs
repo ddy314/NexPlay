@@ -827,9 +827,85 @@ impl BangumiService {
     }
 
     fn require_account(&self) -> AppResult<BangumiAccount> {
-        self.repository
+        let account = self
+            .repository
             .bangumi_account()?
-            .ok_or_else(|| AppError::Api("Bangumi account is not logged in".to_string()))
+            .ok_or_else(|| AppError::Api("Bangumi account is not logged in".to_string()))?;
+        Ok(self.refresh_account_if_needed(account))
+    }
+
+    /// Refresh the OAuth access token when it is close to expiry. Best-effort: any
+    /// failure falls back to the existing token (which yields a 401 prompting re-login),
+    /// so this never makes authentication worse than before.
+    fn refresh_account_if_needed(&self, account: BangumiAccount) -> BangumiAccount {
+        let now = now_seconds();
+        let expiring = account
+            .expires_at
+            .map(|expires_at| expires_at - now < 300)
+            .unwrap_or(false);
+        if !expiring {
+            return account;
+        }
+        let Some(refresh_token) = account.refresh_token.clone() else {
+            return account;
+        };
+        match self.try_refresh_token(&refresh_token, account.clone()) {
+            Ok(refreshed) => refreshed,
+            Err(error) => {
+                let _ = self.repository.insert_bangumi_sync_log(
+                    "warn",
+                    &format!("Bangumi token 刷新失败，沿用现有令牌：{error}"),
+                    None,
+                    None,
+                    now,
+                );
+                account
+            }
+        }
+    }
+
+    fn try_refresh_token(
+        &self,
+        refresh_token: &str,
+        existing: BangumiAccount,
+    ) -> AppResult<BangumiAccount> {
+        let config = self.config.snapshot().bangumi;
+        ensure_oauth_configured(&config)?;
+        let client = client(&config)?;
+        let token: OAuthTokenResponse = client
+            .post(format!(
+                "{}/oauth/access_token",
+                trim_slash(&config.oauth_base_url)
+            ))
+            .form(&[
+                ("grant_type", "refresh_token"),
+                ("client_id", config.client_id.as_str()),
+                ("client_secret", config.client_secret.as_str()),
+                ("refresh_token", refresh_token),
+                ("redirect_uri", config.redirect_uri.as_str()),
+            ])
+            .send()?
+            .error_for_status()?
+            .json()?;
+        let now = now_seconds();
+        let account = BangumiAccount {
+            access_token: token.access_token,
+            refresh_token: token.refresh_token.or(existing.refresh_token),
+            token_type: token.token_type.or(existing.token_type),
+            scope: token.scope.or(existing.scope),
+            expires_at: token.expires_in.map(|expires_in| now + expires_in),
+            updated_at: now,
+            ..existing
+        };
+        self.repository.upsert_bangumi_account(&account)?;
+        let _ = self.repository.insert_bangumi_sync_log(
+            "info",
+            "Bangumi token 已自动刷新",
+            None,
+            None,
+            now,
+        );
+        Ok(account)
     }
 }
 

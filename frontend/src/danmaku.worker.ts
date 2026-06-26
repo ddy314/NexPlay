@@ -257,8 +257,11 @@ function updateClock(position: number, paused: boolean, seeking: boolean, timest
   }
 
   if (paused) {
+    const pausedPosition = clock.paused
+      ? nextPosition
+      : current;
     clock = {
-      position: clock.paused ? clock.position : current,
+      position: pausedPosition,
       timestamp: now,
       paused: true,
     };
@@ -310,7 +313,7 @@ function renderFrame() {
     return;
   }
 
-  if (clock.paused && Math.abs(state.drawnPosition - currentPosition) < 0.001 && state.canvasDirty) {
+  if (clock.paused && state.canvasDirty) {
     state.lastPosition = currentPosition;
     finishProfileFrame(profileFrameStart);
     return;
@@ -320,6 +323,7 @@ function renderFrame() {
     resetRendererToPosition(currentPosition);
   }
 
+  rebuildActiveItemsAtPosition(ctx, currentPosition);
   emitDueItems(ctx, currentPosition);
   drawActiveItems(ctx, currentPosition);
   prewarmUpcomingBitmaps(ctx, currentPosition);
@@ -360,6 +364,26 @@ function finishProfileFrame(startedAt: number) {
     totalItems: items.length,
   });
   profile = null;
+}
+
+function rebuildActiveItemsAtPosition(context: OffscreenCanvasRenderingContext2D, currentPosition: number) {
+  if (state.drawnPosition >= 0 || state.active.length > 0) return;
+
+  const startCursor = lowerBoundByTime(items, Math.max(0, currentPosition - SCROLL_DURATION));
+  const endCursor = upperBoundByTime(items, currentPosition);
+  if (endCursor <= startCursor) return;
+
+  pruneLaneReservations(currentPosition);
+  for (let index = startCursor; index < endCursor && state.active.length < MAX_VISIBLE; index += 1) {
+    const item = items[index];
+    if (!item) continue;
+    const duration = item.mode === "scroll" ? SCROLL_DURATION : FIXED_DURATION;
+    const elapsed = currentPosition - item.time;
+    if (elapsed < -0.05 || elapsed > duration) continue;
+    emitOne(context, item, currentPosition);
+  }
+  state.cursor = Math.max(state.cursor, endCursor);
+  state.prewarmCursor = Math.max(state.prewarmCursor, state.cursor);
 }
 
 function emitDueItems(context: OffscreenCanvasRenderingContext2D, currentPosition: number) {
@@ -431,7 +455,7 @@ function emitOne(
     duration: item.mode === "scroll" ? SCROLL_DURATION : FIXED_DURATION,
     bitmap,
   };
-  reserveLane(active, currentPosition);
+  reserveLane(active);
   state.active.push(active);
 }
 
@@ -527,16 +551,16 @@ function acquireBottomLane(currentPosition: number) {
   return -1;
 }
 
-function reserveLane(item: ActiveDanmaku, currentPosition: number) {
+function reserveLane(item: ActiveDanmaku) {
   const lane = state.lanes[item.lane];
   if (!lane) return;
   if (item.mode === "scroll") {
-    lane.nextAt = currentPosition + (item.width + SCROLL_GAP) / item.speed;
-    lane.clearAt = currentPosition + item.duration;
+    lane.nextAt = item.time + (item.width + SCROLL_GAP) / item.speed;
+    lane.clearAt = item.time + item.duration;
     return;
   }
-  lane.nextAt = currentPosition + item.duration;
-  lane.clearAt = currentPosition + item.duration;
+  lane.nextAt = item.time + item.duration;
+  lane.clearAt = item.time + item.duration;
 }
 
 function pruneLaneReservations(currentPosition: number) {

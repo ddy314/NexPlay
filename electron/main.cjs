@@ -1,5 +1,5 @@
 const path = require("node:path");
-const { app, BrowserWindow, Menu, nativeTheme, protocol } = require("electron");
+const { app, BrowserWindow, Menu, MenuItem, nativeTheme, protocol } = require("electron");
 
 const { registerAssetProtocol } = require("./asset-protocol.cjs");
 const { BackendRpcClient } = require("./backend-rpc-client.cjs");
@@ -88,6 +88,40 @@ registerBackendIpc(backendClient, {
 });
 playerControl.registerIpc();
 
+function attachContextMenu(window) {
+  window.webContents.on("context-menu", (_event, params) => {
+    const menu = new Menu();
+    const { editFlags, isEditable, selectionText } = params;
+    const hasSelection = Boolean(selectionText && selectionText.trim());
+
+    if (isEditable || hasSelection) {
+      if (isEditable) {
+        menu.append(new MenuItem({ role: "cut", label: "剪切", enabled: editFlags.canCut }));
+      }
+      menu.append(new MenuItem({ role: "copy", label: "复制", enabled: editFlags.canCopy || hasSelection }));
+      if (isEditable) {
+        menu.append(new MenuItem({ role: "paste", label: "粘贴", enabled: editFlags.canPaste }));
+        menu.append(new MenuItem({ type: "separator" }));
+        menu.append(new MenuItem({ role: "selectAll", label: "全选" }));
+      }
+    }
+
+    if (isDev) {
+      if (menu.items.length) menu.append(new MenuItem({ type: "separator" }));
+      menu.append(
+        new MenuItem({
+          label: "检查元素",
+          click: () => window.webContents.inspectElement(params.x, params.y),
+        })
+      );
+    }
+
+    if (menu.items.length) {
+      menu.popup({ window });
+    }
+  });
+}
+
 function createMainWindow() {
   nativeTheme.themeSource = "system";
   Menu.setApplicationMenu(null);
@@ -110,6 +144,7 @@ function createMainWindow() {
     },
   });
   window.setMenu(null);
+  attachContextMenu(window);
 
   if (useDevRenderer) {
     window.loadURL("http://127.0.0.1:5173");

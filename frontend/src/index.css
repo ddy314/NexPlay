@@ -14,11 +14,16 @@
   --color-text-primary: rgba(29, 29, 31, 1);
   --color-text-secondary: rgba(110, 110, 115, 1);
   --color-text-tertiary: rgba(160, 160, 165, 1);
-  --color-accent: rgb(250, 35, 59);
-  --color-accent-hover: rgb(232, 24, 48);
-  --color-accent-soft: rgba(250, 35, 59, 0.1);
-  --color-accent-blue: rgba(0, 122, 255, 1);
+  /* Apple system blue — the single, restrained accent color across the app */
+  --color-accent: rgb(0, 122, 255);
+  --color-accent-hover: rgb(0, 105, 224);
+  --color-accent-soft: rgba(0, 122, 255, 0.1);
+  --color-accent-blue: rgb(0, 122, 255);
   --color-accent-blue-soft: rgba(0, 122, 255, 0.08);
+  /* Red is reserved for destructive actions only */
+  --color-destructive: rgb(255, 59, 48);
+  --color-destructive-hover: rgb(225, 45, 36);
+  --color-destructive-soft: rgba(255, 59, 48, 0.1);
   --color-shadow-light: rgba(0, 0, 0, 0.04);
   --color-shadow-medium: rgba(0, 0, 0, 0.08);
   --color-shadow-heavy: rgba(0, 0, 0, 0.15);
@@ -79,7 +84,14 @@
   --color-on-surface: var(--color-text-primary);
   --color-on-surface-muted: var(--color-text-secondary);
   --color-on-surface-faint: var(--color-text-tertiary);
-  --color-primary-soft: rgba(255, 55, 95, 0.18);
+  /* Apple dark-mode system blue is slightly brighter for contrast on dark surfaces */
+  --color-accent: rgb(10, 132, 255);
+  --color-accent-hover: rgb(64, 156, 255);
+  --color-accent-soft: rgba(10, 132, 255, 0.16);
+  --color-accent-blue: rgb(10, 132, 255);
+  --color-destructive: rgb(255, 69, 58);
+  --color-destructive-soft: rgba(255, 69, 58, 0.16);
+  --color-primary-soft: rgba(10, 132, 255, 0.18);
   --scrollbar-thumb: rgba(255, 255, 255, 0.16);
   --scrollbar-thumb-hover: rgba(255, 255, 255, 0.28);
   --material-glass-bg: rgba(30, 30, 30, 0.45);
@@ -586,7 +598,7 @@ body {
 
 .player-page-wash {
   background:
-    linear-gradient(135deg, rgba(250, 35, 59, 0.14), transparent 48%),
+    linear-gradient(135deg, rgba(0, 122, 255, 0.10), transparent 48%),
     linear-gradient(180deg, rgba(255, 255, 255, 0.18), transparent 72%);
 }
 
@@ -809,53 +821,38 @@ body {
   display: inline-flex;
 }
 
-.player-volume-menu::before {
-  content: "";
-  position: absolute;
-  left: -22px;
-  right: -22px;
-  bottom: 100%;
-  height: 38px;
-  pointer-events: auto;
-  clip-path: polygon(50% 100%, 0 0, 100% 0);
-}
-
-.player-volume-menu.is-disabled::before {
-  display: none;
-}
-
 .player-volume-flyout {
   position: absolute;
   left: 50%;
-  bottom: calc(100% + 18px);
+  bottom: calc(100% + 14px);
   z-index: 35;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 10px;
   min-width: 54px;
-  padding: 12px 10px;
+  padding: 14px 10px;
   border-radius: 18px;
   color: #fff;
-  background: rgba(16, 16, 18, 0.84);
+  background: rgba(28, 28, 30, 0.86);
   box-shadow:
     inset 0 0 0 0.5px rgba(255, 255, 255, 0.13),
-    0 18px 46px rgba(0, 0, 0, 0.28);
+    0 18px 46px rgba(0, 0, 0, 0.34);
   opacity: 0;
   pointer-events: none;
-  transform: translate(-50%, 8px);
+  transform: translate(-50%, 8px) scale(0.96);
+  transform-origin: bottom center;
   transition:
-    opacity 150ms ease,
-    transform 150ms ease;
+    opacity 160ms cubic-bezier(0.32, 0.72, 0, 1),
+    transform 160ms cubic-bezier(0.32, 0.72, 0, 1);
   backdrop-filter: blur(24px) saturate(150%);
   -webkit-backdrop-filter: blur(24px) saturate(150%);
 }
 
-.player-volume-menu:hover .player-volume-flyout,
-.player-volume-menu:focus-within .player-volume-flyout {
+.player-volume-flyout.is-open {
   opacity: 1;
   pointer-events: auto;
-  transform: translate(-50%, 0);
+  transform: translate(-50%, 0) scale(1);
 }
 
 .player-volume-value {
@@ -1082,7 +1079,7 @@ body {
   width: 42px;
   height: 42px;
   background: var(--color-primary);
-  box-shadow: 0 12px 28px rgba(250, 35, 59, 0.35);
+  box-shadow: 0 12px 28px rgba(0, 122, 255, 0.32);
 }
 
 .player-control,
@@ -1117,6 +1114,7 @@ body {
 }
 
 .danmaku-plane {
+  z-index: 12;
   overflow: hidden;
   transition: opacity 180ms ease;
   mask-image: linear-gradient(90deg, transparent, #000 7%, #000 93%, transparent);
@@ -1158,7 +1156,7 @@ body {
 }
 
 .player-episode-row.is-selected {
-  box-shadow: inset 0 0 0 1px rgba(250, 35, 59, 0.18);
+  box-shadow: inset 0 0 0 1px rgba(0, 122, 255, 0.22);
 }
 
 .player-episode-list::-webkit-scrollbar {
@@ -1352,14 +1350,6 @@ body {
   box-shadow: inset 0 0 0 0.5px var(--material-glass-edge);
 }
 
-.glass-heavy {
-  @apply backdrop-blur-[60px] backdrop-saturate-[200%];
-  background: rgba(255, 255, 255, 0.62);
-  backdrop-filter: blur(60px) saturate(200%);
-  -webkit-backdrop-filter: blur(60px) saturate(200%);
-  box-shadow: inset 0 0 0 0.5px var(--material-glass-edge);
-}
-
 .glass-light {
   @apply backdrop-blur-[30px] backdrop-saturate-[150%];
   background: var(--material-glass-bg);
@@ -1376,18 +1366,40 @@ body {
   box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.08);
 }
 
-.apple-glass {
-  @apply backdrop-blur-[40px] backdrop-saturate-[180%];
-  background-color: var(--material-glass-bg);
+/* ===== Unified Apple-style material layers ===== */
+/* Four standardized glass materials, layered by elevation/role. */
+.material-chrome {
+  background: var(--material-glass-bg);
+  box-shadow: inset 0 0 0 0.5px var(--material-glass-edge);
   backdrop-filter: blur(40px) saturate(180%);
   -webkit-backdrop-filter: blur(40px) saturate(180%);
 }
-
-.glass-refraction::before {
-  content: none;
+.material-sidebar {
+  background: var(--sidebar-material-bg);
+  box-shadow: inset -0.5px 0 0 var(--sidebar-material-edge);
+  backdrop-filter: blur(32px) saturate(180%);
+  -webkit-backdrop-filter: blur(32px) saturate(180%);
 }
-.glass-refraction::after {
-  content: none;
+.material-popover {
+  background: var(--color-surface-elevated);
+  box-shadow:
+    inset 0 0 0 0.5px var(--material-glass-edge),
+    0 12px 32px rgba(0, 0, 0, 0.16),
+    0 2px 8px rgba(0, 0, 0, 0.08);
+  backdrop-filter: blur(30px) saturate(180%);
+  -webkit-backdrop-filter: blur(30px) saturate(180%);
+}
+.material-overlay {
+  background: var(--material-glass-bg);
+  box-shadow: inset 0 0 0 0.5px var(--material-glass-edge);
+  backdrop-filter: blur(34px) saturate(170%);
+  -webkit-backdrop-filter: blur(34px) saturate(170%);
+}
+[data-theme="dark"] .material-popover {
+  box-shadow:
+    inset 0 0 0 0.5px var(--material-glass-edge),
+    0 16px 40px rgba(0, 0, 0, 0.5),
+    0 2px 10px rgba(0, 0, 0, 0.4);
 }
 
 .shadow-glass {
@@ -1407,18 +1419,6 @@ body {
     0 2px 10px rgba(0, 0, 0, 0.1),
     0 16px 32px rgba(0, 0, 0, 0.25),
     0 24px 64px rgba(0, 0, 0, 0.2);
-}
-
-.sidebar-item {
-  border-radius: 8px;
-  transition: all 0.2s cubic-bezier(0.25, 0.46, 0.45, 0.94);
-}
-.sidebar-item:hover {
-  background: rgba(0, 0, 0, 0.04);
-}
-.sidebar-item.active {
-  background: rgba(0, 0, 0, 0.06);
-  font-weight: 500;
 }
 
 .tag-chip {
@@ -1456,53 +1456,6 @@ body {
 
 .glass-refraction:not(.absolute):not(.fixed):not(.sticky) {
   position: relative;
-}
-
-.hero-play-button {
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0.85));
-  box-shadow:
-    0 4px 20px rgba(0, 0, 0, 0.15),
-    0 1px 3px rgba(0, 0, 0, 0.1),
-    inset 0 1px 0 rgba(255, 255, 255, 1);
-}
-.hero-play-button::after {
-  content: "";
-  position: absolute;
-  inset: 0 0 50%;
-  border-radius: 999px 999px 0 0;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.4), transparent);
-  pointer-events: none;
-}
-
-@keyframes light-sweep {
-  0% { transform: translateX(-120%) rotate(15deg); opacity: 0; }
-  10% { opacity: 1; }
-  90% { opacity: 1; }
-  100% { transform: translateX(220%) rotate(15deg); opacity: 0; }
-}
-.glass-shimmer {
-  position: relative;
-  overflow: hidden;
-}
-.glass-shimmer::after {
-  content: "";
-  position: absolute;
-  top: -100%;
-  left: -50%;
-  z-index: 2;
-  width: 25%;
-  height: 300%;
-  pointer-events: none;
-  background: linear-gradient(
-    90deg,
-    transparent 0%,
-    rgba(255, 255, 255, 0.08) 45%,
-    rgba(255, 255, 255, 0.12) 50%,
-    rgba(255, 255, 255, 0.08) 55%,
-    transparent 100%
-  );
-  animation: light-sweep 8s ease-in-out infinite;
-  transform: rotate(15deg);
 }
 
 .hide-scrollbar::-webkit-scrollbar {
@@ -1615,3 +1568,89 @@ body {
     align-items: stretch;
   }
 }
+
+/* ===== Shared interaction utilities (Apple HIG) ===== */
+
+/* Popover / menu / dropdown entrance — used by ui.tsx Menu, Dropdown, Popover */
+@keyframes popover-in {
+  from { opacity: 0; transform: scale(0.96) translateY(-4px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+.anim-popover {
+  animation: popover-in 0.16s cubic-bezier(0.32, 0.72, 0, 1) both;
+  transform-origin: var(--popover-origin, top center);
+}
+
+/* Dialog / modal backdrop + panel */
+@keyframes dialog-backdrop-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes dialog-panel-in {
+  from { opacity: 0; transform: scale(0.94); }
+  to { opacity: 1; transform: scale(1); }
+}
+.anim-dialog-backdrop { animation: dialog-backdrop-in 0.2s ease both; }
+.anim-dialog-panel { animation: dialog-panel-in 0.26s cubic-bezier(0.32, 0.72, 0, 1) both; }
+
+/* Spinner */
+@keyframes nx-spin { to { transform: rotate(360deg); } }
+.nx-spinner {
+  border-radius: 999px;
+  border-style: solid;
+  border-color: currentColor;
+  border-right-color: transparent;
+  animation: nx-spin 0.7s linear infinite;
+}
+
+/* Boot splash */
+@keyframes boot-mark-in {
+  0% { opacity: 0; transform: scale(0.9); }
+  60% { opacity: 1; }
+  100% { opacity: 1; transform: scale(1); }
+}
+@keyframes boot-fade-out {
+  to { opacity: 0; visibility: hidden; }
+}
+.boot-splash {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 22px;
+  background: var(--color-bg);
+}
+.boot-splash.is-leaving {
+  animation: boot-fade-out 0.42s ease 0.05s forwards;
+}
+.boot-splash-mark {
+  animation: boot-mark-in 0.6s cubic-bezier(0.32, 0.72, 0, 1) both;
+}
+
+/* Context menu (right-click) reuses material-popover + anim-popover */
+.context-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 7px;
+  font-size: 13px;
+  color: var(--color-on-surface);
+  cursor: default;
+  transition: background-color 120ms ease;
+}
+.context-menu-item:hover:not([data-disabled="true"]) {
+  background: var(--color-accent);
+  color: #fff;
+}
+.context-menu-item[data-disabled="true"] {
+  opacity: 0.4;
+}
+
+/* Native titlebar drag region for Win/Linux frameless chrome */
+.app-drag-region { -webkit-app-region: drag; }
+.app-no-drag { -webkit-app-region: no-drag; }
