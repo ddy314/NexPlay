@@ -61,7 +61,7 @@ export function makeEpisodes(subject: Subject): Episode[] {
 
 export function makePlaybackEpisodes(subject: Subject): PlaybackEpisode[] {
   if (subject.episodesDetail?.length) {
-    return subject.episodesDetail.map((episode) => ({
+    const rows: PlaybackEpisode[] = subject.episodesDetail.map((episode) => ({
       key: String(episode.mediaId || `episode-${episode.episode}`),
       episode: episode.episode,
       title: episode.title,
@@ -76,22 +76,32 @@ export function makePlaybackEpisodes(subject: Subject): PlaybackEpisode[] {
       fileName: episode.fileName,
       fileSize: episode.fileSize,
     }));
+    const localFiles = subject.localFiles ?? [];
+    if (!localFiles.length) {
+      return rows;
+    }
+
+    const usedMediaIds = new Set(rows.flatMap((row) => row.mediaId ? [row.mediaId] : []));
+    const remainingFiles = localFiles.filter((file) => !usedMediaIds.has(file.mediaId));
+
+    for (const row of rows) {
+      if (row.mediaId) continue;
+      const matchIndex = remainingFiles.findIndex((file) => file.episode === row.episode);
+      if (matchIndex < 0) continue;
+      const [file] = remainingFiles.splice(matchIndex, 1);
+      attachLocalFile(row, file);
+    }
+
+    if (rows.length === 1 && !rows[0].mediaId && remainingFiles.length === 1) {
+      attachLocalFile(rows[0], remainingFiles.shift()!);
+    }
+
+    rows.push(...remainingFiles.map((file, index) => playbackEpisodeFromLocalFile(file, rows.length + index)));
+    return rows;
   }
 
   if (subject.localFiles?.length) {
-    return subject.localFiles.map((file, index) => ({
-      key: String(file.mediaId || `${file.fileName}-${index}`),
-      episode: file.episode || index + 1,
-      title: `Episode ${file.episode || index + 1}`,
-      titleCn: "",
-      airDate: "",
-      cached: true,
-      bgmCollectionLabel: "未标记",
-      bgmPending: false,
-      mediaId: file.mediaId,
-      fileName: file.fileName,
-      fileSize: file.fileSize,
-    }));
+    return subject.localFiles.map(playbackEpisodeFromLocalFile);
   }
 
   return Array.from({ length: subject.episodes || subject.files }, (_, index) => ({
@@ -104,4 +114,29 @@ export function makePlaybackEpisodes(subject: Subject): PlaybackEpisode[] {
     bgmCollectionLabel: "未标记",
     bgmPending: false,
   }));
+}
+
+function attachLocalFile(row: PlaybackEpisode, file: FrontendLocalFile) {
+  row.key = String(file.mediaId || row.key);
+  row.cached = true;
+  row.mediaId = file.mediaId;
+  row.fileName = file.fileName;
+  row.fileSize = file.fileSize;
+}
+
+function playbackEpisodeFromLocalFile(file: FrontendLocalFile, index: number): PlaybackEpisode {
+  const episode = file.episode || index + 1;
+  return {
+    key: String(file.mediaId || `${file.fileName}-${index}`),
+    episode,
+    title: `Episode ${episode}`,
+    titleCn: "",
+    airDate: "",
+    cached: true,
+    bgmCollectionLabel: "未标记",
+    bgmPending: false,
+    mediaId: file.mediaId,
+    fileName: file.fileName,
+    fileSize: file.fileSize,
+  };
 }

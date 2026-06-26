@@ -11,7 +11,7 @@ import { ProfilePage } from "./pages/Profile";
 import { SettingsPage } from "./pages/Settings";
 import { useBackendSnapshot } from "./backend";
 import { appleSpringSoft } from "./motion";
-import { Snackbar, useSnackbar } from "./ui";
+import { BootSplash, Snackbar, useSnackbar } from "./ui";
 import type { PlaybackEpisode, Subject } from "./data";
 
 type PlaybackState = {
@@ -32,6 +32,26 @@ export default function App() {
   const [navCollapsed, setNavCollapsed] = useState(() => readStoredBoolean("nexplay.navCollapsed", false));
   const snack = useSnackbar();
   const backend = useBackendSnapshot();
+
+  // Boot splash: shown until the first backend snapshot resolves, with a small
+  // minimum duration so it never flashes, then fades out.
+  const [bootDone, setBootDone] = useState(false);
+  const [bootLeaving, setBootLeaving] = useState(false);
+  const [minElapsed, setMinElapsed] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setMinElapsed(true), 650);
+    return () => clearTimeout(t);
+  }, []);
+  useEffect(() => {
+    if (bootDone || bootLeaving) return;
+    if (!backend.loading && minElapsed) setBootLeaving(true);
+  }, [backend.loading, minElapsed, bootDone, bootLeaving]);
+  useEffect(() => {
+    if (!bootLeaving) return;
+    const t = setTimeout(() => setBootDone(true), 480);
+    return () => clearTimeout(t);
+  }, [bootLeaving]);
+
   const collectionSubjects = useMemo(() => {
     const localBgm = backend.subjects.filter((subject) => subject.bgmCollectionType);
     const seen = new Set<string>();
@@ -205,6 +225,7 @@ export default function App() {
         </main>
 
         <Snackbar msg={snack.msg} onDismiss={snack.dismiss} />
+        {!bootDone && <BootSplash leaving={bootLeaving} />}
       </div>
     </MotionConfig>
   );

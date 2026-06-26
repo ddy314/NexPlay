@@ -1,13 +1,14 @@
 import { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Calendar, Cloud, HardDrive, LayoutGrid, List, RefreshCw, Search, Sparkles, Star } from "lucide-react";
-import { loadOnlineSubject, searchCatalog, type BackendLogEntry, type ScanStatus } from "../backend";
+import { searchCatalog, type BackendLogEntry, type ScanStatus } from "../backend";
 import type { Subject } from "../data";
 import type { Route } from "../NavRail";
 import { MediaCard } from "../MediaCard";
 import { useIncrementalItems } from "../hooks/useIncrementalItems";
 import { appleSpringBouncy, appleSpringSoft } from "../motion";
-import { Button } from "../ui";
+import { Button, Dropdown } from "../ui";
+import { loadSubjectDetailWithFallback, mergeCloudSubjectDetail, mergeLocalSubjectDetail, shouldHydrateSubject } from "../subjectHydration";
 import { resolveAssetUrl } from "../utils/assets";
 import { cn } from "../utils/cn";
 
@@ -163,11 +164,23 @@ export function LibraryPage({
   const visibleSubjects = useMemo(() => visibleItems.map((item) => item.subject), [visibleItems]);
   const openSubject = useCallback(async (subject: Subject) => {
     if (subject.local) {
+      if (shouldHydrateSubject(subject)) {
+        try {
+          const detail = await loadSubjectDetailWithFallback(subject);
+          onOpen(mergeLocalSubjectDetail(subject, detail));
+          return;
+        } catch (caught) {
+          const message = caught instanceof Error ? caught.message : String(caught);
+          onOpen(subject);
+          onSnack(`读取完整简介失败，先打开本地缓存：${message}`, "neutral");
+          return;
+        }
+      }
       onOpen(subject);
       return;
     }
     try {
-      const detail = await loadOnlineSubject(subject.provider, subject.providerSubjectId);
+      const detail = await loadSubjectDetailWithFallback(subject);
       onOpen(subject.source === "bangumiCollection" ? mergeCloudSubjectDetail(subject, detail) : detail);
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : String(caught);
@@ -238,20 +251,19 @@ export function LibraryPage({
                           云端
                         </button>
                       </div>
-                      <div className="search-filter-row">
-                        <label>
-                          <select
-                            value={librarySort}
-                            onChange={(event) => setLibrarySort(event.target.value as LibrarySort)}
-                            className="h-9 rounded-[var(--radius-control)] px-3 text-[12.5px] font-medium"
-                          >
-                            <option value="default">最近更新</option>
-                            <option value="title">标题</option>
-                            <option value="year">年份</option>
-                            <option value="rating">评分</option>
-                          </select>
-                        </label>
-                      </div>
+                      <Dropdown
+                        size="sm"
+                        value={librarySort}
+                        onChange={(value) => setLibrarySort(value)}
+                        matchWidth={false}
+                        className="min-w-[112px]"
+                        options={[
+                          { value: "default", label: "最近更新" },
+                          { value: "title", label: "标题" },
+                          { value: "year", label: "年份" },
+                          { value: "rating", label: "评分" },
+                        ]}
+                      />
                       <div className="flex items-center rounded-[var(--radius-control)] bg-[var(--color-surface-elevated)] p-0.5">
                         <button
                           type="button"
@@ -371,43 +383,6 @@ export function LibraryPage({
   );
 }
 
-function mergeCloudSubjectDetail(cached: Subject, detail: Subject): Subject {
-  return {
-    ...detail,
-    id: cached.id,
-    source: cached.source,
-    local: false,
-    title: detail.title || cached.title,
-    titleCn: detail.titleCn || cached.titleCn,
-    summary: detail.summary || cached.summary,
-    poster: detail.poster || cached.poster,
-    hero: detail.hero || cached.hero,
-    bgmCollectionType: cached.bgmCollectionType,
-    bgmCollectionLabel: cached.bgmCollectionLabel,
-    bgmRate: cached.bgmRate,
-    bgmPending: cached.bgmPending,
-    watchedEpisodes: cached.watchedEpisodes,
-    currentEpisode: cached.currentEpisode,
-    progress: cached.progress,
-    files: cached.files,
-    totalSize: cached.totalSize,
-    fileSummary: cached.fileSummary,
-    localFiles: cached.localFiles,
-    episodesDetail: detail.episodesDetail.length ? detail.episodesDetail.map((episode) => {
-      const cachedEpisode = cached.episodesDetail.find((item) => (
-        (episode.bgmEpisodeId && item.bgmEpisodeId === episode.bgmEpisodeId)
-        || item.episode === episode.episode
-      ));
-      return cachedEpisode ? {
-        ...episode,
-        bgmCollectionType: cachedEpisode.bgmCollectionType,
-        bgmCollectionLabel: cachedEpisode.bgmCollectionLabel,
-        bgmPending: cachedEpisode.bgmPending,
-      } : episode;
-    }) : cached.episodesDetail,
-  };
-}
-
 function SearchHeader({
   query,
   setQuery,
@@ -433,15 +408,20 @@ function SearchHeader({
           />
         </label>
       </div>
-      <div className="search-filter-row">
-        <label>
-          <span>排序</span>
-          <select value={sort} onChange={(event) => setSort(event.target.value as SearchSort)}>
-            <option value="year">年份</option>
-            <option value="rating">评分</option>
-            <option value="title">标题</option>
-          </select>
-        </label>
+      <div className="search-filter-row flex items-center gap-2">
+        <span className="text-[12px] font-semibold text-[var(--color-text-tertiary)]">排序</span>
+        <Dropdown
+          size="sm"
+          value={sort}
+          onChange={(value) => setSort(value)}
+          matchWidth={false}
+          className="min-w-[88px]"
+          options={[
+            { value: "year", label: "年份" },
+            { value: "rating", label: "评分" },
+            { value: "title", label: "标题" },
+          ]}
+        />
       </div>
     </div>
   );

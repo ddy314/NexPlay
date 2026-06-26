@@ -2,19 +2,18 @@ import { useMemo, type ReactNode } from "react";
 import { motion } from "framer-motion";
 import {
   Activity,
-  BarChart3,
   CheckCircle2,
   Clock3,
   HardDrive,
-  Heart,
   Layers3,
+  PlayCircle,
   Star,
   Tags,
 } from "lucide-react";
 import type { BangumiAuthStatus } from "../backend";
 import type { Subject } from "../data";
 import { appleSpringSoft } from "../motion";
-import { Progress } from "../ui";
+import { BarChart, EmptyState, Progress, RingChart, StatTile } from "../ui";
 import { resolveAssetUrl } from "../utils/assets";
 import { cn } from "../utils/cn";
 
@@ -72,24 +71,37 @@ export function ProfilePage({
         </section>
 
         <section className="mt-5 grid grid-cols-2 gap-3 lg:grid-cols-6">
-          <Metric icon={<Heart size={16} />} label="云端" value={empty ? "等待" : profile.total} />
-          <Metric icon={<CheckCircle2 size={16} />} label="看过" value={empty ? "--" : profile.completed.length} />
-          <Metric icon={<Activity size={16} />} label="在看" value={empty ? "--" : profile.watching.length} softZero />
-          <Metric icon={<Star size={16} />} label="平均分" value={profile.averageRate ? profile.averageRate.toFixed(1) : "--"} />
-          <Metric icon={<HardDrive size={16} />} label="本地可播" value={empty ? "--" : profile.localPlayable.length} />
-          <Metric icon={<BarChart3 size={16} />} label="待同步" value={auth.pendingSyncCount ? auth.pendingSyncCount : "空"} warn={auth.pendingSyncCount > 0} />
+          <StatTile icon={<Layers3 size={15} />} label="条目总数" value={empty ? "—" : profile.total} />
+          <StatTile icon={<CheckCircle2 size={15} />} label="看过 / 完成" value={empty ? "—" : profile.finishedCount} />
+          <StatTile icon={<Activity size={15} />} label="在看 / 进行" value={empty ? "—" : profile.inProgressCount} />
+          <StatTile icon={<PlayCircle size={15} />} label="观看集数" value={empty ? "—" : profile.watchedEpisodes} accent />
+          <StatTile icon={<Star size={15} />} label="平均评分" value={profile.averageRate ? profile.averageRate.toFixed(1) : "—"} />
+          <StatTile
+            icon={<HardDrive size={15} />}
+            label="本地可播"
+            value={empty ? "—" : profile.localPlayable.length}
+            hint={auth.pendingSyncCount > 0 ? `${auth.pendingSyncCount} 待同步` : undefined}
+          />
         </section>
 
         <section className="mt-7 grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-6 max-lg:grid-cols-1">
-          <Panel title="状态分布" icon={<Layers3 size={17} />}>
-            <StatusDistribution counts={profile.statusCounts} total={Math.max(1, profile.totalCollections)} />
+          <Panel title="观看概览" icon={<Layers3 size={17} />}>
+            <ActivityOverview segments={profile.activitySegments} total={profile.total} empty={empty} />
           </Panel>
 
           <Panel title="评分分布" icon={<Star size={17} />}>
             {profile.rated.length ? (
-              <ScoreDistribution buckets={profile.scoreBuckets} />
+              <BarChart
+                height={176}
+                data={profile.scoreBuckets.map((bucket) => ({ label: String(bucket.score), value: bucket.count }))}
+              />
             ) : (
-              <EmptyPanel title="暂无评分" desc="如果只记录看过，这里会保持安静，不再画一排空柱。" />
+              <EmptyState
+                className="py-10"
+                icon={<Star size={22} />}
+                title="还没有评分"
+                description="给看过的作品打分后，这里会画出你的评分偏好曲线。"
+              />
             )}
           </Panel>
         </section>
@@ -187,43 +199,6 @@ function IdentityPanel({
   );
 }
 
-function Metric({
-  icon,
-  label,
-  value,
-  warn,
-  softZero,
-}: {
-  icon: ReactNode;
-  label: string;
-  value: ReactNode;
-  warn?: boolean;
-  softZero?: boolean;
-}) {
-  return (
-    <div className={cn(
-      "rounded-[8px] bg-[var(--color-surface-elevated)] px-4 py-3 ring-1 ring-inset ring-black/[0.05]",
-      warn && "bg-amber-500/8 ring-amber-500/15"
-    )}>
-      <div className="mb-2 flex items-center gap-2 text-[11px] font-semibold text-[var(--color-text-tertiary)]">
-        {icon}
-        {label}
-      </div>
-      <motion.div
-        className={cn(
-          "text-[28px] font-bold tabular-nums leading-none tracking-tight text-[var(--color-text-primary)]",
-          softZero && value === 0 && "text-[var(--color-text-tertiary)]"
-        )}
-        initial={{ opacity: 0, y: 6 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={appleSpringSoft}
-      >
-        {value}
-      </motion.div>
-    </div>
-  );
-}
-
 function Panel({
   title,
   icon,
@@ -244,57 +219,42 @@ function Panel({
   );
 }
 
-function StatusDistribution({
-  counts,
+function ActivityOverview({
+  segments,
   total,
+  empty,
 }: {
-  counts: Array<{ type: number; label: string; count: number }>;
+  segments: Array<{ label: string; value: number; color: string }>;
   total: number;
+  empty: boolean;
 }) {
-  if (!counts.some((item) => item.count > 0)) {
-    return <EmptyPanel title="暂无云端状态" desc="登录并同步 Bangumi 后会显示状态占比。" compact />;
+  if (empty) {
+    return (
+      <EmptyState
+        className="py-8"
+        icon={<Layers3 size={22} />}
+        title="还没有观看数据"
+        description="扫描本地媒体或登录 Bangumi 后，这里会显示你的观看进度环。"
+      />
+    );
   }
+  const active = segments.filter((segment) => segment.value > 0);
   return (
-    <div className="grid gap-3">
-      {counts.map((item) => (
-        <div key={item.type}>
-          <div className="mb-1 flex justify-between text-[12px] font-medium text-[var(--color-text-secondary)]">
-            <span>{item.label}</span>
-            <span>{item.count}</span>
+    <div className="flex items-center gap-6">
+      <RingChart
+        segments={segments}
+        centerLabel={total}
+        centerSub="条目"
+      />
+      <div className="grid min-w-0 flex-1 gap-2.5">
+        {(active.length ? active : segments).map((segment) => (
+          <div key={segment.label} className="flex items-center gap-2.5">
+            <span className="size-2.5 shrink-0 rounded-full" style={{ background: segment.color }} />
+            <span className="flex-1 truncate text-[13px] font-medium text-[var(--color-text-secondary)]">{segment.label}</span>
+            <span className="text-[13px] font-semibold tabular-nums text-[var(--color-text-primary)]">{segment.value}</span>
           </div>
-          <div className="h-2 overflow-hidden rounded-full bg-black/[0.055]">
-            <motion.div
-              className="h-full rounded-full bg-[var(--color-accent)]"
-              initial={{ width: 0 }}
-              animate={{ width: `${(item.count / total) * 100}%` }}
-              transition={appleSpringSoft}
-            />
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function ScoreDistribution({
-  buckets,
-}: {
-  buckets: Array<{ score: number; count: number }>;
-}) {
-  const maxScore = Math.max(1, ...buckets.map((bucket) => bucket.count));
-  return (
-    <div className="flex h-48 items-end gap-2">
-      {buckets.map((bucket) => (
-        <div key={bucket.score} className="flex min-w-0 flex-1 flex-col items-center gap-2">
-          <motion.div
-            className={cn("w-full rounded-t-[6px]", bucket.count ? "bg-[var(--color-accent)]" : "bg-black/[0.045]")}
-            initial={{ height: 0 }}
-            animate={{ height: `${bucket.count ? Math.max(10, (bucket.count / maxScore) * 160) : 4}px` }}
-            transition={appleSpringSoft}
-          />
-          <span className="text-[11px] font-medium text-[var(--color-text-tertiary)]">{bucket.score}</span>
-        </div>
-      ))}
+        ))}
+      </div>
     </div>
   );
 }
@@ -388,6 +348,21 @@ function buildProfile(subjects: Subject[]) {
   const tags = buildTags(source);
   const totalCollections = collectionSubjects.length;
   const total = source.length;
+
+  // Local-derived activity stats — these work even with no Bangumi account, so the
+  // dashboard never renders blank.
+  const watchedEpisodes = source.reduce((sum, subject) => sum + Math.max(0, subject.watchedEpisodes || 0), 0);
+  const finishedCount = source.filter((subject) => subject.bgmCollectionType === 2 || subject.progress >= 1).length;
+  const inProgressCount = source.filter((subject) => subject.progress > 0 && subject.progress < 1).length;
+  const plannedCount = source.filter((subject) => subject.bgmCollectionType === 1).length;
+  const notStarted = Math.max(0, total - finishedCount - inProgressCount - plannedCount);
+  const activitySegments = [
+    { label: "看过 / 完成", value: finishedCount, color: "var(--color-success)" },
+    { label: "在看 / 进行中", value: inProgressCount, color: "var(--color-accent)" },
+    { label: "想看 / 计划", value: plannedCount, color: "#5ac8fa" },
+    { label: "未开始", value: notStarted, color: "var(--color-surface-4)" },
+  ];
+
   const completionRate = totalCollections > 0 ? completed.length / totalCollections : total > 0 ? completed.length / total : 0;
   const averageRate = rated.length ? rated.reduce((sum, subject) => sum + subject.bgmRate, 0) / rated.length : 0;
   const featured = completed[0] ?? [...rated].sort(prioritySorter)[0] ?? watching[0] ?? [...source].sort(prioritySorter)[0];
@@ -406,6 +381,10 @@ function buildProfile(subjects: Subject[]) {
     averageRate,
     featured,
     identity,
+    watchedEpisodes,
+    finishedCount,
+    inProgressCount,
+    activitySegments,
     summary: profileSummary(identity, total, completed.length, rated.length, localPlayable.length),
   };
 }

@@ -8,7 +8,7 @@ import {
   type BangumiAuthStatus,
   type EditableSettings,
 } from "../backend";
-import { Button, Card, Switch } from "../ui";
+import { Button, Card, Dropdown, Switch } from "../ui";
 import { ChevronRight, KeyIcon } from "../icons";
 import { cn } from "../utils/cn";
 
@@ -298,17 +298,20 @@ export function SettingsPage({
                 title="日志级别"
                 desc="写入配置，供后端日志层读取。"
                 control={
-                  <select
+                  <Dropdown
+                    size="sm"
                     value={settings.loggingLevel}
-                    onChange={(event) => update("loggingLevel", event.target.value)}
-                    className="h-9 rounded-[var(--radius-control)] bg-[var(--color-surface-3)] px-3 text-[13px] outline-none ring-1 ring-inset ring-[var(--color-outline-soft)]"
-                  >
-                    <option value="error">error</option>
-                    <option value="warn">warn</option>
-                    <option value="info">info</option>
-                    <option value="debug">debug</option>
-                    <option value="trace">trace</option>
-                  </select>
+                    onChange={(value) => update("loggingLevel", value)}
+                    matchWidth={false}
+                    className="min-w-[112px]"
+                    options={[
+                      { value: "error", label: "error" },
+                      { value: "warn", label: "warn" },
+                      { value: "info", label: "info" },
+                      { value: "debug", label: "debug" },
+                      { value: "trace", label: "trace" },
+                    ]}
+                  />
                 }
               />
             </Group>
@@ -316,6 +319,10 @@ export function SettingsPage({
 
           {section === "bangumi" && (
             <Group title="Bangumi" desc="账号状态同步、条目查询、自动匹配和图片缓存。">
+              <div className="mx-6 mt-5 rounded-[var(--radius-card)] bg-[var(--color-accent-soft)] px-4 py-3 text-[12px] leading-relaxed text-[var(--color-on-surface-muted)]">
+                <span className="font-semibold text-[var(--color-accent)]">数据来源说明：</span>
+                登录 Bangumi 后，你的收藏状态、评分与单集进度都以账号云端为准。打开条目详情会自动拉取该番剧的单集状态；看完一集（进度 ≥ 90%）会自动标记为「看过」并回写云端，离线时进入待同步队列、下次同步自动重试。
+              </div>
               <div className="px-6 py-5">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div className="min-w-0">
@@ -461,7 +468,7 @@ export function SettingsPage({
               />
               <SettingsRow
                 title="手动 Access Token"
-                desc={settings.bangumiAccessTokenConfigured ? "已配置；通常应使用 OAuth 登录，留空保存不会覆盖旧值。" : "可选。通常不需要手动填写。"}
+                desc={settings.bangumiAccessTokenConfigured ? "已配置；仅用于元数据查询，账号同步请用上方 OAuth 登录。留空保存不会覆盖旧值。" : "可选，仅用于公开元数据查询。账号同步请用 OAuth 登录，无需手动填写。"}
                 control={
                   <SecretInput
                     value={settings.bangumiAccessToken}

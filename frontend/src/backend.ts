@@ -57,7 +57,7 @@ export type MpvState = {
   videoWidth?: number;
   videoHeight?: number;
   source?: MediaSource;
-  renderMode?: "browserVideo" | "webglTexture" | "externalMpv";
+  renderMode?: "browserVideo" | "webglTexture";
   textureProbe?: MpvTextureProbe;
 };
 

@@ -15,6 +15,7 @@ import {
   SkipBack,
   SkipForward,
   Volume2,
+  VolumeX,
   X,
 } from "lucide-react";
 import { makePlaybackEpisodes, type PlaybackEpisode, type Subject } from "../data";
@@ -53,6 +54,7 @@ export function PlayerPage({
   const seekInFlightRef = useRef(false);
   const stageRef = useRef<HTMLDivElement | null>(null);
   const settingsMenuRef = useRef<HTMLDivElement | null>(null);
+  const volumeMenuRef = useRef<HTMLDivElement | null>(null);
   const browserVideoRef = useRef<HTMLVideoElement | null>(null);
   const pendingSeekPositionRef = useRef<number | null>(null);
   const latestSeekPositionRef = useRef<number | null>(null);
@@ -68,14 +70,19 @@ export function PlayerPage({
   const seekingRef = useRef(false);
   const completedSyncKeyRef = useRef<string | null>(null);
   const localProgressReportRef = useRef<{ key: string; position: number; reportedAt: number } | null>(null);
+  const controlsIdleTimerRef = useRef<number | null>(null);
+  const pointerOverControlsRef = useRef(false);
+  const previousVolumeRef = useRef(100);
   const [currentKey, setCurrentKey] = useState(initialEpisode.key);
   const [source, setSource] = useState<MediaSource | null>(null);
   const [mpvState, setMpvState] = useState<MpvState | null>(null);
   const [loadingSource, setLoadingSource] = useState(true);
-  const [danmakuVisible, setDanmakuVisible] = useState(false);
+  const [danmakuVisible, setDanmakuVisible] = useState(() => readDanmakuPref(subject.id));
   const [danmakuArea, setDanmakuArea] = useState<(typeof DANMAKU_AREAS)[number]["value"]>(0.5);
   const [episodeDrawerOpen, setEpisodeDrawerOpen] = useState(false);
   const [settingsMenuOpen, setSettingsMenuOpen] = useState(false);
+  const [volumeOpen, setVolumeOpen] = useState(false);
+  const [controlsVisible, setControlsVisible] = useState(true);
   const [playbackError, setPlaybackError] = useState<string | null>(null);
   const [renderInfo, setRenderInfo] = useState<MpvRenderInfo | null>(null);
   const [paused, setPaused] = useState(false);
@@ -163,6 +170,16 @@ export function PlayerPage({
     }, DANMAKU_SEEK_RESET_DELAY_MS);
   }, [clearDanmakuSeekResetTimer]);
 
+  const settleDanmakuClockAtPosition = useCallback((targetPosition: number) => {
+    if (!Number.isFinite(targetPosition)) return null;
+    const position = Math.max(0, targetPosition);
+    clearDanmakuSeekResetTimer();
+    setDanmakuSeekSuspended(false);
+    seekStabilizationRef.current = null;
+    latestSeekPositionRef.current = position;
+    return position;
+  }, [clearDanmakuSeekResetTimer]);
+
   const cancelDanmakuSeekReset = useCallback(() => {
     clearDanmakuSeekResetTimer();
     setDanmakuSeekSuspended(false);
@@ -171,6 +188,18 @@ export function PlayerPage({
   useEffect(() => {
     setCurrentKey(initialEpisode.key);
   }, [initialEpisode.key, subject.id]);
+
+  // Remember the danmaku on/off choice per subject, and re-read it when switching subjects.
+  useEffect(() => {
+    setDanmakuVisible(readDanmakuPref(subject.id));
+  }, [subject.id]);
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(`nexplay.danmaku.${subject.id}`, danmakuVisible ? "1" : "0");
+    } catch {
+      // ignore storage failures (private mode etc.)
+    }
+  }, [danmakuVisible, subject.id]);
 
   useEffect(() => {
     const episodeId = currentEpisode.bgmEpisodeId;
@@ -421,6 +450,24 @@ export function PlayerPage({
     };
   }, [settingsMenuOpen]);
 
+  useEffect(() => {
+    if (!volumeOpen) return;
+    const handlePointerDown = (event: PointerEvent) => {
+      const menu = volumeMenuRef.current;
+      if (!menu || !(event.target instanceof Node) || menu.contains(event.target)) return;
+      setVolumeOpen(false);
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setVolumeOpen(false);
+    };
+    window.addEventListener("pointerdown", handlePointerDown, true);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("pointerdown", handlePointerDown, true);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [volumeOpen]);
+
   const switchEpisode = useCallback((episode: PlaybackEpisode | undefined) => {
     if (!episode?.mediaId) {
       return;
@@ -464,8 +511,12 @@ export function PlayerPage({
         } else {
           await video.play();
         }
+        const nextPosition = video.currentTime || 0;
+        if (nextPaused) {
+          settleDanmakuClockAtPosition(nextPosition);
+        }
         setPaused(nextPaused);
-        setMpvState((current) => current ? { ...current, paused: nextPaused } : current);
+        setMpvState((current) => current ? { ...current, paused: nextPaused, position: nextPosition } : current);
       } catch (caught) {
         const message = caught instanceof Error ? caught.message : String(caught);
         onSnack(`播放控制失败：${message}`, "danger");
@@ -474,31 +525,24 @@ export function PlayerPage({
     }
 
     try {
-      await window.nexplay.mpvSetPause(nextPaused);
+      const nextState = await window.nexplay.mpvSetPause(nextPaused);
+      const nextPosition = Number.isFinite(nextState.position) ? Math.max(0, nextState.position ?? 0) : null;
+      if (nextPaused && nextPosition !== null) {
+        settleDanmakuClockAtPosition(nextPosition);
+      }
       setPaused(nextPaused);
+      setMpvState((current) => ({
+        ...nextState,
+        position: nextPosition ?? nextState.position,
+        source: current?.source ?? source ?? undefined,
+        renderMode: current?.renderMode ?? nextState.renderMode,
+        textureProbe: current?.textureProbe ?? nextState.textureProbe,
+      }));
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : String(caught);
       onSnack(`播放控制失败：${message}`, "danger");
     }
-  }, [loadingSource, mpvState?.renderMode, onSnack, paused, playbackError]);
-
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.code !== "Space" && event.key !== " ") {
-        return;
-      }
-      if (isEditableTarget(event.target)) {
-        return;
-      }
-      event.preventDefault();
-      void togglePause();
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => {
-      window.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [togglePause]);
+  }, [loadingSource, mpvState?.renderMode, onSnack, paused, playbackError, settleDanmakuClockAtPosition, source]);
 
   const flushPendingSeek = useCallback(async () => {
     if (!window.nexplay || seekInFlightRef.current) return;
@@ -688,6 +732,101 @@ export function PlayerPage({
     }
   }, [onSnack]);
 
+  const toggleMute = useCallback(() => {
+    if (volume > 0) {
+      previousVolumeRef.current = volume;
+      void setVolume(0);
+    } else {
+      void setVolume(previousVolumeRef.current || 100);
+    }
+  }, [setVolume, volume]);
+
+  // Auto-hide the on-stage controls after the pointer goes idle while playing.
+  const keepControlsRef = useRef(false);
+  useEffect(() => {
+    keepControlsRef.current =
+      paused || loadingSource || Boolean(playbackError) || settingsMenuOpen || volumeOpen || episodeDrawerOpen;
+    if (keepControlsRef.current) {
+      setControlsVisible(true);
+      if (controlsIdleTimerRef.current !== null) {
+        window.clearTimeout(controlsIdleTimerRef.current);
+        controlsIdleTimerRef.current = null;
+      }
+    }
+  }, [paused, loadingSource, playbackError, settingsMenuOpen, volumeOpen, episodeDrawerOpen]);
+
+  const revealControls = useCallback(() => {
+    setControlsVisible(true);
+    if (controlsIdleTimerRef.current !== null) {
+      window.clearTimeout(controlsIdleTimerRef.current);
+    }
+    controlsIdleTimerRef.current = window.setTimeout(() => {
+      controlsIdleTimerRef.current = null;
+      if (keepControlsRef.current || pointerOverControlsRef.current) return;
+      setControlsVisible(false);
+    }, 2600);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (controlsIdleTimerRef.current !== null) {
+        window.clearTimeout(controlsIdleTimerRef.current);
+      }
+    };
+  }, []);
+
+  // Keyboard shortcuts: space play/pause, arrows seek/volume, F fullscreen, M mute, D danmaku.
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (isEditableTarget(event.target)) return;
+      switch (event.code) {
+        case "Space":
+          event.preventDefault();
+          revealControls();
+          void togglePause();
+          break;
+        case "ArrowLeft":
+          event.preventDefault();
+          revealControls();
+          commitSeek(Math.max(0, (scrubPosition ?? position) - 5));
+          break;
+        case "ArrowRight":
+          event.preventDefault();
+          revealControls();
+          commitSeek(Math.min(duration || Infinity, (scrubPosition ?? position) + 5));
+          break;
+        case "ArrowUp":
+          event.preventDefault();
+          revealControls();
+          void setVolume(Math.min(100, volume + 5));
+          break;
+        case "ArrowDown":
+          event.preventDefault();
+          revealControls();
+          void setVolume(Math.max(0, volume - 5));
+          break;
+        case "KeyF":
+          event.preventDefault();
+          void toggleStageFullscreen();
+          break;
+        case "KeyM":
+          event.preventDefault();
+          revealControls();
+          toggleMute();
+          break;
+        case "KeyD":
+          event.preventDefault();
+          revealControls();
+          setDanmakuVisible((current) => !current);
+          break;
+        default:
+          break;
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [commitSeek, duration, position, revealControls, scrubPosition, setVolume, toggleMute, togglePause, toggleStageFullscreen, volume]);
+
   return (
     <div className="relative h-full overflow-hidden bg-[var(--color-bg)]">
       <div className="player-page-wash pointer-events-none absolute inset-x-0 top-0 h-[360px]" />
@@ -715,7 +854,14 @@ export function PlayerPage({
           <div className="grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_auto]">
             <div
               ref={stageRef}
-              className="player-stage relative min-h-0 overflow-hidden rounded-[28px]"
+              className={cn(
+                "player-stage relative min-h-0 overflow-hidden rounded-[28px]",
+                !controlsVisible && "cursor-none"
+              )}
+              onMouseMove={revealControls}
+              onMouseLeave={() => {
+                if (!keepControlsRef.current) setControlsVisible(false);
+              }}
             >
               <div className="absolute inset-0 bg-black" />
               <div className="player-video-layer absolute inset-0 overflow-hidden rounded-[28px] bg-black">
@@ -807,7 +953,7 @@ export function PlayerPage({
                         <Play size={24} fill="currentColor" />
                       </div>
                       <h3 className="text-[22px] font-bold">
-                        {renderMode === "externalMpv" ? "外部 mpv 窗口播放中" : nativeBridgeReady ? "等待 WebGL 纹理输出" : "libmpv 后端播放中"}
+                        {nativeBridgeReady ? "等待 WebGL 纹理输出" : "内嵌播放器准备中"}
                       </h3>
                       <p className="mt-2 text-[13px] leading-6 text-white/66">
                         {renderBridgeError
@@ -845,9 +991,20 @@ export function PlayerPage({
                 </div>
               )}
 
-              <div className="player-stage-controls-scrim" />
+              <div className={cn("player-stage-controls-scrim transition-opacity duration-300", !controlsVisible && "opacity-0")} />
 
-              <div className="mpv-control-bar player-control-panel absolute inset-x-5 bottom-5 z-30">
+              <div
+                className={cn(
+                  "mpv-control-bar player-control-panel absolute inset-x-5 bottom-5 z-30 transition-all duration-300",
+                  !controlsVisible && "pointer-events-none translate-y-3 opacity-0"
+                )}
+                onMouseEnter={() => {
+                  pointerOverControlsRef.current = true;
+                }}
+                onMouseLeave={() => {
+                  pointerOverControlsRef.current = false;
+                }}
+              >
                 <div className="player-control-timeline">
                   <span className="player-time">{formatTime(displayedPosition)}</span>
                   <input
@@ -914,17 +1071,19 @@ export function PlayerPage({
                   </div>
 
                   <div className="player-secondary-actions">
-                    <div className={cn("player-volume-menu", playbackControlsDisabled && "is-disabled")}>
+                    <div className={cn("player-volume-menu", playbackControlsDisabled && "is-disabled")} ref={volumeMenuRef}>
                       <button
                         type="button"
-                        className="player-icon-control"
+                        className={cn("player-icon-control", volumeOpen && "is-active")}
                         disabled={playbackControlsDisabled}
+                        onClick={() => setVolumeOpen((current) => !current)}
                         aria-label={`音量 ${volume}%`}
+                        aria-expanded={volumeOpen}
                         title={`音量 ${volume}%`}
                       >
-                        <Volume2 size={17} />
+                        {volume === 0 ? <VolumeX size={17} /> : <Volume2 size={17} />}
                       </button>
-                      <div className="player-volume-flyout">
+                      <div className={cn("player-volume-flyout", volumeOpen && "is-open")}>
                         <span className="player-volume-value">{volume}%</span>
                         <input
                           type="range"
@@ -1141,18 +1300,17 @@ function EpisodeRail({
         >
           <button
             type="button"
-            className="absolute inset-0 bg-black/18"
+            className="absolute inset-0 bg-black/[0.06]"
             onClick={onClose}
             aria-label="关闭选集"
           />
           <motion.aside
-            className="player-episode-rail absolute bottom-5 right-5 top-5 flex w-[min(420px,calc(100vw-48px))] flex-col rounded-[26px] border border-[var(--color-outline-soft)] bg-[var(--color-surface-1)] px-5 py-5 shadow-[0_30px_90px_rgba(0,0,0,0.18)]"
+            className="player-episode-rail material-overlay absolute bottom-5 right-5 top-5 flex w-[min(380px,calc(100vw-48px))] flex-col rounded-[24px] px-5 py-5 shadow-[0_30px_90px_rgba(0,0,0,0.28)]"
             role="dialog"
-            aria-modal="true"
             aria-label="选集"
-            initial={{ opacity: 0, x: 28, scale: 0.98 }}
-            animate={{ opacity: 1, x: 0, scale: 1 }}
-            exit={{ opacity: 0, x: 28, scale: 0.98 }}
+            initial={{ opacity: 0, x: 36 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: 36 }}
             transition={appleSpringSoft}
           >
             <div className="mb-4 flex items-start justify-between gap-4">
@@ -1258,6 +1416,17 @@ function EpisodeRail({
 
 function episodeTitle(episode: PlaybackEpisode) {
   return episode.titleCn || episode.title || `第 ${episode.episode} 集`;
+}
+
+function readDanmakuPref(subjectId: string): boolean {
+  try {
+    const stored = window.localStorage.getItem(`nexplay.danmaku.${subjectId}`);
+    if (stored === "0") return false;
+    if (stored === "1") return true;
+  } catch {
+    // ignore
+  }
+  return true; // danmaku on by default
 }
 
 function selectedTrackValue(tracks: MpvState["audioTracks"] | undefined) {

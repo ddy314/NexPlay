@@ -1,17 +1,19 @@
 import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
-import { ArrowLeft, Calendar, Check, CirclePlay, Download, Film, HardDrive, Loader2, Search, Star, Tv } from "lucide-react";
+import { ArrowLeft, Calendar, Check, CirclePlay, CloudOff, Download, Film, HardDrive, Loader2, RefreshCw, Search, Star, Tv } from "lucide-react";
 import { batchUpdateBangumiEpisodes, syncBangumiSubject, updateBangumiCollection, updateBangumiEpisode } from "../backend";
 import { makePlaybackEpisodes, type PlaybackEpisode, type Subject } from "../data";
 import { Poster } from "../MediaCard";
 import { useIncrementalItems } from "../hooks/useIncrementalItems";
 import { usePosterPalette } from "../hooks/usePosterPalette";
 import { appleSpring, appleSpringBouncy, appleSpringSoft } from "../motion";
+import { loadSubjectDetailWithFallback, mergeMissingDisplayMetadata, shouldHydrateSubject } from "../subjectHydration";
+import { Badge, Dropdown } from "../ui";
 import { resolveAssetUrl } from "../utils/assets";
 import { cn } from "../utils/cn";
 
 export function DetailPage({
-  subject,
+  subject: initialSubject,
   onBack,
   onPlay,
   onFindResources,
@@ -25,6 +27,7 @@ export function DetailPage({
   onSubjectUpdated?: () => void | Promise<void>;
   onSnack: (text: string, tone?: "neutral" | "success" | "danger") => void;
 }) {
+  const [subject, setSubject] = useState(initialSubject);
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const rows = useMemo(() => makePlaybackEpisodes(subject), [subject]);
   const cachedCount = useMemo(() => rows.filter((row) => row.cached).length, [rows]);
@@ -53,6 +56,37 @@ export function DetailPage({
   const detailFrame = "mx-auto w-full max-w-[1120px] px-6 sm:px-8";
   const bgmSubjectId = subject.provider === "bangumi" ? Number(subject.providerSubjectId) : NaN;
   const canUseBangumi = Number.isFinite(bgmSubjectId) && bgmSubjectId > 0;
+
+  useEffect(() => {
+    setSubject(initialSubject);
+  }, [initialSubject]);
+
+  useEffect(() => {
+    if (!shouldHydrateSubject(subject)) return;
+    let cancelled = false;
+    loadSubjectDetailWithFallback(subject)
+      .then((detail) => {
+        if (!cancelled) {
+          setSubject((current) => current.id === subject.id
+            ? mergeMissingDisplayMetadata(current, detail)
+            : current);
+        }
+      })
+      .catch(() => {
+        // Detail metadata hydration is best-effort; the page remains usable.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    subject.id,
+    subject.provider,
+    subject.providerSubjectId,
+    subject.summary,
+    subject.poster,
+    subject.hero,
+    subject.tags.length,
+  ]);
 
   useEffect(() => {
     if (!canUseBangumi) return;
@@ -328,16 +362,23 @@ export function DetailPage({
             <div className={detailFrame}>
               <div className="rounded-[var(--radius-card)] bg-[var(--color-surface-elevated)] p-4 shadow-[inset_0_0_0_0.5px_var(--color-outline-soft)]">
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <h2 className="text-[15px] font-semibold tracking-tight text-[var(--color-text-primary)]">BGM 状态</h2>
-                    <p className="mt-1 text-[12px] font-medium text-[var(--color-text-tertiary)]">
-                      {subject.bgmCollectionLabel}
-                      {subject.bgmRate > 0 ? ` · ${subject.bgmRate} 分` : ""}
-                      {subject.bgmPending ? " · 待同步" : ""}
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <h2 className="text-[15px] font-semibold tracking-tight text-[var(--color-text-primary)]">Bangumi 同步</h2>
+                      {subject.bgmPending ? (
+                        <Badge tone="warning"><CloudOff size={11} /> 待同步</Badge>
+                      ) : subject.bgmCollectionType ? (
+                        <Badge tone="success"><Check size={11} /> 已同步</Badge>
+                      ) : (
+                        <Badge tone="neutral">未标记</Badge>
+                      )}
+                    </div>
+                    <p className="mt-1.5 max-w-xl text-[12px] leading-relaxed text-[var(--color-text-tertiary)]">
+                      看完一集（进度 ≥ 90%）会自动标记为「看过」并回写 Bangumi；离线时进入待同步队列，下次打开或同步时自动重试。
                     </p>
                   </div>
                   {busyAction && (
-                    <span className="flex items-center gap-1.5 text-[12px] font-medium text-[var(--color-text-tertiary)]">
+                    <span className="flex shrink-0 items-center gap-1.5 text-[12px] font-medium text-[var(--color-text-tertiary)]">
                       <Loader2 size={13} className="animate-spin" />
                       同步中
                     </span>
@@ -346,39 +387,44 @@ export function DetailPage({
                 <div className="flex flex-wrap items-center gap-3">
                   <label className="flex items-center gap-2 text-[12px] font-semibold text-[var(--color-text-secondary)]">
                     状态
-                    <select
+                    <Dropdown
+                      size="sm"
                       value={subject.bgmCollectionType || 3}
                       disabled={Boolean(busyAction)}
-                      onChange={(event) => void changeCollection(Number(event.target.value))}
-                      className="h-9 rounded-[var(--radius-control)] bg-[var(--color-surface-3)] px-3 text-[13px] outline-none ring-1 ring-inset ring-[var(--color-outline-soft)]"
-                    >
-                      <option value={1}>想看</option>
-                      <option value={3}>在看</option>
-                      <option value={2}>看过</option>
-                      <option value={4}>搁置</option>
-                      <option value={5}>抛弃</option>
-                    </select>
+                      onChange={(value) => void changeCollection(Number(value))}
+                      options={[
+                        { value: 1, label: "想看" },
+                        { value: 3, label: "在看" },
+                        { value: 2, label: "看过" },
+                        { value: 4, label: "搁置" },
+                        { value: 5, label: "抛弃" },
+                      ]}
+                      matchWidth={false}
+                      className="min-w-[96px]"
+                    />
                   </label>
                   <label className="flex items-center gap-2 text-[12px] font-semibold text-[var(--color-text-secondary)]">
                     评分
-                    <select
-                      value={subject.bgmRate}
+                    <Dropdown
+                      size="sm"
+                      value={subject.bgmRate || 0}
                       disabled={Boolean(busyAction)}
-                      onChange={(event) => void changeRate(Number(event.target.value))}
-                      className="h-9 rounded-[var(--radius-control)] bg-[var(--color-surface-3)] px-3 text-[13px] outline-none ring-1 ring-inset ring-[var(--color-outline-soft)]"
-                    >
-                      <option value={0}>未评分</option>
-                      {Array.from({ length: 10 }, (_, index) => index + 1).map((score) => (
-                        <option key={score} value={score}>{score}</option>
-                      ))}
-                    </select>
+                      onChange={(value) => void changeRate(Number(value))}
+                      options={[
+                        { value: 0, label: "未评分" },
+                        ...Array.from({ length: 10 }, (_, index) => ({ value: index + 1, label: `${index + 1} 分` })),
+                      ]}
+                      matchWidth={false}
+                      className="min-w-[96px]"
+                    />
                   </label>
                   <button
                     type="button"
                     onClick={() => void markCachedEpisodesWatched()}
                     disabled={Boolean(busyAction)}
-                    className="h-9 rounded-full bg-black/[0.055] px-4 text-[12px] font-semibold text-[var(--color-text-primary)] transition-colors hover:bg-black/[0.08] disabled:opacity-50"
+                    className="flex h-9 items-center gap-1.5 rounded-full bg-black/[0.055] px-4 text-[12px] font-semibold text-[var(--color-text-primary)] transition-colors hover:bg-black/[0.08] disabled:opacity-50 dark:bg-white/[0.08] dark:hover:bg-white/[0.12]"
                   >
+                    <RefreshCw size={13} />
                     标记本地缓存为看过
                   </button>
                 </div>

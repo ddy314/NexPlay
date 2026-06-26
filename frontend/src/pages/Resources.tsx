@@ -1,9 +1,19 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { motion } from "framer-motion";
 import { ArrowLeft, Download, Loader2, Search, ShieldCheck } from "lucide-react";
 import { searchEpisodeResources, startResourceDownload, type EpisodeResource } from "../backend";
 import type { Subject } from "../data";
 import { appleSpringBouncy, appleSpringSoft } from "../motion";
+import { Dropdown } from "../ui";
+
+function FilterField({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="flex items-center gap-2">
+      <span className="text-[12px] font-semibold text-[var(--color-text-tertiary)]">{label}</span>
+      {children}
+    </div>
+  );
+}
 
 export type ResourceSearchPrefill = {
   subject: Subject;
@@ -208,35 +218,53 @@ export function ResourcesPage({
           </motion.button>
         </div>
 
-        <div className="search-filter-row resource-filter-row">
-          <label>
-            <span>排序</span>
-            <select value={sort} onChange={(event) => setSort(event.target.value as ResourceSort)}>
-              <option value="score">推荐</option>
-              <option value="seeders">做种数</option>
-              <option value="downloads">下载量</option>
-              <option value="date">发布时间</option>
-              <option value="size">体积</option>
-            </select>
-          </label>
-          <label>
-            <span>清晰度</span>
-            <select value={resolution} onChange={(event) => setResolution(event.target.value as ResolutionFilter)}>
-              <option value="all">全部</option>
-              <option value="2160p">2160p</option>
-              <option value="1440p">1440p</option>
-              <option value="1080p">1080p</option>
-              <option value="720p">720p</option>
-            </select>
-          </label>
-          <label>
-            <span>类型</span>
-            <select value={batchFilter} onChange={(event) => setBatchFilter(event.target.value as BatchFilter)}>
-              <option value="all">全部</option>
-              <option value="batch">合集</option>
-              <option value="single">单集</option>
-            </select>
-          </label>
+        <div className="resource-filter-row mt-3 flex flex-wrap items-center gap-3">
+          <FilterField label="排序">
+            <Dropdown
+              size="sm"
+              value={sort}
+              onChange={(value) => setSort(value)}
+              matchWidth={false}
+              className="min-w-[104px]"
+              options={[
+                { value: "score", label: "推荐" },
+                { value: "seeders", label: "做种数" },
+                { value: "downloads", label: "下载量" },
+                { value: "date", label: "发布时间" },
+                { value: "size", label: "体积" },
+              ]}
+            />
+          </FilterField>
+          <FilterField label="清晰度">
+            <Dropdown
+              size="sm"
+              value={resolution}
+              onChange={(value) => setResolution(value)}
+              matchWidth={false}
+              className="min-w-[96px]"
+              options={[
+                { value: "all", label: "全部" },
+                { value: "2160p", label: "2160p" },
+                { value: "1440p", label: "1440p" },
+                { value: "1080p", label: "1080p" },
+                { value: "720p", label: "720p" },
+              ]}
+            />
+          </FilterField>
+          <FilterField label="类型">
+            <Dropdown
+              size="sm"
+              value={batchFilter}
+              onChange={(value) => setBatchFilter(value)}
+              matchWidth={false}
+              className="min-w-[88px]"
+              options={[
+                { value: "all", label: "全部" },
+                { value: "batch", label: "合集" },
+                { value: "single", label: "单集" },
+              ]}
+            />
+          </FilterField>
         </div>
 
         {error && (
