@@ -1,100 +1,100 @@
 import { motion } from "framer-motion";
-import { DownloadCloud, Home, Library, Moon, PanelLeftClose, PanelLeftOpen, Search, Settings, Sun, UserRound } from "lucide-react";
+import {
+  BarChart3,
+  Compass,
+  DownloadCloud,
+  Home,
+  Library,
+  Moon,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Search,
+  Settings,
+  Sun,
+} from "lucide-react";
 import type { ReactNode } from "react";
-import { appleSpring, appleSpringBouncy } from "./motion";
+import { appleSpringSoft } from "./motion";
 import { cn } from "./utils/cn";
 
-export type Route = "search" | "home" | "library" | "resources" | "downloads" | "profile" | "settings";
+export type Route = "home" | "discover" | "library" | "downloads" | "insights" | "settings";
 
-const items: { id: Route; label: string; icon: ReactNode }[] = [
-  { id: "search", label: "搜索", icon: <Search size={19} strokeWidth={2} /> },
-  { id: "home", label: "主页", icon: <Home size={19} strokeWidth={2} /> },
-  { id: "library", label: "媒体库", icon: <Library size={19} strokeWidth={2} /> },
-  { id: "downloads", label: "下载", icon: <DownloadCloud size={19} strokeWidth={2} /> },
-  { id: "profile", label: "个人", icon: <UserRound size={19} strokeWidth={2} /> },
-  { id: "settings", label: "设置", icon: <Settings size={19} strokeWidth={2} /> },
+const items: { id: Exclude<Route, "settings">; label: string; hint: string; icon: ReactNode }[] = [
+  { id: "home", label: "首页", hint: "下一步", icon: <Home size={20} /> },
+  { id: "discover", label: "发现", hint: "找新内容", icon: <Compass size={20} /> },
+  { id: "library", label: "媒体库", hint: "你的片库", icon: <Library size={20} /> },
+  { id: "downloads", label: "下载", hint: "获取进度", icon: <DownloadCloud size={20} /> },
+  { id: "insights", label: "洞察", hint: "观看趋势", icon: <BarChart3 size={20} /> },
 ];
 
 export function NavRail({
   route,
   onRoute,
+  onSearch,
   theme,
   onToggleTheme,
   collapsed,
   onToggleCollapsed,
 }: {
   route: Route;
-  onRoute: (r: Route) => void;
+  onRoute: (route: Route) => void;
+  onSearch: () => void;
   theme: "light" | "dark";
   onToggleTheme: () => void;
   collapsed: boolean;
   onToggleCollapsed: () => void;
 }) {
   return (
-    <aside
-      className={cn(
-        "nav-rail fixed inset-y-0 left-0 z-40 flex w-[var(--nav-width)] shrink-0 flex-col overflow-visible px-4 py-6 backdrop-blur-[32px] backdrop-saturate-[180%]",
-        collapsed && "is-collapsed"
-      )}
-    >
-      <div className="nav-brand mb-8 flex items-center justify-between gap-2 px-1">
-        <span className="nav-brand-text text-[18px] font-semibold tracking-tight">NexPlay</span>
-        <span className="nav-brand-mark hidden text-[17px] font-bold tracking-tight">N</span>
-        <button
-          type="button"
-          className="nav-collapse-button"
-          onClick={onToggleCollapsed}
-          aria-label={collapsed ? "展开侧边栏" : "折叠侧边栏"}
-          title={collapsed ? "展开侧边栏" : "折叠侧边栏"}
-        >
-          {collapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
+    <aside className={cn("nx-nav", collapsed && "is-collapsed")} aria-label="主导航">
+      <div className="nx-brand">
+        <span className="nx-brand-mark">N</span>
+        <span className="nx-brand-name">NexPlay</span>
+        <button className="nx-nav-collapse" onClick={onToggleCollapsed} aria-label={collapsed ? "展开导航" : "收起导航"}>
+          {collapsed ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}
         </button>
       </div>
-      <nav className="relative z-[1] flex w-full flex-col gap-1.5">
-        {items.map((item) => {
+
+      <button type="button" className="nx-search-entry" onClick={onSearch} aria-label="全局搜索">
+        <Search size={19} />
+        <span>搜索</span>
+        <kbd>⌘ K</kbd>
+      </button>
+
+      <nav className="nx-nav-items">
+        {items.map((item, index) => {
           const active = route === item.id;
           return (
             <motion.button
-              key={item.id}
               type="button"
+              key={item.id}
+              className={cn("nx-nav-item", active && "is-active")}
               onClick={() => onRoute(item.id)}
+              whileTap={{ scale: 0.98 }}
+              transition={appleSpringSoft}
               title={collapsed ? item.label : undefined}
-              aria-label={item.label}
-              className={cn(
-                "nav-item relative flex h-[44px] w-full items-center gap-3 rounded-[var(--radius-control)] px-3.5 text-[15px] font-medium transition-colors",
-                active
-                  ? "is-active text-[var(--color-accent)]"
-                  : "text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
-              )}
-              whileTap={{ scale: 0.965 }}
-              transition={appleSpringBouncy}
+              aria-current={active ? "page" : undefined}
             >
-              {active && (
-                <motion.span
-                  layoutId="nav-active-bg"
-                  className="nav-active-bg absolute inset-y-[3px] left-1 right-1 rounded-[calc(var(--radius-control)-2px)]"
-                  transition={appleSpring}
-                />
-              )}
-              <span className="nav-item-icon relative flex size-6 shrink-0 items-center justify-center">{item.icon}</span>
-              <span className="nav-item-label relative leading-none">{item.label}</span>
+              <span className="nx-nav-index">{String(index + 1).padStart(2, "0")}</span>
+              <span className="nx-nav-icon">{item.icon}</span>
+              <span className="nx-nav-copy">
+                <strong>{item.label}</strong>
+                <small>{item.hint}</small>
+              </span>
+              {active && <motion.span layoutId="nx-nav-active" className="nx-nav-active" />}
             </motion.button>
           );
         })}
       </nav>
 
-      <button
-        type="button"
-        title="切换外观"
-        onClick={onToggleTheme}
-        aria-label={theme === "light" ? "切换到深色外观" : "切换到浅色外观"}
-        className="nav-item relative z-[1] mt-auto flex h-[42px] w-full items-center gap-3 rounded-[var(--radius-control)] px-3.5 text-[14px] font-medium text-[var(--color-text-secondary)] transition-colors hover:text-[var(--color-text-primary)]"
-      >
-        <span className="nav-item-icon flex size-6 shrink-0 items-center justify-center">
-          {theme === "light" ? <Moon size={19} strokeWidth={2} /> : <Sun size={19} strokeWidth={2} />}
-        </span>
-        <span className="nav-item-label">{theme === "light" ? "深色" : "浅色"}</span>
-      </button>
+      <div className="nx-nav-footer">
+        <button type="button" className="nx-nav-utility" onClick={onToggleTheme} aria-label={theme === "light" ? "使用深色模式" : "使用浅色模式"}>
+          {theme === "light" ? <Moon size={19} /> : <Sun size={19} />}
+          <span>{theme === "light" ? "深色" : "浅色"}</span>
+        </button>
+        <button type="button" className={cn("nx-nav-utility", route === "settings" && "is-active")} onClick={() => onRoute("settings")}>
+          <Settings size={19} />
+          <span>设置</span>
+        </button>
+      </div>
     </aside>
   );
 }

@@ -1,11 +1,12 @@
 use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use ts_rs::{Config as TsConfig, TS};
 
 use crate::app::AppContext;
 use crate::config::{
-    AppConfig, BangumiConfig, DandanplayConfig, DatabaseConfig, LoggingConfig, NyaaConfig,
-    QbittorrentConfig,
+    AppConfig, BangumiConfig, DandanplayConfig, DatabaseConfig, ExperienceConfig, LoggingConfig,
+    NyaaConfig, QbittorrentConfig,
 };
 use crate::domain::{
     BangumiEpisodeCollection, BangumiSubjectCollection, DanmakuMode, DanmakuTrack, ScanSummary,
@@ -164,6 +165,12 @@ pub struct FrontendEditableSettings {
     pub qbittorrent_save_path: String,
     pub qbittorrent_category: String,
     pub qbittorrent_tags: String,
+    pub theme: String,
+    pub reduced_motion: bool,
+    pub analytics_enabled: bool,
+    pub daily_minutes_goal: u64,
+    pub weekly_episodes_goal: u64,
+    pub weekly_active_days_goal: u64,
     pub logging_level: String,
 }
 
@@ -314,6 +321,142 @@ pub struct PlaybackProgressRequest {
     pub media_id: Option<i64>,
     pub position: f64,
     pub duration: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct PlaybackSessionStartRequest {
+    pub subject_id: i64,
+    pub episode_id: i64,
+    #[ts(optional)]
+    pub media_id: Option<i64>,
+    pub position: f64,
+    pub duration: f64,
+}
+
+#[derive(Debug, Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct PlaybackSessionStartResponse {
+    pub session_id: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct PlaybackSessionHeartbeatRequest {
+    pub session_id: i64,
+    pub position: f64,
+    pub duration: f64,
+    pub active_ms: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct PlaybackSessionEventRequest {
+    pub session_id: i64,
+    pub kind: String,
+    pub position: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct PlaybackSessionFinishRequest {
+    pub session_id: i64,
+    pub position: f64,
+    pub duration: f64,
+    pub active_ms: i64,
+    pub completed: bool,
+    pub seek_count: i64,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub enum InsightRange {
+    Week,
+    Month,
+    Year,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct InsightsDashboardRequest {
+    pub range: InsightRange,
+}
+
+#[derive(Debug, Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct InsightRingData {
+    pub id: String,
+    pub label: String,
+    pub value: f64,
+    pub goal: f64,
+    pub unit: String,
+    pub color: String,
+}
+
+#[derive(Debug, Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct InsightPointData {
+    pub label: String,
+    pub value: f64,
+}
+
+#[derive(Debug, Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct InsightDistributionData {
+    pub label: String,
+    pub value: f64,
+    pub color: String,
+}
+
+#[derive(Debug, Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct InsightHighlightData {
+    pub title: String,
+    pub detail: String,
+    pub tone: String,
+}
+
+#[derive(Debug, Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct InsightsDashboardResponse {
+    pub range: InsightRange,
+    pub tracking_since: i64,
+    pub total_minutes: f64,
+    pub completed_episodes: usize,
+    pub active_days: usize,
+    pub session_count: usize,
+    pub average_session_minutes: f64,
+    pub streak_days: usize,
+    pub rings: Vec<InsightRingData>,
+    pub daily: Vec<InsightPointData>,
+    pub dayparts: Vec<InsightDistributionData>,
+    pub tags: Vec<InsightDistributionData>,
+    pub highlights: Vec<InsightHighlightData>,
+}
+
+#[derive(Debug, Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct HomeFeedItem {
+    pub subject: FrontendSubject,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct HomeFeedSection {
+    pub id: String,
+    pub kind: String,
+    pub title: String,
+    pub subtitle: String,
+    pub layout: String,
+    pub items: Vec<HomeFeedItem>,
+}
+
+#[derive(Debug, Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct HomeFeedResponse {
+    pub generated_at: i64,
+    pub sections: Vec<HomeFeedSection>,
 }
 
 #[derive(Debug, Serialize, TS)]
@@ -769,6 +912,455 @@ pub fn report_playback_progress(
             message: "播放进度尚未达到 Bangumi 完播阈值".to_string(),
         })
     }
+}
+
+pub fn start_playback_session(
+    context: &AppContext,
+    input: PlaybackSessionStartRequest,
+) -> AppResult<PlaybackSessionStartResponse> {
+    if !context.media.config_snapshot().experience.analytics_enabled {
+        return Ok(PlaybackSessionStartResponse { session_id: 0 });
+    }
+    let session_id = context.watch_history.start_session(
+        input.media_id,
+        input.subject_id,
+        input.episode_id,
+        seconds_to_ms(input.position),
+        seconds_to_ms(input.duration),
+    )?;
+    Ok(PlaybackSessionStartResponse { session_id })
+}
+
+pub fn heartbeat_playback_session(
+    context: &AppContext,
+    input: PlaybackSessionHeartbeatRequest,
+) -> AppResult<()> {
+    if input.session_id <= 0 {
+        return Ok(());
+    }
+    context.watch_history.heartbeat_session(
+        input.session_id,
+        seconds_to_ms(input.position),
+        seconds_to_ms(input.duration),
+        input.active_ms.max(0),
+    )
+}
+
+pub fn record_playback_session_event(
+    context: &AppContext,
+    input: PlaybackSessionEventRequest,
+) -> AppResult<()> {
+    if input.session_id <= 0 {
+        return Ok(());
+    }
+    let kind = match input.kind.as_str() {
+        "pause" | "resume" | "seek" => input.kind.as_str(),
+        _ => "state",
+    };
+    context.watch_history.record_session_event(
+        input.session_id,
+        kind,
+        seconds_to_ms(input.position),
+    )
+}
+
+pub fn finish_playback_session(
+    context: &AppContext,
+    input: PlaybackSessionFinishRequest,
+) -> AppResult<()> {
+    if input.session_id <= 0 {
+        return Ok(());
+    }
+    context.watch_history.finish_session(
+        input.session_id,
+        seconds_to_ms(input.position),
+        seconds_to_ms(input.duration),
+        input.active_ms.max(0),
+        input.completed,
+        input.seek_count.max(0),
+    )
+}
+
+pub fn clear_playback_analytics(context: &AppContext) -> AppResult<()> {
+    context.watch_history.clear_analytics()
+}
+
+pub fn insights_dashboard(
+    context: &AppContext,
+    input: InsightsDashboardRequest,
+) -> AppResult<InsightsDashboardResponse> {
+    const DAY_MS: i64 = 86_400_000;
+    let now = crate::task::unix_timestamp_ms();
+    let days = match input.range {
+        InsightRange::Week => 7,
+        InsightRange::Month => 30,
+        InsightRange::Year => 365,
+    };
+    let rows = context
+        .watch_history
+        .insight_rows_since(now - days * DAY_MS)?;
+    let weekly_rows = if days == 7 {
+        rows.clone()
+    } else {
+        context.watch_history.insight_rows_since(now - 7 * DAY_MS)?
+    };
+    let settings = context.media.config_snapshot().experience;
+    let total_active_ms = rows.iter().map(|row| row.active_ms.max(0)).sum::<i64>();
+    let total_minutes = total_active_ms as f64 / 60_000.0;
+    let completed_episodes = rows.iter().filter(|row| row.completed).count();
+    let active_day_ids = rows
+        .iter()
+        .filter(|row| row.active_ms > 0)
+        .map(|row| row.day_key)
+        .collect::<HashSet<_>>();
+    let active_days = active_day_ids.len();
+    let session_count = rows.len();
+    let average_session_minutes = if session_count > 0 {
+        total_minutes / session_count as f64
+    } else {
+        0.0
+    };
+
+    let mut daily_map = BTreeMap::<String, f64>::new();
+    let mut daypart_map = HashMap::<&'static str, f64>::new();
+    let mut tag_map = HashMap::<String, f64>::new();
+    for row in &rows {
+        let minutes = row.active_ms.max(0) as f64 / 60_000.0;
+        *daily_map.entry(row.day_label.clone()).or_default() += minutes;
+        let daypart = match row.hour {
+            0..=5 => "凌晨",
+            6..=11 => "上午",
+            12..=17 => "下午",
+            _ => "晚间",
+        };
+        *daypart_map.entry(daypart).or_default() += minutes;
+        for tag in row.tags.iter().take(8) {
+            *tag_map.entry(tag.clone()).or_default() += minutes.max(1.0);
+        }
+    }
+    let daily = daily_map
+        .into_iter()
+        .map(|(label, value)| InsightPointData { label, value })
+        .collect::<Vec<_>>();
+    let dayparts = [
+        ("凌晨", "#64D2FF"),
+        ("上午", "#FFD60A"),
+        ("下午", "#FF9F0A"),
+        ("晚间", "#BF5AF2"),
+    ]
+    .into_iter()
+    .map(|(label, color)| InsightDistributionData {
+        label: label.to_string(),
+        value: daypart_map.get(label).copied().unwrap_or_default(),
+        color: color.to_string(),
+    })
+    .collect::<Vec<_>>();
+    let mut tag_values = tag_map.into_iter().collect::<Vec<_>>();
+    tag_values.sort_by(|left, right| right.1.total_cmp(&left.1));
+    let tag_colors = [
+        "#0A84FF", "#30D158", "#BF5AF2", "#FF9F0A", "#FF375F", "#64D2FF",
+    ];
+    let tags = tag_values
+        .into_iter()
+        .take(6)
+        .enumerate()
+        .map(|(index, (label, value))| InsightDistributionData {
+            label,
+            value,
+            color: tag_colors[index].to_string(),
+        })
+        .collect::<Vec<_>>();
+
+    let today_key = context.watch_history.local_day_key(now)?;
+    let today_minutes = weekly_rows
+        .iter()
+        .filter(|row| row.day_key == today_key)
+        .map(|row| row.active_ms.max(0))
+        .sum::<i64>() as f64
+        / 60_000.0;
+    let weekly_completed = weekly_rows.iter().filter(|row| row.completed).count() as f64;
+    let weekly_active_days = weekly_rows
+        .iter()
+        .filter(|row| row.active_ms > 0)
+        .map(|row| row.day_key)
+        .collect::<HashSet<_>>()
+        .len() as f64;
+    let rings = vec![
+        InsightRingData {
+            id: "minutes".to_string(),
+            label: "今日观看".to_string(),
+            value: today_minutes,
+            goal: settings.daily_minutes_goal.max(1) as f64,
+            unit: "分钟".to_string(),
+            color: "#FF375F".to_string(),
+        },
+        InsightRingData {
+            id: "episodes".to_string(),
+            label: "本周完成".to_string(),
+            value: weekly_completed,
+            goal: settings.weekly_episodes_goal.max(1) as f64,
+            unit: "集".to_string(),
+            color: "#A7F432".to_string(),
+        },
+        InsightRingData {
+            id: "activeDays".to_string(),
+            label: "本周活跃".to_string(),
+            value: weekly_active_days,
+            goal: settings.weekly_active_days_goal.max(1) as f64,
+            unit: "天".to_string(),
+            color: "#30D5C8".to_string(),
+        },
+    ];
+    let streak_days = longest_streak(&active_day_ids);
+    let mut highlights = Vec::new();
+    if total_minutes > 0.0 {
+        let strongest_daypart = dayparts
+            .iter()
+            .max_by(|left, right| left.value.total_cmp(&right.value))
+            .map(|value| value.label.clone())
+            .unwrap_or_else(|| "晚间".to_string());
+        highlights.push(InsightHighlightData {
+            title: format!("你更常在{strongest_daypart}观看"),
+            detail: format!(
+                "本周期累计 {:.0} 分钟，平均每次 {:.0} 分钟。",
+                total_minutes, average_session_minutes
+            ),
+            tone: "primary".to_string(),
+        });
+    }
+    if completed_episodes > 0 {
+        highlights.push(InsightHighlightData {
+            title: format!("完成了 {completed_episodes} 集"),
+            detail: "完成记录来自本机真实播放会话，不依赖 Bangumi 状态。".to_string(),
+            tone: "success".to_string(),
+        });
+    }
+    if highlights.is_empty() {
+        highlights.push(InsightHighlightData {
+            title: "洞察从下一次播放开始".to_string(),
+            detail: "NexPlay 只在本机记录有效播放时长，你可以随时关闭或清除。".to_string(),
+            tone: "neutral".to_string(),
+        });
+    }
+
+    Ok(InsightsDashboardResponse {
+        range: input.range,
+        tracking_since: rows.first().map(|row| row.started_at).unwrap_or(now),
+        total_minutes,
+        completed_episodes,
+        active_days,
+        session_count,
+        average_session_minutes,
+        streak_days,
+        rings,
+        daily,
+        dayparts,
+        tags,
+        highlights,
+    })
+}
+
+pub fn home_feed(context: &AppContext) -> AppResult<HomeFeedResponse> {
+    let snapshot = snapshot(context)?;
+    let mut subjects = snapshot.subjects;
+    subjects.extend(snapshot.bangumi_collections);
+    let mut sections = Vec::new();
+
+    let mut continuing = subjects
+        .iter()
+        .filter(|subject| subject.progress > 0.0 && subject.progress < 1.0 && subject.local)
+        .cloned()
+        .collect::<Vec<_>>();
+    continuing.sort_by(|left, right| right.progress.total_cmp(&left.progress));
+    push_home_section(
+        &mut sections,
+        "continue",
+        "continue",
+        "继续观看",
+        "从离开的地方继续",
+        "hero",
+        continuing,
+        "已保存本地播放进度",
+    );
+
+    let mut recent = subjects
+        .iter()
+        .filter(|subject| subject.local)
+        .cloned()
+        .collect::<Vec<_>>();
+    recent.sort_by_key(|subject| {
+        std::cmp::Reverse(
+            subject
+                .local_files
+                .iter()
+                .map(|file| file.modified_at)
+                .max()
+                .unwrap_or_default(),
+        )
+    });
+    push_home_section(
+        &mut sections,
+        "recent",
+        "stable",
+        "最近加入",
+        "刚刚进入你的本地片库",
+        "poster",
+        recent,
+        "最近扫描到本地媒体",
+    );
+
+    let mut tag_weights = HashMap::<String, f64>::new();
+    for subject in &subjects {
+        let engagement = subject.progress * 3.0 + subject.bgm_rate as f64 / 5.0;
+        if engagement <= 0.0 {
+            continue;
+        }
+        for tag in subject.tags.iter().take(8) {
+            *tag_weights.entry(tag.clone()).or_default() += engagement;
+        }
+    }
+    let favorite_tag = tag_weights
+        .into_iter()
+        .max_by(|left, right| left.1.total_cmp(&right.1))
+        .map(|(tag, _)| tag);
+    if let Some(tag) = favorite_tag {
+        let mut because = subjects
+            .iter()
+            .filter(|subject| {
+                subject.progress <= 0.0 && subject.tags.iter().any(|value| value == &tag)
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        because.sort_by(|left, right| {
+            recommendation_score(right).total_cmp(&recommendation_score(left))
+        });
+        push_home_section(
+            &mut sections,
+            "affinity",
+            "dynamic",
+            &format!("因为你喜欢「{tag}」"),
+            "根据你的观看完成度与评分生成",
+            "wide",
+            because,
+            &format!("与你偏好的「{tag}」相近"),
+        );
+    }
+
+    let mut finish = subjects
+        .iter()
+        .filter(|subject| subject.progress >= 0.55 && subject.progress < 1.0)
+        .cloned()
+        .collect::<Vec<_>>();
+    finish.sort_by(|left, right| right.progress.total_cmp(&left.progress));
+    push_home_section(
+        &mut sections,
+        "finish",
+        "dynamic",
+        "接近完结",
+        "几次短观看就能完成",
+        "compact",
+        finish,
+        "观看进度已经超过一半",
+    );
+
+    let mut quality = subjects
+        .into_iter()
+        .filter(|subject| subject.progress <= 0.0)
+        .collect::<Vec<_>>();
+    quality
+        .sort_by(|left, right| recommendation_score(right).total_cmp(&recommendation_score(left)));
+    push_home_section(
+        &mut sections,
+        "quality",
+        "dynamic",
+        "今晚值得打开",
+        "兼顾口碑、收藏与本地可播性",
+        "poster",
+        quality,
+        "综合评分与可播放性较高",
+    );
+
+    Ok(HomeFeedResponse {
+        generated_at: crate::task::unix_timestamp_ms(),
+        sections,
+    })
+}
+
+fn seconds_to_ms(value: f64) -> i64 {
+    if value.is_finite() && value > 0.0 {
+        (value * 1000.0).round() as i64
+    } else {
+        0
+    }
+}
+
+fn longest_streak(days: &HashSet<i64>) -> usize {
+    let mut ordered = days.iter().copied().collect::<Vec<_>>();
+    ordered.sort_unstable();
+    let mut longest = 0usize;
+    let mut current = 0usize;
+    let mut previous = None;
+    for day in ordered {
+        current = match previous {
+            Some(value) if day == value + 1 => current + 1,
+            _ => 1,
+        };
+        longest = longest.max(current);
+        previous = Some(day);
+    }
+    longest
+}
+
+fn recommendation_score(subject: &FrontendSubject) -> f64 {
+    let rank_score = if subject.rank > 0 {
+        1.0 / (subject.rank as f64).sqrt()
+    } else {
+        0.0
+    };
+    subject.rating * 1.8
+        + subject.bgm_rate as f64 * 1.4
+        + rank_score * 20.0
+        + if subject.local { 3.0 } else { 0.0 }
+        + if subject.metadata_ready { 1.0 } else { 0.0 }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn push_home_section(
+    sections: &mut Vec<HomeFeedSection>,
+    id: &str,
+    kind: &str,
+    title: &str,
+    subtitle: &str,
+    layout: &str,
+    subjects: Vec<FrontendSubject>,
+    reason: &str,
+) {
+    let mut seen = HashSet::new();
+    let items = subjects
+        .into_iter()
+        .filter(|subject| {
+            seen.insert(format!(
+                "{}:{}",
+                subject.provider, subject.provider_subject_id
+            ))
+        })
+        .take(12)
+        .map(|subject| HomeFeedItem {
+            subject,
+            reason: reason.to_string(),
+        })
+        .collect::<Vec<_>>();
+    if items.is_empty() {
+        return;
+    }
+    sections.push(HomeFeedSection {
+        id: id.to_string(),
+        kind: kind.to_string(),
+        title: title.to_string(),
+        subtitle: subtitle.to_string(),
+        layout: layout.to_string(),
+        items,
+    });
 }
 
 fn playback_start_reached(position: f64, duration: f64) -> bool {
@@ -1355,6 +1947,21 @@ pub fn export_types(output_path: impl AsRef<Path>) -> AppResult<()> {
         BangumiUpdateEpisodeInput::decl(&ts_config),
         BangumiBatchUpdateEpisodesInput::decl(&ts_config),
         PlaybackProgressRequest::decl(&ts_config),
+        PlaybackSessionStartRequest::decl(&ts_config),
+        PlaybackSessionStartResponse::decl(&ts_config),
+        PlaybackSessionHeartbeatRequest::decl(&ts_config),
+        PlaybackSessionEventRequest::decl(&ts_config),
+        PlaybackSessionFinishRequest::decl(&ts_config),
+        InsightRange::decl(&ts_config),
+        InsightsDashboardRequest::decl(&ts_config),
+        InsightRingData::decl(&ts_config),
+        InsightPointData::decl(&ts_config),
+        InsightDistributionData::decl(&ts_config),
+        InsightHighlightData::decl(&ts_config),
+        InsightsDashboardResponse::decl(&ts_config),
+        HomeFeedItem::decl(&ts_config),
+        HomeFeedSection::decl(&ts_config),
+        HomeFeedResponse::decl(&ts_config),
         ConnectionTestResponse::decl(&ts_config),
         BackendEventType::decl(&ts_config),
         BackendEvent::decl(&ts_config),
@@ -1407,6 +2014,12 @@ fn frontend_settings_from_config(config: AppConfig) -> FrontendEditableSettings 
         qbittorrent_save_path: config.qbittorrent.save_path,
         qbittorrent_category: config.qbittorrent.category,
         qbittorrent_tags: config.qbittorrent.tags,
+        theme: config.experience.theme,
+        reduced_motion: config.experience.reduced_motion,
+        analytics_enabled: config.experience.analytics_enabled,
+        daily_minutes_goal: config.experience.daily_minutes_goal,
+        weekly_episodes_goal: config.experience.weekly_episodes_goal,
+        weekly_active_days_goal: config.experience.weekly_active_days_goal,
         logging_level: config.logging.level,
     }
 }
@@ -1461,6 +2074,17 @@ fn config_from_frontend_settings(input: FrontendEditableSettings, current: AppCo
             save_path: input.qbittorrent_save_path,
             category: input.qbittorrent_category,
             tags: input.qbittorrent_tags,
+        },
+        experience: ExperienceConfig {
+            theme: match input.theme.as_str() {
+                "light" | "dark" => input.theme,
+                _ => "system".to_string(),
+            },
+            reduced_motion: input.reduced_motion,
+            analytics_enabled: input.analytics_enabled,
+            daily_minutes_goal: input.daily_minutes_goal.clamp(1, 1440),
+            weekly_episodes_goal: input.weekly_episodes_goal.clamp(1, 100),
+            weekly_active_days_goal: input.weekly_active_days_goal.clamp(1, 7),
         },
         logging: LoggingConfig {
             level: input.logging_level,

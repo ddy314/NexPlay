@@ -33,6 +33,22 @@ pub struct WatchProgress {
 }
 
 #[derive(Debug, Clone)]
+pub struct PlaybackInsightRow {
+    pub session_id: i64,
+    pub media_id: Option<i64>,
+    pub started_at: i64,
+    pub active_ms: i64,
+    pub duration_ms: i64,
+    pub completed: bool,
+    pub seek_count: i64,
+    pub day_label: String,
+    pub day_key: i64,
+    pub hour: i64,
+    pub subject_title: String,
+    pub tags: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
 pub struct BangumiAccount {
     pub username: String,
     pub nickname: Option<String>,

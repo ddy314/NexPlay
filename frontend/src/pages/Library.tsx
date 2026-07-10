@@ -3,7 +3,6 @@ import { AnimatePresence, motion } from "framer-motion";
 import { Calendar, Cloud, HardDrive, LayoutGrid, List, RefreshCw, Search, Sparkles, Star } from "lucide-react";
 import { searchCatalog, type BackendLogEntry, type ScanStatus } from "../backend";
 import type { Subject } from "../data";
-import type { Route } from "../NavRail";
 import { MediaCard } from "../MediaCard";
 import { useIncrementalItems } from "../hooks/useIncrementalItems";
 import { appleSpringBouncy, appleSpringSoft } from "../motion";
@@ -12,7 +11,7 @@ import { loadSubjectDetailWithFallback, mergeCloudSubjectDetail, mergeLocalSubje
 import { resolveAssetUrl } from "../utils/assets";
 import { cn } from "../utils/cn";
 
-type CatalogRoute = Extract<Route, "search" | "home" | "library">;
+type CatalogRoute = "search" | "home" | "library";
 type SearchSort = "year" | "rating" | "title";
 type LibrarySort = "default" | "title" | "year" | "rating";
 type LibraryLayout = "grid" | "list";
@@ -349,7 +348,11 @@ export function LibraryPage({
               </Section>
             </>
           ) : (
-            <div className="flex gap-6">
+            <>
+              <Timeline subjects={sortedSubjects} onJump={(year) => {
+                const target = document.querySelector(`[data-timeline-year="${year}"]`);
+                target?.scrollIntoView({ behavior: "smooth", block: "center" });
+              }} />
               <div className="min-w-0 flex-1">
                 {(scanStatus.running || logs.length > 0) && (
                   <div className="mt-5">
@@ -371,11 +374,7 @@ export function LibraryPage({
                   )}
                 </Section>
               </div>
-              <Timeline subjects={sortedSubjects} onJump={(year) => {
-                const target = document.querySelector(`[data-timeline-year="${year}"]`);
-                target?.scrollIntoView({ behavior: "smooth", block: "start" });
-              }} />
-            </div>
+            </>
           )}
         </motion.div>
       </AnimatePresence>
@@ -790,31 +789,29 @@ function Timeline({
   onJump: (year: number) => void;
 }) {
   const years = useMemo(() => {
-    const yearSet = new Set<number>();
+    const yearCounts = new Map<number, number>();
     for (const s of subjects) {
-      if (s.year > 0) yearSet.add(s.year);
+      if (s.year > 0) yearCounts.set(s.year, (yearCounts.get(s.year) ?? 0) + 1);
     }
-    return Array.from(yearSet).sort((a, b) => b - a);
+    return Array.from(yearCounts, ([year, count]) => ({ year, count })).sort((a, b) => b.year - a.year);
   }, [subjects]);
 
   if (years.length === 0) return null;
 
   return (
-    <div className="hidden w-[60px] shrink-0 xl:block">
-      <div className="sticky top-8 pt-5">
-        <div className="flex flex-col items-center gap-1">
-          {years.map((year) => (
+    <div className="library-time-map" aria-label="媒体库年份分布">
+          {years.map(({ year, count }) => (
             <button
               key={year}
               type="button"
               onClick={() => onJump(year)}
-              className="text-[11px] font-semibold text-[var(--color-text-tertiary)] transition-colors hover:text-[var(--color-accent)]"
+              className="library-time-node"
+              title={`${year} · ${count} 部`}
             >
-              {year}
+              <i style={{ height: `${Math.min(42, 8 + count * 4)}px` }} />
+              <span>{year}</span>
             </button>
           ))}
-        </div>
-      </div>
     </div>
   );
 }

@@ -9,13 +9,17 @@ use crate::app::AppContext;
 use crate::backend_api::{
     CatalogSearchRequest, ConfirmResourceDownloadRequest, DanmakuTrackRequest,
     DownloadTaskActionRequest, EpisodeResourcesRequest, FrontendEditableSettings,
-    MediaSourceRequest, OnlineSubjectRequest, OpenMediaRequest, PlaybackProgressRequest,
-    PrepareResourceDownloadRequest, RefreshSubjectRequest, StartResourceDownloadRequest,
-    bangumi_auth_status, batch_update_bangumi_episodes, complete_bangumi_oauth,
+    InsightsDashboardRequest, MediaSourceRequest, OnlineSubjectRequest, OpenMediaRequest,
+    PlaybackProgressRequest, PlaybackSessionEventRequest, PlaybackSessionFinishRequest,
+    PlaybackSessionHeartbeatRequest, PlaybackSessionStartRequest, PrepareResourceDownloadRequest,
+    RefreshSubjectRequest, StartResourceDownloadRequest, bangumi_auth_status,
+    batch_update_bangumi_episodes, clear_playback_analytics, complete_bangumi_oauth,
     confirm_resource_download, control_download_task, danmaku_track, download_tasks,
-    episode_resources, frontend_event_from_app, logout_bangumi, media_source, online_subject,
-    open_media, prepare_resource_download, refresh_subject_metadata, report_playback_progress,
-    save_settings_config, scan, search_catalog, settings_config, snapshot, start_bangumi_login,
+    episode_resources, finish_playback_session, frontend_event_from_app,
+    heartbeat_playback_session, home_feed, insights_dashboard, logout_bangumi, media_source,
+    online_subject, open_media, prepare_resource_download, record_playback_session_event,
+    refresh_subject_metadata, report_playback_progress, save_settings_config, scan, search_catalog,
+    settings_config, snapshot, start_bangumi_login, start_playback_session,
     start_resource_download, sync_bangumi_now, sync_bangumi_subject, test_qbittorrent_connection,
     update_bangumi_collection, update_bangumi_episode,
 };
@@ -210,6 +214,28 @@ fn dispatch(context: &AppContext, method: &str, params: Option<Value>) -> AppRes
             let input: PlaybackProgressRequest = from_params(params)?;
             to_value(report_playback_progress(context, input)?)
         }
+        "startPlaybackSession" => {
+            let input: PlaybackSessionStartRequest = from_params(params)?;
+            to_value(start_playback_session(context, input)?)
+        }
+        "heartbeatPlaybackSession" => {
+            let input: PlaybackSessionHeartbeatRequest = from_params(params)?;
+            to_value(heartbeat_playback_session(context, input)?)
+        }
+        "recordPlaybackSessionEvent" => {
+            let input: PlaybackSessionEventRequest = from_params(params)?;
+            to_value(record_playback_session_event(context, input)?)
+        }
+        "finishPlaybackSession" => {
+            let input: PlaybackSessionFinishRequest = from_params(params)?;
+            to_value(finish_playback_session(context, input)?)
+        }
+        "insightsDashboard" => {
+            let input: InsightsDashboardRequest = from_params(params)?;
+            to_value(insights_dashboard(context, input)?)
+        }
+        "clearPlaybackAnalytics" => to_value(clear_playback_analytics(context)?),
+        "homeFeed" => to_value(home_feed(context)?),
         "testQbittorrentConnection" => to_value(test_qbittorrent_connection(context)),
         other => Err(AppError::Api(format!("unknown JSON-RPC method: {other}"))),
     }

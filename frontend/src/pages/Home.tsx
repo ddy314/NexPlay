@@ -1,257 +1,172 @@
-import { useMemo, useRef } from "react";
-import { type Subject } from "../data";
-import { Badge, Button, Card, Progress } from "../ui";
-import { MediaCard, Poster } from "../MediaCard";
-import { SparkleIcon } from "../icons";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { ArrowRight, Clock3, Compass, HardDrive, Play, Sparkles } from "lucide-react";
+import { motion } from "framer-motion";
+import { fetchHomeFeed, type HomeFeed } from "../backend";
+import type { Subject } from "../data";
+import { Poster } from "../MediaCard";
+import { appleEase } from "../motion";
 import { resolveAssetUrl } from "../utils/assets";
 import { cn } from "../utils/cn";
 
 export function HomePage({
   subjects,
-  loading,
-  error,
   onOpen,
+  onNavigate,
 }: {
   subjects: Subject[];
-  loading?: boolean;
-  error?: string | null;
-  onOpen: (s: Subject) => void;
+  onOpen: (subject: Subject) => void;
+  onNavigate: (route: "discover" | "library" | "insights") => void;
 }) {
-  const featured = subjects[0];
-  const recentlyAdded = useMemo(
-    () => subjects.slice(0, 10),
-    [subjects]
-  );
-  const continueWatching = useMemo(
-    () => subjects.filter((s) => s.progress > 0 && s.progress < 1).slice(0, 4),
-    [subjects]
-  );
+  const [feed, setFeed] = useState<HomeFeed>({ generatedAt: Date.now(), sections: [] });
+  const [loading, setLoading] = useState(true);
 
-  const stats = useMemo(() => {
-    const matched = subjects.filter((s) => s.status === "matched").length;
-    const unmatched = subjects.filter((s) => s.status !== "matched").length;
-    return [
-      { label: "Indexed Media", value: subjects.length.toString(), hint: loading ? "加载中" : "Rust backend" },
-      { label: "Matched", value: matched.toString(), hint: subjects.length ? `${Math.round((matched / subjects.length) * 100)}%` : "0%" },
-      { label: "Unmatched", value: unmatched.toString(), hint: "需要确认" },
-      { label: "Backend", value: error ? "Disconnected" : "Live", hint: error ? "未连接" : "已连接" },
-    ];
-  }, [error, loading, subjects]);
+  useEffect(() => {
+    let cancelled = false;
+    fetchHomeFeed()
+      .then((next) => { if (!cancelled) setFeed(next); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [subjects]);
 
-  if (!featured) {
-    return (
-      <div className="px-10 py-10">
-        <h1 className="text-[36px] font-semibold tracking-tight">NexPlay</h1>
-        <div className="mt-3 text-[14px] text-[var(--color-on-surface-muted)]">
-          {error ?? "暂无媒体。请在设置里确认媒体目录，然后到媒体库执行扫描。"}
-        </div>
-      </div>
-    );
-  }
+  const fallback = useMemo<HomeFeed>(() => ({
+    generatedAt: Date.now(),
+    sections: subjects.length ? [{
+      id: "local",
+      kind: "stable",
+      title: "你的媒体库",
+      subtitle: "本地可播放内容",
+      layout: "poster",
+      items: subjects.slice(0, 12).map((subject) => ({ subject, reason: "本地可播放" })),
+    }] : [],
+  }), [subjects]);
+  const resolvedFeed = feed.sections.length ? feed : fallback;
+  const continueSection = resolvedFeed.sections.find((section) => section.id === "continue");
+  const hero = continueSection?.items[0] ?? resolvedFeed.sections.flatMap((section) => section.items)[0];
+  const remaining = resolvedFeed.sections.filter((section) => section.id !== "continue");
 
   return (
-    <div className="relative pb-16">
-      {/* Hero */}
-      <HeroSection featured={featured} onOpen={() => onOpen(featured)} />
-
-      <div className="px-10 mt-12 space-y-12">
-        {/* Continue watching */}
-        <Section title="继续观看" subtitle="Continue Watching">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {continueWatching.map((s) => (
-              <ContinueCard key={s.id} subject={s} onClick={() => onOpen(s)} />
-            ))}
+    <div className="h-full overflow-y-auto overflow-x-hidden">
+      <motion.div className="nx-page" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={appleEase}>
+        <header className="nx-page-header">
+          <div>
+            <div className="nx-eyebrow"><Sparkles size={14} /> Personal station</div>
+            <h1 className="nx-page-title">现在，想看点什么？</h1>
+            <p className="nx-page-subtitle">继续上次进度，或者从真正理解你偏好的分区里找到下一部。</p>
           </div>
-        </Section>
+          <button type="button" className="nx-button secondary" onClick={() => onNavigate("discover")}>
+            <Compass size={17} /> 打开发现
+          </button>
+        </header>
 
-        {/* Recently added */}
-        <Section title="最近添加" subtitle="Recently Added">
-          <HorizontalRow>
-            {recentlyAdded.map((s) => (
-              <MediaCard key={s.id} subject={s} onOpen={onOpen} />
-            ))}
-          </HorizontalRow>
-        </Section>
-
-        {/* Library overview */}
-        <Section title="媒体库概览" subtitle="Library Overview">
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
-            {stats.map((s) => (
-              <Card key={s.label} className="p-4">
-                <div className="text-[11px] uppercase tracking-wider text-[var(--color-on-surface-faint)]">
-                  {s.label}
-                </div>
-                <div className="mt-2 text-[26px] font-semibold tracking-tight tabular-nums">
-                  {s.value}
-                </div>
-                <div className="text-[12px] text-[var(--color-on-surface-muted)] mt-1">
-                  {s.hint}
-                </div>
-              </Card>
-            ))}
-          </div>
-        </Section>
-
-      </div>
-    </div>
-  );
-}
-
-function HeroSection({
-  featured,
-  onOpen,
-}: {
-  featured: Subject;
-  onOpen: () => void;
-}) {
-  const imageSrc = featured.hero || featured.poster;
-  const resolvedImageSrc = resolveAssetUrl(imageSrc);
-
-  return (
-    <div className="relative h-[560px] w-full overflow-hidden">
-      {/* Background image */}
-      {resolvedImageSrc ? (
-        <img
-          src={resolvedImageSrc}
-          alt={featured.title}
-          loading="eager"
-          decoding="async"
-          fetchPriority="high"
-          className="absolute inset-0 size-full object-cover"
-        />
-      ) : (
-        <div className="absolute inset-0 bg-gradient-to-br from-[var(--color-surface-3)] via-[var(--color-surface-2)] to-[var(--color-bg)]" />
-      )}
-      {/* Scrims */}
-      <div className="absolute inset-0 bg-gradient-to-t from-[var(--color-bg)] via-[var(--color-bg)]/60 to-transparent" />
-      <div className="absolute inset-0 bg-gradient-to-r from-[var(--color-bg)]/90 via-[var(--color-bg)]/40 to-transparent" />
-
-      {/* Content */}
-      <div className="relative h-full flex items-end px-10 pb-14 anim-fade-up">
-        <div className="max-w-2xl">
-          <div className="flex items-center gap-2 mb-5">
-            <Badge tone="primary">
-              <SparkleIcon className="size-3" />
-              NEW EPISODE
-            </Badge>
-            <Badge tone="accent">CONTINUE</Badge>
-          </div>
-          <div className="text-[12px] tracking-[0.3em] uppercase text-[var(--color-on-surface-muted)] mb-3">
-            Featured · {featured.year}
-          </div>
-          <h1 className="text-[56px] font-semibold leading-[1.05] tracking-tight">
-            {featured.title}
-          </h1>
-          <div className="text-[18px] text-[var(--color-on-surface-muted)] mt-2 font-light">
-            {featured.titleCn}
-          </div>
-          <p className="text-[15px] leading-relaxed text-[var(--color-on-surface-muted)] mt-5 max-w-xl line-clamp-3">
-            {featured.summary}
-          </p>
-
-          <div className="flex items-center gap-3 mt-8">
-            <Button size="lg" onClick={onOpen}>
-              查看详情
-            </Button>
-          </div>
-
-          {/* progress strip */}
-          {featured.progress > 0 && featured.progress < 1 && (
-          <div className="mt-7 max-w-md">
-            <div className="flex items-center justify-between text-[12px] text-[var(--color-on-surface-faint)] mb-1.5">
-              <span>{featured.watchedEpisodes}/{featured.episodes || "?"} 集</span>
-              <span>{Math.round(featured.progress * 100)}%</span>
+        {hero ? (
+          <section className="nx-mosaic">
+            <HeroPlane item={hero} onOpen={() => onOpen(hero.subject)} />
+            <ActionPlane
+              tone="blue"
+              icon={<Compass size={28} />}
+              index="A1"
+              title="发现下一部"
+              copy="跳出已有收藏，查看本季时间带和趋势内容。"
+              onClick={() => onNavigate("discover")}
+            />
+            <ActionPlane
+              tone="green"
+              icon={<HardDrive size={26} />}
+              index="A2"
+              title={`${subjects.filter((subject) => subject.local).length} 部本地可播`}
+              copy="进入按年份和状态组织的媒体库。"
+              onClick={() => onNavigate("library")}
+            />
+            <ActionPlane
+              tone="purple"
+              icon={<Clock3 size={26} />}
+              index="A3"
+              title="本周观看洞察"
+              copy="有效时长、完成集数和活跃节奏都在本机统计。"
+              onClick={() => onNavigate("insights")}
+            />
+          </section>
+        ) : (
+          <div className="nx-empty">
+            <div>
+              <div className="nx-empty-icon"><HardDrive size={28} /></div>
+              <h2>{loading ? "正在组织首页" : "从你的第一部番剧开始"}</h2>
+              <p>配置媒体目录并扫描后，NexPlay 会建立继续观看、最近加入和个性化分区。</p>
+              <button type="button" className="nx-button" style={{ marginTop: 18 }} onClick={() => onNavigate("library")}>打开媒体库</button>
             </div>
-            <Progress value={featured.progress} />
           </div>
-          )}
-        </div>
-      </div>
+        )}
+
+        {remaining.map((section) => (
+          <FeedSection key={section.id} section={section} onOpen={onOpen} />
+        ))}
+      </motion.div>
     </div>
   );
 }
 
-function Section({
-  title,
-  subtitle,
-  children,
-}: {
-  title: string;
-  subtitle?: string;
-  children: React.ReactNode;
-}) {
+function HeroPlane({ item, onOpen }: { item: HomeFeed["sections"][number]["items"][number]; onOpen: () => void }) {
+  const subject = item.subject;
+  const image = resolveAssetUrl(subject.hero || subject.poster);
   return (
-    <section>
-      <div className="flex items-end justify-between mb-5">
+    <button type="button" className="nx-plane nx-plane-dark group col-span-7 row-span-3 min-h-[390px] text-left max-[1100px]:col-span-6" onClick={onOpen}>
+      {image && <img src={image} alt="" className="absolute inset-0 size-full object-cover opacity-65 transition-transform duration-300 group-hover:scale-[1.015]" />}
+      <div className="absolute inset-0 bg-gradient-to-r from-black/85 via-black/50 to-black/10" />
+      <div className="relative flex h-full min-h-[390px] max-w-[620px] flex-col justify-end p-8">
+        <span className="mb-auto flex w-fit items-center gap-2 rounded-full bg-white/14 px-3 py-1.5 text-[11px] font-semibold text-white/85 backdrop-blur-md">
+          <Play size={12} fill="currentColor" /> CONTINUE 01
+        </span>
+        <div className="text-[12px] font-semibold text-white/68">{item.reason}</div>
+        <h2 className="mt-2 text-[34px] font-bold leading-[1.05] tracking-[-0.035em] text-white">{subject.titleCn || subject.title}</h2>
+        <p className="mt-3 line-clamp-2 text-[14px] leading-relaxed text-white/68">{subject.summary || subject.fileSummary}</p>
+        <div className="mt-6 flex items-center gap-3">
+          <span className="flex size-44 h-11 w-auto items-center gap-2 rounded-[14px] bg-white px-4 text-[13px] font-bold text-black">
+            <Play size={16} fill="currentColor" /> 继续观看
+          </span>
+          <span className="text-[12px] font-semibold text-white/62">{Math.round(subject.progress * 100)}%</span>
+        </div>
+      </div>
+    </button>
+  );
+}
+
+function ActionPlane({ tone, icon, index, title, copy, onClick }: { tone: "blue" | "green" | "purple"; icon: React.ReactNode; index: string; title: string; copy: string; onClick: () => void }) {
+  const style = { gridColumn: "span 5" } as CSSProperties;
+  return (
+    <button type="button" className={cn("nx-plane min-h-[119px] p-5 text-left max-[1100px]:col-span-6", `nx-plane-${tone}`)} style={style} onClick={onClick}>
+      <div className="flex items-start justify-between">
+        <span className="opacity-90">{icon}</span><span className="text-[10px] font-bold tracking-[.12em] opacity-60">{index}</span>
+      </div>
+      <div className="mt-7 flex items-end justify-between gap-4">
+        <div><h3 className="text-[20px] font-bold leading-tight">{title}</h3><p className="mt-1 text-[11px] leading-relaxed opacity-68">{copy}</p></div>
+        <ArrowRight size={18} className="shrink-0 opacity-70" />
+      </div>
+    </button>
+  );
+}
+
+function FeedSection({ section, onOpen }: { section: HomeFeed["sections"][number]; onOpen: (subject: Subject) => void }) {
+  return (
+    <section className="nx-section">
+      <div className="nx-section-head">
         <div>
-          <h2 className="text-[22px] font-semibold tracking-tight">{title}</h2>
-          {subtitle && (
-            <div className="text-[12px] uppercase tracking-[0.2em] text-[var(--color-on-surface-faint)] mt-1">
-              {subtitle}
-            </div>
-          )}
+          <h2 className="nx-section-title"><span><Sparkles size={16} /></span>{section.title}</h2>
+          <p className="nx-section-copy">{section.subtitle}</p>
         </div>
+        <span className="text-[10px] font-bold tracking-[.12em] text-[var(--nx-ink-3)]">{section.kind.toUpperCase()}</span>
       </div>
-      {children}
+      <div className="nx-scroll-row">
+        {section.items.map((item) => (
+          <button key={`${item.subject.provider}-${item.subject.providerSubjectId}`} type="button" className={cn("nx-media-tile", section.layout === "wide" && "wide")} onClick={() => onOpen(item.subject)}>
+            <div className="nx-media-art">
+              <Poster src={item.subject.poster || item.subject.hero} alt={item.subject.title} className="size-full" />
+              <span className="nx-reason">{item.reason}</span>
+            </div>
+            <div className="nx-media-title">{item.subject.titleCn || item.subject.title}</div>
+            <div className="nx-media-meta">{item.subject.local ? "本地可播" : "Bangumi"}{item.subject.rating > 0 ? ` · ${item.subject.rating.toFixed(1)}` : ""}</div>
+          </button>
+        ))}
+      </div>
     </section>
-  );
-}
-
-function HorizontalRow({ children }: { children: React.ReactNode }) {
-  const ref = useRef<HTMLDivElement>(null);
-  return (
-    <div className="relative -mx-2">
-      <div
-        ref={ref}
-        className="flex gap-4 overflow-x-auto px-2 pb-3 hide-scrollbar"
-      >
-        {children}
-      </div>
-    </div>
-  );
-}
-
-function ContinueCard({
-  subject,
-  onClick,
-}: {
-  subject: Subject;
-  onClick: () => void;
-}) {
-  return (
-    <div
-      onClick={onClick}
-      className={cn(
-        "group relative flex gap-4 p-3 rounded-2xl cursor-pointer transition-all",
-        "bg-[var(--color-surface-1)] ring-1 ring-inset ring-[var(--color-outline-soft)]",
-        "hover:bg-[var(--color-surface-2)] hover:ring-[var(--color-outline)]"
-      )}
-    >
-      <div className="relative w-[110px] aspect-[2/3] rounded-xl overflow-hidden shrink-0 ring-1 ring-black/30">
-        <Poster src={subject.poster} alt={subject.title} className="absolute inset-0" />
-      </div>
-      <div className="flex-1 flex flex-col min-w-0 py-1">
-        <div className="flex items-start gap-2">
-          <div className="min-w-0 flex-1">
-            <div className="text-[15px] font-medium truncate">{subject.title}</div>
-            <div className="text-[12px] text-[var(--color-on-surface-faint)] truncate">
-              {subject.titleCn}
-            </div>
-          </div>
-          {subject.newEpisode && <Badge tone="primary">NEW</Badge>}
-        </div>
-        <div className="text-[12px] text-[var(--color-on-surface-muted)] mt-2">
-          {subject.watchedEpisodes}/{subject.episodes || "?"} 集 · {subject.lastPlayed ?? "未播放"}
-        </div>
-        <div className="mt-auto pt-3">
-          <Progress value={subject.progress} />
-          <div className="flex items-center justify-between mt-2">
-            <span className="text-[11px] tabular-nums text-[var(--color-on-surface-faint)]">
-              {Math.round(subject.progress * 100)}%
-            </span>
-          </div>
-        </div>
-      </div>
-    </div>
   );
 }

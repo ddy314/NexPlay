@@ -17,7 +17,7 @@ export type FrontendSubject = { id: string, mediaId: number, subjectId: number, 
 
 export type BackendSnapshot = { subjects: Array<FrontendSubject>, bangumiCollections: Array<FrontendSubject>, bangumiAuth: BangumiAuthStatusData, stats: LibraryStats, settings: FrontendSettings, };
 
-export type FrontendEditableSettings = { mediaLibraries: Array<string>, databasePath: string, bangumiEnabled: boolean, bangumiBaseUrl: string, bangumiOauthBaseUrl: string, bangumiClientId: string, bangumiClientSecret: string, bangumiClientSecretConfigured: boolean, bangumiRedirectUri: string, bangumiAccessToken: string, bangumiAccessTokenConfigured: boolean, bangumiUserAgent: string, bangumiRequestTimeoutSecs: number, bangumiAutoMatch: boolean, bangumiCacheImages: boolean, dandanplayAppId: string, dandanplayAppSecret: string, dandanplayApiKey: string, nyaaEnabled: boolean, nyaaBaseUrl: string, nyaaCategory: string, qbittorrentEnabled: boolean, qbittorrentBaseUrl: string, qbittorrentUsername: string, qbittorrentPassword: string, qbittorrentSavePath: string, qbittorrentCategory: string, qbittorrentTags: string, loggingLevel: string, };
+export type FrontendEditableSettings = { mediaLibraries: Array<string>, databasePath: string, bangumiEnabled: boolean, bangumiBaseUrl: string, bangumiOauthBaseUrl: string, bangumiClientId: string, bangumiClientSecret: string, bangumiClientSecretConfigured: boolean, bangumiRedirectUri: string, bangumiAccessToken: string, bangumiAccessTokenConfigured: boolean, bangumiUserAgent: string, bangumiRequestTimeoutSecs: number, bangumiAutoMatch: boolean, bangumiCacheImages: boolean, dandanplayAppId: string, dandanplayAppSecret: string, dandanplayApiKey: string, nyaaEnabled: boolean, nyaaBaseUrl: string, nyaaCategory: string, qbittorrentEnabled: boolean, qbittorrentBaseUrl: string, qbittorrentUsername: string, qbittorrentPassword: string, qbittorrentSavePath: string, qbittorrentCategory: string, qbittorrentTags: string, theme: string, reducedMotion: boolean, analyticsEnabled: boolean, dailyMinutesGoal: number, weeklyEpisodesGoal: number, weeklyActiveDaysGoal: number, loggingLevel: string, };
 
 export type ScanResponse = { summary: ScanSummary, scraped: number, snapshot: BackendSnapshot, };
 
@@ -84,6 +84,36 @@ export type BangumiUpdateEpisodeInput = { subjectId: number, episodeId: number, 
 export type BangumiBatchUpdateEpisodesInput = { subjectId: number, episodeIds: Array<number>, collectionType: number, };
 
 export type PlaybackProgressRequest = { subjectId: number, episodeId: number, mediaId?: number, position: number, duration: number, };
+
+export type PlaybackSessionStartRequest = { subjectId: number, episodeId: number, mediaId?: number, position: number, duration: number, };
+
+export type PlaybackSessionStartResponse = { sessionId: number, };
+
+export type PlaybackSessionHeartbeatRequest = { sessionId: number, position: number, duration: number, activeMs: number, };
+
+export type PlaybackSessionEventRequest = { sessionId: number, kind: string, position: number, };
+
+export type PlaybackSessionFinishRequest = { sessionId: number, position: number, duration: number, activeMs: number, completed: boolean, seekCount: number, };
+
+export type InsightRange = "week" | "month" | "year";
+
+export type InsightsDashboardRequest = { range: InsightRange, };
+
+export type InsightRingData = { id: string, label: string, value: number, goal: number, unit: string, color: string, };
+
+export type InsightPointData = { label: string, value: number, };
+
+export type InsightDistributionData = { label: string, value: number, color: string, };
+
+export type InsightHighlightData = { title: string, detail: string, tone: string, };
+
+export type InsightsDashboardResponse = { range: InsightRange, trackingSince: number, totalMinutes: number, completedEpisodes: number, activeDays: number, sessionCount: number, averageSessionMinutes: number, streakDays: number, rings: Array<InsightRingData>, daily: Array<InsightPointData>, dayparts: Array<InsightDistributionData>, tags: Array<InsightDistributionData>, highlights: Array<InsightHighlightData>, };
+
+export type HomeFeedItem = { subject: FrontendSubject, reason: string, };
+
+export type HomeFeedSection = { id: string, kind: string, title: string, subtitle: string, layout: string, items: Array<HomeFeedItem>, };
+
+export type HomeFeedResponse = { generatedAt: number, sections: Array<HomeFeedSection>, };
 
 export type ConnectionTestResponse = { ok: boolean, message: string, };
 

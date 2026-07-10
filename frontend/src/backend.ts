@@ -15,6 +15,9 @@ import type {
   EpisodeResourceData,
   EpisodeResourcesResponse,
   MediaSourceResponse,
+  HomeFeedResponse,
+  InsightsDashboardResponse,
+  InsightRange,
   OpenMediaResponse,
   PreparedResourceDownloadResponse,
   PrepareResourceDownloadRequest,
@@ -35,6 +38,9 @@ export type DownloadTasks = DownloadTasksResponse;
 export type TorrentFile = TorrentFileData;
 export type PreparedResourceDownload = PreparedResourceDownloadResponse;
 export type ConnectionTest = ConnectionTestResponse;
+export type HomeFeed = HomeFeedResponse;
+export type InsightsDashboard = InsightsDashboardResponse;
+export type InsightsRange = InsightRange;
 export type BangumiAuthStatus = BangumiAuthStatusData;
 export type BangumiLoginStart = BangumiLoginStartData;
 export type BangumiSyncSummary = BangumiSyncSummaryData;
@@ -666,6 +672,81 @@ export async function reportPlaybackProgress(input: {
     throw new Error("当前页面没有连接到 NexPlay 后端。");
   }
   return window.nexplay.reportPlaybackProgress(input);
+}
+
+export async function fetchHomeFeed(): Promise<HomeFeed> {
+  if (!window.nexplay) {
+    return { generatedAt: Date.now(), sections: [] };
+  }
+  return window.nexplay.homeFeed();
+}
+
+export async function fetchInsightsDashboard(range: InsightsRange): Promise<InsightsDashboard> {
+  if (!window.nexplay) {
+    return {
+      range,
+      trackingSince: Date.now(),
+      totalMinutes: 0,
+      completedEpisodes: 0,
+      activeDays: 0,
+      sessionCount: 0,
+      averageSessionMinutes: 0,
+      streakDays: 0,
+      rings: [
+        { id: "minutes", label: "今日观看", value: 0, goal: 45, unit: "分钟", color: "#FF375F" },
+        { id: "episodes", label: "本周完成", value: 0, goal: 5, unit: "集", color: "#A7F432" },
+        { id: "activeDays", label: "本周活跃", value: 0, goal: 4, unit: "天", color: "#30D5C8" },
+      ],
+      daily: [],
+      dayparts: [],
+      tags: [],
+      highlights: [{ title: "洞察从下一次播放开始", detail: "仅在本机记录有效播放时长。", tone: "neutral" }],
+    };
+  }
+  return window.nexplay.insightsDashboard({ range });
+}
+
+export async function clearPlaybackAnalytics(): Promise<void> {
+  if (window.nexplay) await window.nexplay.clearPlaybackAnalytics();
+}
+
+export async function startPlaybackSession(input: {
+  subjectId: number;
+  episodeId: number;
+  mediaId?: number;
+  position: number;
+  duration: number;
+}) {
+  if (!window.nexplay) return { sessionId: 0 };
+  return window.nexplay.startPlaybackSession(input);
+}
+
+export async function heartbeatPlaybackSession(input: {
+  sessionId: number;
+  position: number;
+  duration: number;
+  activeMs: number;
+}) {
+  if (window.nexplay) await window.nexplay.heartbeatPlaybackSession(input);
+}
+
+export async function recordPlaybackSessionEvent(input: {
+  sessionId: number;
+  kind: string;
+  position: number;
+}) {
+  if (window.nexplay) await window.nexplay.recordPlaybackSessionEvent(input);
+}
+
+export async function finishPlaybackSession(input: {
+  sessionId: number;
+  position: number;
+  duration: number;
+  activeMs: number;
+  completed: boolean;
+  seekCount: number;
+}) {
+  if (window.nexplay) await window.nexplay.finishPlaybackSession(input);
 }
 
 export async function testQbittorrentConnection(): Promise<ConnectionTest> {

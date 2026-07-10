@@ -198,6 +198,23 @@ function registerBackendIpc(backendClient, options = {}) {
   ipcMain.handle("backend:report-playback-progress", (_event, payload) => (
     backendClient.request("reportPlaybackProgress", payload)
   ));
+  ipcMain.handle("backend:start-playback-session", (_event, payload) => (
+    backendClient.request("startPlaybackSession", payload)
+  ));
+  ipcMain.handle("backend:heartbeat-playback-session", (_event, payload) => (
+    backendClient.request("heartbeatPlaybackSession", payload)
+  ));
+  ipcMain.handle("backend:record-playback-session-event", (_event, payload) => (
+    backendClient.request("recordPlaybackSessionEvent", payload)
+  ));
+  ipcMain.handle("backend:finish-playback-session", (_event, payload) => (
+    backendClient.request("finishPlaybackSession", payload)
+  ));
+  ipcMain.handle("backend:insights-dashboard", (_event, payload) => (
+    backendClient.request("insightsDashboard", payload)
+  ));
+  ipcMain.handle("backend:clear-playback-analytics", () => backendClient.request("clearPlaybackAnalytics"));
+  ipcMain.handle("backend:home-feed", () => backendClient.request("homeFeed"));
   ipcMain.handle("backend:test-qbittorrent", () => backendClient.request("testQbittorrentConnection"));
 }
 

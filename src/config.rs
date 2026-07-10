@@ -17,7 +17,58 @@ pub struct AppConfig {
     pub nyaa: NyaaConfig,
     #[serde(default)]
     pub qbittorrent: QbittorrentConfig,
+    #[serde(default)]
+    pub experience: ExperienceConfig,
     pub logging: LoggingConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExperienceConfig {
+    #[serde(default = "default_theme")]
+    pub theme: String,
+    #[serde(default)]
+    pub reduced_motion: bool,
+    #[serde(default = "default_true")]
+    pub analytics_enabled: bool,
+    #[serde(default = "default_daily_minutes_goal")]
+    pub daily_minutes_goal: u64,
+    #[serde(default = "default_weekly_episodes_goal")]
+    pub weekly_episodes_goal: u64,
+    #[serde(default = "default_weekly_active_days_goal")]
+    pub weekly_active_days_goal: u64,
+}
+
+impl Default for ExperienceConfig {
+    fn default() -> Self {
+        Self {
+            theme: default_theme(),
+            reduced_motion: false,
+            analytics_enabled: true,
+            daily_minutes_goal: default_daily_minutes_goal(),
+            weekly_episodes_goal: default_weekly_episodes_goal(),
+            weekly_active_days_goal: default_weekly_active_days_goal(),
+        }
+    }
+}
+
+fn default_theme() -> String {
+    "system".to_string()
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_daily_minutes_goal() -> u64 {
+    45
+}
+
+fn default_weekly_episodes_goal() -> u64 {
+    5
+}
+
+fn default_weekly_active_days_goal() -> u64 {
+    4
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -139,6 +190,7 @@ impl Default for AppConfig {
             bangumi: BangumiConfig::default(),
             nyaa: NyaaConfig::default(),
             qbittorrent: QbittorrentConfig::default(),
+            experience: ExperienceConfig::default(),
             logging: LoggingConfig {
                 level: "info".to_string(),
             },
