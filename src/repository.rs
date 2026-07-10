@@ -6,9 +6,9 @@ use rusqlite::{Connection, OptionalExtension, params};
 use crate::domain::{
     BangumiAccount, BangumiEpisodeCollection, BangumiSubjectCollection, BangumiSyncQueueItem,
     DanmakuCommentCache, DanmakuMatch, DownloadTask, MediaFile, MediaItem, MetadataCandidate,
-    ResourceCandidate, ScanUpsertStatus, Subject, SubjectEpisode, SubjectImageCache,
-    UiCandidateData, UiMediaCardData, UiSeriesCardData, UiSeriesEpisodeData, UiSeriesFileData,
-    UiSubjectDetailData, WatchProgress,
+    PlaybackInsightRow, ResourceCandidate, ScanUpsertStatus, Subject, SubjectEpisode,
+    SubjectImageCache, UiCandidateData, UiMediaCardData, UiSeriesCardData, UiSeriesEpisodeData,
+    UiSeriesFileData, UiSubjectDetailData, WatchProgress,
 };
 use crate::error::AppResult;
 use crate::metadata::provider::{SubjectDetail, SubjectSearchResult};
@@ -1346,6 +1346,179 @@ impl Repository {
         Ok(())
     }
 
+    pub fn start_playback_session(
+        &self,
+        media_id: Option<i64>,
+        subject_id: i64,
+        episode_id: i64,
+        position_ms: i64,
+        duration_ms: i64,
+        now: i64,
+    ) -> AppResult<i64> {
+        let conn = self.connect()?;
+        conn.execute(
+            r#"
+            INSERT INTO playback_sessions
+                (media_id, subject_id, episode_id, started_at, last_heartbeat_at,
+                 start_position_ms, end_position_ms, duration_ms)
+            VALUES (?1, ?2, ?3, ?4, ?4, ?5, ?5, ?6)
+            "#,
+            params![
+                media_id,
+                subject_id,
+                episode_id,
+                now,
+                position_ms,
+                duration_ms
+            ],
+        )?;
+        let session_id = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO playback_events (session_id, kind, position_ms, occurred_at) VALUES (?1, 'start', ?2, ?3)",
+            params![session_id, position_ms, now],
+        )?;
+        Ok(session_id)
+    }
+
+    pub fn heartbeat_playback_session(
+        &self,
+        session_id: i64,
+        position_ms: i64,
+        duration_ms: i64,
+        active_ms: i64,
+        now: i64,
+    ) -> AppResult<()> {
+        let conn = self.connect()?;
+        conn.execute(
+            r#"
+            UPDATE playback_sessions
+            SET last_heartbeat_at = ?2,
+                end_position_ms = ?3,
+                duration_ms = MAX(duration_ms, ?4),
+                active_ms = MAX(active_ms, ?5)
+            WHERE id = ?1 AND ended_at IS NULL
+            "#,
+            params![session_id, now, position_ms, duration_ms, active_ms],
+        )?;
+        Ok(())
+    }
+
+    pub fn record_playback_event(
+        &self,
+        session_id: i64,
+        kind: &str,
+        position_ms: i64,
+        now: i64,
+    ) -> AppResult<()> {
+        let conn = self.connect()?;
+        conn.execute(
+            "INSERT INTO playback_events (session_id, kind, position_ms, occurred_at) VALUES (?1, ?2, ?3, ?4)",
+            params![session_id, kind, position_ms, now],
+        )?;
+        Ok(())
+    }
+
+    pub fn finish_playback_session(
+        &self,
+        session_id: i64,
+        position_ms: i64,
+        duration_ms: i64,
+        active_ms: i64,
+        completed: bool,
+        seek_count: i64,
+        now: i64,
+    ) -> AppResult<()> {
+        let conn = self.connect()?;
+        conn.execute(
+            r#"
+            UPDATE playback_sessions
+            SET ended_at = ?2,
+                last_heartbeat_at = ?2,
+                end_position_ms = ?3,
+                duration_ms = MAX(duration_ms, ?4),
+                active_ms = MAX(active_ms, ?5),
+                completed = ?6,
+                seek_count = MAX(seek_count, ?7)
+            WHERE id = ?1
+            "#,
+            params![
+                session_id,
+                now,
+                position_ms,
+                duration_ms,
+                active_ms,
+                completed as i64,
+                seek_count
+            ],
+        )?;
+        conn.execute(
+            "INSERT INTO playback_events (session_id, kind, position_ms, occurred_at) VALUES (?1, ?2, ?3, ?4)",
+            params![session_id, if completed { "complete" } else { "stop" }, position_ms, now],
+        )?;
+        Ok(())
+    }
+
+    pub fn playback_insight_rows_since(&self, since: i64) -> AppResult<Vec<PlaybackInsightRow>> {
+        let conn = self.connect()?;
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT
+                ps.id,
+                ps.media_id,
+                ps.started_at,
+                ps.active_ms,
+                ps.duration_ms,
+                ps.completed,
+                ps.seek_count,
+                strftime('%Y-%m-%d', ps.started_at / 1000, 'unixepoch', 'localtime'),
+                CAST(strftime('%s', date(ps.started_at / 1000, 'unixepoch', 'localtime')) AS INTEGER) / 86400,
+                CAST(strftime('%H', ps.started_at / 1000, 'unixepoch', 'localtime') AS INTEGER),
+                COALESCE(NULLIF(s.title_cn, ''), s.title, ''),
+                COALESCE(s.tags, '[]')
+            FROM playback_sessions ps
+            LEFT JOIN media_subject_links msl ON msl.media_id = ps.media_id
+            LEFT JOIN subjects s ON s.id = msl.subject_id
+            WHERE ps.started_at >= ?1
+            GROUP BY ps.id
+            ORDER BY ps.started_at ASC
+            "#,
+        )?;
+        let rows = stmt.query_map(params![since], |row| {
+            let tags_json: String = row.get(11)?;
+            Ok(PlaybackInsightRow {
+                session_id: row.get(0)?,
+                media_id: row.get(1)?,
+                started_at: row.get(2)?,
+                active_ms: row.get(3)?,
+                duration_ms: row.get(4)?,
+                completed: row.get::<_, i64>(5)? != 0,
+                seek_count: row.get(6)?,
+                day_label: row.get::<_, Option<String>>(7)?.unwrap_or_default(),
+                day_key: row.get::<_, Option<i64>>(8)?.unwrap_or_default(),
+                hour: row.get::<_, Option<i64>>(9)?.unwrap_or_default(),
+                subject_title: row.get(10)?,
+                tags: serde_json::from_str(&tags_json).unwrap_or_default(),
+            })
+        })?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    pub fn local_day_key(&self, timestamp_ms: i64) -> AppResult<i64> {
+        let conn = self.connect()?;
+        conn.query_row(
+            "SELECT CAST(strftime('%s', date(?1 / 1000, 'unixepoch', 'localtime')) AS INTEGER) / 86400",
+            params![timestamp_ms],
+            |row| row.get(0),
+        )
+        .map_err(Into::into)
+    }
+
+    pub fn clear_playback_analytics(&self) -> AppResult<()> {
+        let conn = self.connect()?;
+        conn.execute("DELETE FROM playback_sessions", [])?;
+        Ok(())
+    }
+
     pub fn upsert_danmaku_match(
         &self,
         media_id: i64,
@@ -2319,6 +2492,68 @@ mod tests {
             .expect("cache exists");
         assert_eq!(cached.error.as_deref(), Some("network failed"));
 
+        let _ = fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn records_low_frequency_playback_session_for_insights() {
+        let db_path = std::env::temp_dir().join(format!(
+            "nexplay-playback-session-test-{}.sqlite3",
+            std::process::id()
+        ));
+        let _ = fs::remove_file(&db_path);
+        let repository = Repository::new(db_path.clone());
+        repository.init().expect("init database");
+
+        let started_at = 1_800_000_000_000i64;
+        let session_id = repository
+            .start_playback_session(None, 12, 34, 10_000, 1_440_000, started_at)
+            .expect("start session");
+        repository
+            .heartbeat_playback_session(
+                session_id,
+                300_000,
+                1_440_000,
+                240_000,
+                started_at + 250_000,
+            )
+            .expect("heartbeat");
+        repository
+            .record_playback_event(session_id, "seek", 600_000, started_at + 260_000)
+            .expect("seek event");
+        repository
+            .finish_playback_session(
+                session_id,
+                1_400_000,
+                1_440_000,
+                900_000,
+                true,
+                1,
+                started_at + 920_000,
+            )
+            .expect("finish session");
+
+        let rows = repository
+            .playback_insight_rows_since(started_at - 1)
+            .expect("insight rows");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].active_ms, 900_000);
+        assert!(rows[0].completed);
+        assert_eq!(rows[0].seek_count, 1);
+        assert_eq!(
+            rows[0].day_key,
+            repository.local_day_key(started_at).expect("local day key")
+        );
+
+        repository
+            .clear_playback_analytics()
+            .expect("clear analytics");
+        assert!(
+            repository
+                .playback_insight_rows_since(started_at - 1)
+                .expect("cleared rows")
+                .is_empty()
+        );
         let _ = fs::remove_file(db_path);
     }
 }

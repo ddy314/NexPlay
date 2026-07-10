@@ -157,6 +157,13 @@ contextBridge.exposeInMainWorld("nexplay", {
   updateBangumiEpisode: (payload) => ipcRenderer.invoke("backend:update-bangumi-episode", payload),
   batchUpdateBangumiEpisodes: (payload) => ipcRenderer.invoke("backend:batch-update-bangumi-episodes", payload),
   reportPlaybackProgress: (payload) => ipcRenderer.invoke("backend:report-playback-progress", payload),
+  startPlaybackSession: (payload) => ipcRenderer.invoke("backend:start-playback-session", payload),
+  heartbeatPlaybackSession: (payload) => ipcRenderer.invoke("backend:heartbeat-playback-session", payload),
+  recordPlaybackSessionEvent: (payload) => ipcRenderer.invoke("backend:record-playback-session-event", payload),
+  finishPlaybackSession: (payload) => ipcRenderer.invoke("backend:finish-playback-session", payload),
+  insightsDashboard: (payload) => ipcRenderer.invoke("backend:insights-dashboard", payload),
+  clearPlaybackAnalytics: () => ipcRenderer.invoke("backend:clear-playback-analytics"),
+  homeFeed: () => ipcRenderer.invoke("backend:home-feed"),
   testQbittorrentConnection: () => ipcRenderer.invoke("backend:test-qbittorrent"),
   openMedia: (mediaId) => ipcRenderer.invoke("backend:open-media", mediaId),
   getMediaSource: async (mediaId) => {

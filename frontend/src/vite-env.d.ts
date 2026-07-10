@@ -26,6 +26,13 @@ interface Window {
     updateBangumiEpisode: (payload: import("./generated/backend").BangumiUpdateEpisodeInput) => Promise<import("./backend").BangumiSyncSummary>;
     batchUpdateBangumiEpisodes: (payload: import("./generated/backend").BangumiBatchUpdateEpisodesInput) => Promise<import("./backend").BangumiSyncSummary>;
     reportPlaybackProgress: (payload: import("./generated/backend").PlaybackProgressRequest) => Promise<import("./backend").BangumiSyncSummary>;
+    startPlaybackSession: (payload: import("./generated/backend").PlaybackSessionStartRequest) => Promise<import("./generated/backend").PlaybackSessionStartResponse>;
+    heartbeatPlaybackSession: (payload: import("./generated/backend").PlaybackSessionHeartbeatRequest) => Promise<void>;
+    recordPlaybackSessionEvent: (payload: import("./generated/backend").PlaybackSessionEventRequest) => Promise<void>;
+    finishPlaybackSession: (payload: import("./generated/backend").PlaybackSessionFinishRequest) => Promise<void>;
+    insightsDashboard: (payload: import("./generated/backend").InsightsDashboardRequest) => Promise<import("./backend").InsightsDashboard>;
+    clearPlaybackAnalytics: () => Promise<void>;
+    homeFeed: () => Promise<import("./backend").HomeFeed>;
     testQbittorrentConnection: () => Promise<import("./backend").ConnectionTest>;
     openMedia: (mediaId: number) => Promise<{ opened: boolean }>;
     getMediaSource: (mediaId: number) => Promise<import("./backend").MediaSource>;

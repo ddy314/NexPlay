@@ -25,7 +25,18 @@ import { appleSpringSoft } from "../motion";
 import { MpvWebglSurface } from "../MpvWebglSurface";
 import { resolveAssetUrl } from "../utils/assets";
 import { cn } from "../utils/cn";
-import { reportPlaybackProgress, type MediaSource, type MpvFrame, type MpvRenderInfo, type MpvState, type MpvTrack } from "../backend";
+import {
+  finishPlaybackSession,
+  heartbeatPlaybackSession,
+  recordPlaybackSessionEvent,
+  reportPlaybackProgress,
+  startPlaybackSession,
+  type MediaSource,
+  type MpvFrame,
+  type MpvRenderInfo,
+  type MpvState,
+  type MpvTrack,
+} from "../backend";
 
 const SEEK_COMMIT_DELAY_MS = 80;
 const SEEK_POSITION_SETTLE_MS = 3500;
@@ -33,7 +44,8 @@ const SEEK_POSITION_ACCEPT_BEFORE_SECONDS = 1.25;
 const SEEK_POSITION_ACCEPT_AFTER_SECONDS = 2.5;
 const FRAME_CLOCK_PUBLISH_INTERVAL_MS = 250;
 const DANMAKU_SEEK_RESET_DELAY_MS = 650;
-const CONTROLS_IDLE_HIDE_MS = 1400;
+const CONTROLS_IDLE_HIDE_MS = 2000;
+const PLAYBACK_HEARTBEAT_MS = 30_000;
 const KEYBOARD_SEEK_STEP_SECONDS = 5;
 const KEYBOARD_VOLUME_STEP = 5;
 const DANMAKU_AREAS = [
@@ -84,9 +96,14 @@ export function PlayerPage({
     duration: number;
   } | null>(null);
   const controlsIdleTimerRef = useRef<number | null>(null);
+  const videoClickTimerRef = useRef<number | null>(null);
   const pointerOverControlsRef = useRef(false);
   const previousVolumeRef = useRef(100);
   const latestVolumeRef = useRef(100);
+  const playbackSessionIdRef = useRef(0);
+  const playbackActiveMsRef = useRef(0);
+  const playbackActiveStartedAtRef = useRef<number | null>(null);
+  const playbackSeekCountRef = useRef(0);
   const [currentKey, setCurrentKey] = useState(initialEpisode.key);
   const [source, setSource] = useState<MediaSource | null>(null);
   const [mpvState, setMpvState] = useState<MpvState | null>(null);
@@ -172,6 +189,95 @@ export function PlayerPage({
       duration,
     };
   });
+
+  const currentActiveMs = useCallback(() => (
+    playbackActiveMsRef.current
+    + (playbackActiveStartedAtRef.current === null ? 0 : Date.now() - playbackActiveStartedAtRef.current)
+  ), []);
+
+  const finishSessionById = useCallback((sessionId: number) => {
+    if (sessionId <= 0) return;
+    const context = playbackProgressContextRef.current;
+    const nextPosition = context?.position ?? 0;
+    const nextDuration = context?.duration ?? 0;
+    const completed = nextDuration > 0 && nextPosition >= Math.max(nextDuration * 0.9, nextDuration - 90);
+    void finishPlaybackSession({
+      sessionId,
+      position: nextPosition,
+      duration: nextDuration,
+      activeMs: currentActiveMs(),
+      completed,
+      seekCount: playbackSeekCountRef.current,
+    });
+  }, [currentActiveMs]);
+
+  useEffect(() => {
+    if (!currentEpisode.mediaId || loadingSource || !source?.sourceUrl) return;
+    let disposed = false;
+    let finished = false;
+    let localSessionId = 0;
+    playbackActiveMsRef.current = 0;
+    playbackSeekCountRef.current = 0;
+    playbackActiveStartedAtRef.current = paused ? null : Date.now();
+    startPlaybackSession({
+      subjectId: Number.isFinite(bgmSubjectId) ? bgmSubjectId : subject.subjectId,
+      episodeId: currentEpisode.bgmEpisodeId ?? 0,
+      mediaId: currentEpisode.mediaId,
+      position,
+      duration,
+    }).then(({ sessionId }) => {
+      localSessionId = sessionId;
+      if (disposed) {
+        if (!finished) {
+          finished = true;
+          finishSessionById(sessionId);
+        }
+      } else {
+        playbackSessionIdRef.current = sessionId;
+      }
+    }).catch(() => {
+      // Analytics is deliberately best-effort and must never affect playback.
+    });
+    return () => {
+      disposed = true;
+      const sessionId = localSessionId || playbackSessionIdRef.current;
+      if (!finished && sessionId > 0) {
+        finished = true;
+        finishSessionById(sessionId);
+      }
+      if (playbackSessionIdRef.current === sessionId) playbackSessionIdRef.current = 0;
+      playbackActiveStartedAtRef.current = null;
+    };
+  }, [currentEpisode.key, currentEpisode.mediaId, loadingSource, source?.sourceUrl]);
+
+  useEffect(() => {
+    const sessionId = playbackSessionIdRef.current;
+    if (paused) {
+      if (playbackActiveStartedAtRef.current !== null) {
+        playbackActiveMsRef.current += Date.now() - playbackActiveStartedAtRef.current;
+        playbackActiveStartedAtRef.current = null;
+      }
+      if (sessionId > 0) void recordPlaybackSessionEvent({ sessionId, kind: "pause", position });
+    } else {
+      if (playbackActiveStartedAtRef.current === null && !loadingSource && !playbackError) playbackActiveStartedAtRef.current = Date.now();
+      if (sessionId > 0) void recordPlaybackSessionEvent({ sessionId, kind: "resume", position });
+    }
+  }, [loadingSource, paused, playbackError]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      const sessionId = playbackSessionIdRef.current;
+      const context = playbackProgressContextRef.current;
+      if (sessionId <= 0 || !context) return;
+      void heartbeatPlaybackSession({
+        sessionId,
+        position: context.position,
+        duration: context.duration,
+        activeMs: currentActiveMs(),
+      });
+    }, PLAYBACK_HEARTBEAT_MS);
+    return () => window.clearInterval(timer);
+  }, [currentActiveMs]);
 
   const flushPlaybackProgress = useCallback((positionOverride?: number, durationOverride?: number) => {
     const context = playbackProgressContextRef.current;
@@ -713,6 +819,14 @@ export function PlayerPage({
   const commitSeek = useCallback((value: number) => {
     if (!window.nexplay || !Number.isFinite(value)) return;
     const nextPosition = Math.max(0, Math.min(duration || value, value));
+    playbackSeekCountRef.current += 1;
+    if (playbackSessionIdRef.current > 0) {
+      void recordPlaybackSessionEvent({
+        sessionId: playbackSessionIdRef.current,
+        kind: "seek",
+        position: nextPosition,
+      });
+    }
     if (mpvState?.renderMode === "browserVideo") {
       const video = browserVideoRef.current;
       if (!video) return;
@@ -843,6 +957,26 @@ export function PlayerPage({
     }
   }, [onSnack]);
 
+  const handleVideoClick = useCallback(() => {
+    if (videoClickTimerRef.current !== null) window.clearTimeout(videoClickTimerRef.current);
+    videoClickTimerRef.current = window.setTimeout(() => {
+      videoClickTimerRef.current = null;
+      void togglePause();
+    }, 180);
+  }, [togglePause]);
+
+  const handleVideoDoubleClick = useCallback(() => {
+    if (videoClickTimerRef.current !== null) {
+      window.clearTimeout(videoClickTimerRef.current);
+      videoClickTimerRef.current = null;
+    }
+    void toggleStageFullscreen();
+  }, [toggleStageFullscreen]);
+
+  useEffect(() => () => {
+    if (videoClickTimerRef.current !== null) window.clearTimeout(videoClickTimerRef.current);
+  }, []);
+
   const toggleMute = useCallback(() => {
     if (volume > 0) {
       previousVolumeRef.current = volume;
@@ -964,13 +1098,24 @@ export function PlayerPage({
           revealControls();
           setDanmakuVisible((current) => !current);
           break;
+        case "Escape":
+          if (settingsMenuOpen || episodePanelOpen || volumeOpen) {
+            setSettingsMenuOpen(false);
+            setEpisodePanelOpen(false);
+            setVolumeOpen(false);
+          } else if (document.fullscreenElement) {
+            void document.exitFullscreen();
+          } else {
+            onBack();
+          }
+          break;
         default:
           break;
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [adjustVolumeByKeyboard, revealControls, seekByKeyboard, toggleMute, togglePause, toggleStageFullscreen]);
+  }, [adjustVolumeByKeyboard, episodePanelOpen, onBack, revealControls, seekByKeyboard, settingsMenuOpen, toggleMute, togglePause, toggleStageFullscreen, volumeOpen]);
 
   return (
     <div className="relative h-full overflow-hidden bg-[var(--color-bg)]">
@@ -988,7 +1133,7 @@ export function PlayerPage({
               <span className="flex size-8 items-center justify-center rounded-full bg-[var(--color-surface-1)] shadow-[inset_0_0_0_0.5px_var(--color-outline-soft)]">
                 <ChevronDown size={17} className="transition-transform group-hover:translate-y-0.5" />
               </span>
-              收起播放器
+              返回详情
             </motion.button>
 
             <div className="hidden min-w-0 text-right text-[12px] font-semibold text-[var(--color-text-tertiary)] md:block">
@@ -1126,7 +1271,8 @@ export function PlayerPage({
                   className="player-video-hit-area"
                   disabled={playbackControlsDisabled}
                   tabIndex={-1}
-                  onClick={() => void togglePause()}
+                  onClick={handleVideoClick}
+                  onDoubleClick={handleVideoDoubleClick}
                   aria-label={paused ? "播放" : "暂停"}
                 />
                 {paused && !loadingSource && !playbackError && (
@@ -1401,13 +1547,6 @@ export function PlayerPage({
               </div>
               </div>
 
-              <EpisodeListPanel
-                episodes={episodes}
-                playableCount={playableEpisodes.length}
-                currentKey={currentEpisode.key}
-                variant="sidebar"
-                onSelect={switchEpisode}
-              />
             </div>
 
             <div

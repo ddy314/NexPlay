@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
-import { AlertCircle, CheckCircle2, DownloadCloud, Loader2, Pause, PauseCircle, Play, RefreshCw, Trash2, X } from "lucide-react";
+import { AlertCircle, ArrowRight, CheckCircle2, DownloadCloud, Gauge, Loader2, Pause, PauseCircle, Play, RefreshCw, Search, ShieldCheck, Trash2, X } from "lucide-react";
 import { controlDownloadTask, downloadTasks, type DownloadTask } from "../backend";
 import { appleSpringBouncy, appleSpringSoft } from "../motion";
 
@@ -60,6 +60,7 @@ export function DownloadsPage({
     completed: tasks.filter((task) => task.status === "completed").length,
     failed: tasks.filter((task) => task.status === "failed").length,
   }), [tasks]);
+  const totalSpeed = tasks.reduce((sum, task) => sum + Math.max(0, task.dlspeed), 0);
 
   return (
     <div className="h-full overflow-y-auto overflow-x-hidden">
@@ -72,22 +73,9 @@ export function DownloadsPage({
       >
         <header className="page-header">
           <div>
-            <motion.h1
-              className="text-[42px] font-bold leading-[1] tracking-tight text-[var(--color-text-primary)]"
-              initial={{ opacity: 0, x: -8 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={appleSpringSoft}
-            >
-              下载状态
-            </motion.h1>
-            <motion.p
-              className="mt-2.5 text-[17px] font-medium text-[var(--color-text-secondary)]"
-              initial={{ opacity: 0, x: -8 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={appleSpringSoft}
-            >
-              活动 {counts.active} · 完成 {counts.completed} · 失败 {counts.failed}
-            </motion.p>
+            <div className="nx-eyebrow"><DownloadCloud size={14} /> Transfer route</div>
+            <h1 className="nx-page-title">下载</h1>
+            <p className="nx-page-subtitle">从搜索、队列到可播放状态，一眼看清内容正走到哪一站。</p>
           </div>
           <motion.button
             type="button"
@@ -101,6 +89,17 @@ export function DownloadsPage({
             刷新
           </motion.button>
         </header>
+
+        <section className="nx-mosaic mt-7">
+          <div className="nx-plane col-span-9 flex min-h-[138px] items-center gap-3 px-6 max-[1100px]:col-span-6">
+            <PipelineStep icon={<Search size={18} />} label="找到资源" value={tasks.length} active={tasks.length > 0} />
+            <ArrowRight size={18} className="text-[var(--nx-ink-3)]" />
+            <PipelineStep icon={<DownloadCloud size={18} />} label="下载中" value={counts.active} active={counts.active > 0} />
+            <ArrowRight size={18} className="text-[var(--nx-ink-3)]" />
+            <PipelineStep icon={<ShieldCheck size={18} />} label="已就绪" value={counts.completed} active={counts.completed > 0} />
+          </div>
+          <div className="nx-plane nx-plane-blue col-span-3 flex min-h-[138px] flex-col justify-between p-5 max-[1100px]:col-span-6"><Gauge size={24} /><div><strong className="text-[27px]">{formatBytes(totalSpeed)}/s</strong><div className="mt-1 text-[11px] opacity-70">当前总速度</div></div></div>
+        </section>
 
         {error && (
           <div className="mt-5 rounded-[var(--radius-card)] bg-rose-500/8 px-4 py-3 text-[13px] font-medium text-rose-600">
@@ -126,6 +125,10 @@ export function DownloadsPage({
       </motion.div>
     </div>
   );
+}
+
+function PipelineStep({ icon, label, value, active }: { icon: React.ReactNode; label: string; value: number; active: boolean }) {
+  return <div className="flex min-w-0 flex-1 items-center gap-3"><span className={`grid size-11 shrink-0 place-items-center rounded-[14px] ${active ? "bg-[var(--nx-blue)] text-white" : "bg-[var(--nx-plane-2)] text-[var(--nx-ink-3)]"}`}>{icon}</span><span><strong className="block text-[22px] font-bold">{value}</strong><small className="text-[11px] text-[var(--nx-ink-3)]">{label}</small></span></div>;
 }
 
 function DownloadRow({

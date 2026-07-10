@@ -329,6 +329,43 @@ CREATE INDEX IF NOT EXISTS idx_bangumi_sync_logs_created
     ON bangumi_sync_logs(created_at DESC);
 "#;
 
+const PLAYBACK_ANALYTICS_SCHEMA: &str = r#"
+CREATE TABLE IF NOT EXISTS playback_sessions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    media_id INTEGER,
+    subject_id INTEGER,
+    episode_id INTEGER,
+    started_at INTEGER NOT NULL,
+    ended_at INTEGER,
+    last_heartbeat_at INTEGER NOT NULL,
+    active_ms INTEGER NOT NULL DEFAULT 0,
+    start_position_ms INTEGER NOT NULL DEFAULT 0,
+    end_position_ms INTEGER NOT NULL DEFAULT 0,
+    duration_ms INTEGER NOT NULL DEFAULT 0,
+    completed INTEGER NOT NULL DEFAULT 0,
+    seek_count INTEGER NOT NULL DEFAULT 0,
+    FOREIGN KEY(media_id) REFERENCES media_items(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_playback_sessions_started
+    ON playback_sessions(started_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_playback_sessions_media
+    ON playback_sessions(media_id, started_at DESC);
+
+CREATE TABLE IF NOT EXISTS playback_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id INTEGER NOT NULL,
+    kind TEXT NOT NULL,
+    position_ms INTEGER NOT NULL DEFAULT 0,
+    occurred_at INTEGER NOT NULL,
+    FOREIGN KEY(session_id) REFERENCES playback_sessions(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_playback_events_session
+    ON playback_events(session_id, occurred_at);
+"#;
+
 pub fn init_database(conn: &mut Connection) -> AppResult<()> {
     conn.execute_batch("PRAGMA foreign_keys = ON;")?;
     let migrations = Migrations::new(vec![
@@ -345,6 +382,8 @@ pub fn init_database(conn: &mut Connection) -> AppResult<()> {
         M::up(DANMAKU_COMMENT_CACHE_SCHEMA).comment("cache normalized dandanplay comments"),
         M::up(ONLINE_CATALOG_SCHEMA).comment("cache online catalog resources and downloads"),
         M::up(BANGUMI_ACCOUNT_SCHEMA).comment("store Bangumi account collections and sync queue"),
+        M::up(PLAYBACK_ANALYTICS_SCHEMA)
+            .comment("store local playback sessions and insight events"),
     ]);
     migrations.to_latest(conn)?;
     Ok(())
@@ -383,7 +422,7 @@ mod tests {
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .expect("read version");
-        assert_eq!(version, 4);
+        assert_eq!(version, 5);
         assert!(column_exists(&conn, "media_items", "match_ignored"));
         assert!(table_exists(&conn, "danmaku_comment_cache"));
         assert!(table_exists(&conn, "online_subjects"));
@@ -393,6 +432,8 @@ mod tests {
         assert!(table_exists(&conn, "bangumi_subject_collections"));
         assert!(table_exists(&conn, "bangumi_episode_collections"));
         assert!(table_exists(&conn, "bangumi_sync_queue"));
+        assert!(table_exists(&conn, "playback_sessions"));
+        assert!(table_exists(&conn, "playback_events"));
     }
 
     #[test]
@@ -420,7 +461,7 @@ mod tests {
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .expect("read version");
-        assert_eq!(version, 4);
+        assert_eq!(version, 5);
         assert!(column_exists(&conn, "media_items", "match_ignored"));
         assert!(table_exists(&conn, "danmaku_comment_cache"));
         assert!(table_exists(&conn, "online_subjects"));
@@ -429,6 +470,7 @@ mod tests {
         assert!(table_exists(&conn, "bangumi_accounts"));
         assert!(table_exists(&conn, "bangumi_subject_collections"));
         assert!(table_exists(&conn, "bangumi_episode_collections"));
+        assert!(table_exists(&conn, "playback_sessions"));
     }
 
     #[test]

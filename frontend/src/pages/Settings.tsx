@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   bangumiAuthStatus,
+  clearPlaybackAnalytics,
   logoutBangumi,
   startBangumiLogin,
   syncBangumiNow,
@@ -12,15 +13,16 @@ import { Button, Card, Dropdown, Switch } from "../ui";
 import { ChevronRight, KeyIcon } from "../icons";
 import { cn } from "../utils/cn";
 
-type Section = "libraries" | "bangumi" | "dandanplay" | "resources" | "qbittorrent" | "about";
+type Section = "libraries" | "accounts" | "playback" | "downloads" | "appearance" | "privacy" | "advanced";
 
 const sections: { id: Section; label: string; desc: string }[] = [
-  { id: "libraries", label: "Media Libraries", desc: "目录与数据库" },
-  { id: "bangumi", label: "Bangumi", desc: "元数据、匹配、图片缓存" },
-  { id: "dandanplay", label: "DanDanPlay", desc: "弹幕匹配凭证" },
-  { id: "resources", label: "Nyaa", desc: "在线资源搜索" },
-  { id: "qbittorrent", label: "qBittorrent", desc: "本地下载器" },
-  { id: "about", label: "About", desc: "当前构建信息" },
+  { id: "libraries", label: "媒体来源", desc: "目录与本地数据库" },
+  { id: "accounts", label: "账户与元数据", desc: "Bangumi 与匹配" },
+  { id: "playback", label: "播放与弹幕", desc: "DanDanPlay 凭证" },
+  { id: "downloads", label: "下载", desc: "Nyaa 与 qBittorrent" },
+  { id: "appearance", label: "外观与辅助功能", desc: "主题和动态效果" },
+  { id: "privacy", label: "隐私与洞察", desc: "本地记录与目标" },
+  { id: "advanced", label: "高级", desc: "接口、日志与构建" },
 ];
 
 const emptySettings: EditableSettings = {
@@ -52,6 +54,12 @@ const emptySettings: EditableSettings = {
   qbittorrentSavePath: "",
   qbittorrentCategory: "NexPlay",
   qbittorrentTags: "nexplay",
+  theme: "system",
+  reducedMotion: false,
+  analyticsEnabled: true,
+  dailyMinutesGoal: 45,
+  weeklyEpisodesGoal: 5,
+  weeklyActiveDaysGoal: 4,
   loggingLevel: "info",
 };
 
@@ -123,6 +131,11 @@ export function SettingsPage({
       const saved = await window.nexplay.saveSettings(normalizedSettings);
       setSettings(saved);
       setLibrariesText(saved.mediaLibraries.join("\n"));
+      const resolvedTheme = saved.theme === "system"
+        ? (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")
+        : saved.theme;
+      document.documentElement.dataset.theme = resolvedTheme;
+      window.localStorage.setItem("nexplay.theme", resolvedTheme);
       onSnack("设置已保存到后端配置。", "success");
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : String(caught);
@@ -230,9 +243,10 @@ export function SettingsPage({
     <div className="page-shell h-full overflow-y-auto">
       <div className="mb-8 flex flex-wrap items-end justify-between gap-5">
         <div>
-          <h1 className="text-[44px] font-bold leading-[1] tracking-tight">设置</h1>
-          <div className="mt-3 text-[17px] font-medium text-[var(--color-on-surface-muted)]">
-            这里的配置会直接写入 NexPlay 后端配置。
+          <div className="nx-eyebrow">System map</div>
+          <h1 className="nx-page-title">设置</h1>
+          <div className="nx-page-subtitle">
+            按任务组织媒体来源、账户、播放、下载、外观与隐私。
           </div>
         </div>
         <Button onClick={save} loading={saving} disabled={loading} className="h-10 px-5 text-[13px]">
@@ -317,7 +331,7 @@ export function SettingsPage({
             </Group>
           )}
 
-          {section === "bangumi" && (
+          {section === "accounts" && (
             <Group title="Bangumi" desc="账号状态同步、条目查询、自动匹配和图片缓存。">
               <div className="mx-6 mt-5 rounded-[var(--radius-card)] bg-[var(--color-accent-soft)] px-4 py-3 text-[12px] leading-relaxed text-[var(--color-on-surface-muted)]">
                 <span className="font-semibold text-[var(--color-accent)]">数据来源说明：</span>
@@ -482,7 +496,7 @@ export function SettingsPage({
             </Group>
           )}
 
-          {section === "dandanplay" && (
+          {section === "playback" && (
             <Group title="DanDanPlay" desc="用于按单集文件名和哈希匹配弹幕。">
               <SettingsRow
                 title="App ID"
@@ -520,7 +534,7 @@ export function SettingsPage({
             </Group>
           )}
 
-          {section === "resources" && (
+          {section === "downloads" && (
             <Group title="Nyaa" desc="用于在线搜索番剧资源候选。">
               <SettingsRow
                 title="启用 Nyaa"
@@ -551,7 +565,7 @@ export function SettingsPage({
             </Group>
           )}
 
-          {section === "qbittorrent" && (
+          {section === "downloads" && (
             <Group title="qBittorrent" desc="通过 WebUI API 添加种子并回读任务状态。">
               <SettingsRow
                 title="启用下载器"
@@ -627,7 +641,24 @@ export function SettingsPage({
             </Group>
           )}
 
-          {section === "about" && (
+          {section === "appearance" && (
+            <Group title="外观与辅助功能" desc="主题状态应用到整个文档，包括浮层、对话框与原生表单。">
+              <SettingsRow title="界面主题" desc="跟随系统会在系统外观变化时使用对应主题。" control={<Dropdown size="sm" value={settings.theme} onChange={(value) => update("theme", value)} matchWidth={false} className="min-w-[132px]" options={[{ value: "system", label: "跟随系统" }, { value: "light", label: "浅色" }, { value: "dark", label: "深色" }]} />} />
+              <SettingsRow title="减少动态效果" desc="关闭空间位移、缩放和非必要的过渡动画。" control={<Switch checked={settings.reducedMotion} onChange={(value) => update("reducedMotion", value)} />} />
+            </Group>
+          )}
+
+          {section === "privacy" && (
+            <Group title="隐私与观看洞察" desc="所有播放会话与洞察数据只保存在本机 SQLite 数据库。">
+              <SettingsRow title="记录本地观看会话" desc="记录低频开始、暂停、跳转、完成和 30 秒心跳；不记录逐帧数据。" control={<Switch checked={settings.analyticsEnabled} onChange={(value) => update("analyticsEnabled", value)} />} />
+              <SettingsRow title="每日观看目标" desc="洞察红色圆环的分钟目标。" control={<GoalInput value={settings.dailyMinutesGoal} min={1} max={1440} unit="分钟" onChange={(value) => update("dailyMinutesGoal", value)} />} />
+              <SettingsRow title="每周完成目标" desc="洞察绿色圆环的完成集数目标。" control={<GoalInput value={settings.weeklyEpisodesGoal} min={1} max={100} unit="集" onChange={(value) => update("weeklyEpisodesGoal", value)} />} />
+              <SettingsRow title="每周活跃目标" desc="洞察青色圆环的活跃天数目标。" control={<GoalInput value={settings.weeklyActiveDaysGoal} min={1} max={7} unit="天" onChange={(value) => update("weeklyActiveDaysGoal", value)} />} />
+              <div className="flex justify-end border-t border-[var(--nx-line)] px-6 py-4"><button type="button" className="nx-button danger" onClick={async () => { if (!window.confirm("确定清除所有本地观看洞察记录？现有断点进度不会删除。")) return; await clearPlaybackAnalytics(); onSnack("本地观看洞察记录已清除。", "success"); }}>清除洞察历史</button></div>
+            </Group>
+          )}
+
+          {section === "advanced" && (
             <Card className="p-8">
               <div className="text-[20px] font-semibold">NexPlay · 本地番剧库</div>
               <div className="text-[13px] text-[var(--color-on-surface-muted)] mt-2">
@@ -639,6 +670,10 @@ export function SettingsPage({
       </div>
     </div>
   );
+}
+
+function GoalInput({ value, min, max, unit, onChange }: { value: number; min: number; max: number; unit: string; onChange: (value: number) => void }) {
+  return <label className="flex h-10 items-center gap-2 rounded-[12px] bg-[var(--nx-plane-2)] px-3"><input type="number" value={value} min={min} max={max} onChange={(event) => onChange(Math.min(max, Math.max(min, Number(event.target.value) || min)))} className="w-16 bg-transparent text-right text-[13px] font-semibold outline-none" /><span className="text-[11px] text-[var(--nx-ink-3)]">{unit}</span></label>;
 }
 
 function Group({ title, desc, children }: { title: string; desc?: string; children: React.ReactNode }) {
