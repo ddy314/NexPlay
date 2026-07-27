@@ -854,26 +854,35 @@ impl BangumiService {
             .repository
             .bangumi_account()?
             .ok_or_else(|| AppError::Api("Bangumi account is not logged in".to_string()))?;
-        Ok(self.refresh_account_if_needed(account))
+        self.refresh_account_if_needed(account)
     }
 
-    /// Refresh the OAuth access token when it is close to expiry. Best-effort: any
-    /// failure falls back to the existing token (which yields a 401 prompting re-login),
-    /// so this never makes authentication worse than before.
-    fn refresh_account_if_needed(&self, account: BangumiAccount) -> BangumiAccount {
+    /// Refresh the OAuth access token when it is close to expiry. A still-valid token
+    /// remains usable when refresh temporarily fails, but an expired token must not be
+    /// sent to the API because that turns an authentication problem into a misleading
+    /// network/401 error.
+    fn refresh_account_if_needed(&self, account: BangumiAccount) -> AppResult<BangumiAccount> {
         let now = now_seconds();
+        let expired = account
+            .expires_at
+            .map(|expires_at| expires_at <= now)
+            .unwrap_or(false);
         let expiring = account
             .expires_at
             .map(|expires_at| expires_at - now < 300)
             .unwrap_or(false);
         if !expiring {
-            return account;
+            return Ok(account);
         }
         let Some(refresh_token) = account.refresh_token.clone() else {
-            return account;
+            return if expired {
+                Err(bangumi_login_expired_error())
+            } else {
+                Ok(account)
+            };
         };
         match self.try_refresh_token(&refresh_token, account.clone()) {
-            Ok(refreshed) => refreshed,
+            Ok(refreshed) => Ok(refreshed),
             Err(error) => {
                 let _ = self.repository.insert_bangumi_sync_log(
                     "warn",
@@ -882,7 +891,11 @@ impl BangumiService {
                     None,
                     now,
                 );
-                account
+                if expired {
+                    Err(bangumi_login_expired_error())
+                } else {
+                    Ok(account)
+                }
             }
         }
     }
@@ -930,6 +943,12 @@ impl BangumiService {
         );
         Ok(account)
     }
+}
+
+fn bangumi_login_expired_error() -> AppError {
+    AppError::Api(
+        "Bangumi 登录已过期，自动刷新失败；请在设置中重新登录，待同步修改会保留".to_string(),
+    )
 }
 
 pub fn validate_subject_collection_type(value: i64) -> AppResult<()> {

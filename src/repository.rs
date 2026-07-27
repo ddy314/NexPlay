@@ -2099,8 +2099,18 @@ impl Repository {
         payload_json: &str,
         now: i64,
     ) -> AppResult<()> {
-        let conn = self.connect()?;
-        conn.execute(
+        let mut conn = self.connect()?;
+        let tx = conn.transaction()?;
+        tx.execute(
+            r#"
+            DELETE FROM bangumi_sync_queue
+            WHERE action = ?1
+              AND subject_id IS ?2
+              AND episode_id IS ?3
+            "#,
+            params![action, subject_id, episode_id],
+        )?;
+        tx.execute(
             r#"
             INSERT INTO bangumi_sync_queue (
                 action, subject_id, episode_id, payload_json, attempts, created_at, updated_at
@@ -2109,6 +2119,7 @@ impl Repository {
             "#,
             params![action, subject_id, episode_id, payload_json, now],
         )?;
+        tx.commit()?;
         Ok(())
     }
 
@@ -2491,6 +2502,43 @@ mod tests {
             .expect("read cache")
             .expect("cache exists");
         assert_eq!(cached.error.as_deref(), Some("network failed"));
+
+        let _ = fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn bangumi_sync_queue_keeps_only_the_latest_matching_update() {
+        let db_path = std::env::temp_dir().join(format!(
+            "nexplay-bangumi-queue-test-{}.sqlite3",
+            std::process::id()
+        ));
+        let _ = fs::remove_file(&db_path);
+
+        let repository = Repository::new(db_path.clone());
+        repository.init().expect("init database");
+        repository
+            .queue_bangumi_sync(
+                "update_episode",
+                Some(622206),
+                Some(1701422),
+                r#"{"type":1}"#,
+                100,
+            )
+            .expect("queue first update");
+        repository
+            .queue_bangumi_sync(
+                "update_episode",
+                Some(622206),
+                Some(1701422),
+                r#"{"type":2}"#,
+                200,
+            )
+            .expect("replace queued update");
+
+        let queued = repository.list_bangumi_sync_queue(10).expect("read queue");
+        assert_eq!(queued.len(), 1);
+        assert_eq!(queued[0].payload_json, r#"{"type":2}"#);
+        assert_eq!(queued[0].created_at, 200);
 
         let _ = fs::remove_file(db_path);
     }
