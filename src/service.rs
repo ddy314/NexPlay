@@ -37,6 +37,48 @@ struct SubjectResolution {
     episode_count: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ScrapeEvidence {
+    Exact,
+    SeriesConsensus,
+    FilenameSeriesFallback,
+}
+
+impl ScrapeEvidence {
+    fn confidence(self) -> f64 {
+        match self {
+            Self::Exact => 0.98,
+            Self::SeriesConsensus => 0.90,
+            Self::FilenameSeriesFallback => 0.86,
+        }
+    }
+
+    fn source(self) -> &'static str {
+        match self {
+            Self::Exact => "dandanplay_anime_mapping",
+            Self::SeriesConsensus => "dandanplay_series_consensus",
+            Self::FilenameSeriesFallback => "filename_series_consensus",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct ScrapeRecord {
+    media: MediaItem,
+    danmaku: Option<DanmakuMatch>,
+    group_key: String,
+    file_episode: Option<f64>,
+}
+
+#[derive(Debug, Clone)]
+struct PreparedScrapeItem {
+    media: MediaItem,
+    danmaku: Option<DanmakuMatch>,
+    anime_id: i64,
+    episode_number: Option<f64>,
+    evidence: ScrapeEvidence,
+}
+
 #[derive(Clone)]
 pub struct MediaService {
     config: Arc<ConfigStore>,
@@ -464,13 +506,27 @@ impl MetadataService {
     }
 
     pub fn scrape_library_blocking(&self) -> AppResult<usize> {
-        let media = self.repository.metadata_scrape_targets()?;
-        if media.is_empty() {
+        let targets = self.repository.metadata_scrape_targets()?;
+        if targets.is_empty() {
             return Ok(0);
         }
 
         let provider = self.provider()?;
-        let mut groups = std::collections::BTreeMap::<i64, Vec<(MediaItem, DanmakuMatch)>>::new();
+        let target_ids = targets
+            .iter()
+            .map(|media| media.id)
+            .collect::<std::collections::HashSet<_>>();
+        let target_group_keys = targets
+            .iter()
+            .map(series_group_key)
+            .collect::<std::collections::HashSet<_>>();
+        let media = self
+            .repository
+            .list_media(false)?
+            .into_iter()
+            .filter(|media| target_group_keys.contains(&series_group_key(media)))
+            .collect::<Vec<_>>();
+        let mut records = Vec::with_capacity(media.len());
         let mut scraped = 0;
         let total = media.len();
 
@@ -479,43 +535,60 @@ impl MetadataService {
                 processed: index,
                 total,
             });
-            match self.danmaku.cached_or_match_dandanplay(&item) {
-                Ok(Some(match_result)) if match_result.exact => {
-                    if crate::metadata::matcher::is_supplemental_video(&item.file_name)
-                        && !is_exact_dandanplay_feature(&match_result)
-                    {
-                        let _ = self.events.send(AppEvent::Log(format!(
-                            "skip supplemental video for automatic episode binding: #{} {}",
-                            item.id, item.file_name
-                        )));
-                        continue;
-                    }
-                    if let Some(anime_id) = match_result.anime_id {
-                        groups
-                            .entry(anime_id)
-                            .or_default()
-                            .push((item, match_result));
-                    }
-                }
-                Ok(Some(_)) | Ok(None) => {
-                    let _ = self.events.send(AppEvent::Log(format!(
-                        "skip non-exact dandanplay match for media #{} ({})",
-                        item.id, item.file_name
-                    )));
-                }
+            let danmaku = match self.danmaku.cached_or_match_dandanplay(&item) {
+                Ok(result) => result,
                 Err(error) => {
                     let _ = self.events.send(AppEvent::Log(format!(
-                        "skip dandanplay match failure for {}: {error}",
+                        "dandanplay match unavailable for {}; trying series fallback: {error}",
                         item.file_name
                     )));
+                    None
                 }
+            };
+            if crate::metadata::matcher::is_supplemental_video(&item.file_name)
+                && !danmaku.as_ref().is_some_and(|match_result| {
+                    match_result.exact && is_exact_dandanplay_feature(match_result)
+                })
+            {
+                let _ = self.events.send(AppEvent::Log(format!(
+                    "skip supplemental video for automatic episode binding: #{} {}",
+                    item.id, item.file_name
+                )));
+                continue;
             }
+            records.push(ScrapeRecord {
+                group_key: series_group_key(&item),
+                file_episode: crate::metadata::matcher::episode_number_from_file_name(
+                    &item.file_name,
+                ),
+                media: item,
+                danmaku,
+            });
+        }
+
+        let mut groups = std::collections::BTreeMap::<i64, Vec<PreparedScrapeItem>>::new();
+        for item in prepare_scrape_items(&records) {
+            groups.entry(item.anime_id).or_default().push(item);
         }
 
         for (anime_id, items) in groups {
-            let group_resolution = match self
-                .resolve_bangumi_subject_for_dandanplay_group(&provider, anime_id, &items)
-            {
+            let resolution_items = items
+                .iter()
+                .filter_map(|item| {
+                    item.danmaku
+                        .as_ref()
+                        .filter(|danmaku| danmaku.anime_id == Some(anime_id))
+                        .map(|danmaku| (item.media.clone(), danmaku.clone()))
+                })
+                .collect::<Vec<_>>();
+            if resolution_items.is_empty() {
+                continue;
+            }
+            let group_resolution = match self.resolve_bangumi_subject_for_dandanplay_group(
+                &provider,
+                anime_id,
+                &resolution_items,
+            ) {
                 Ok(resolution) => resolution,
                 Err(error) => {
                     let _ = self.events.send(AppEvent::Log(format!(
@@ -525,55 +598,87 @@ impl MetadataService {
                 }
             };
             let resolve_items_individually =
-                should_resolve_dandanplay_items_individually(&items, group_resolution);
-            for (media, danmaku) in items {
+                should_resolve_dandanplay_items_individually(&resolution_items, group_resolution);
+            for item in items {
+                if !target_ids.contains(&item.media.id) {
+                    continue;
+                }
+                if item.evidence != ScrapeEvidence::Exact
+                    && !episode_fits_subject(item.episode_number, group_resolution.episode_count)
+                {
+                    let _ = self.events.send(AppEvent::Log(format!(
+                        "skip low-confidence episode outside subject range: #{} {}",
+                        item.media.id, item.media.file_name
+                    )));
+                    continue;
+                }
                 let subject_id = if resolve_items_individually {
-                    self.resolve_bangumi_subject_for_dandanplay_item(
-                        &provider, anime_id, &media, &danmaku,
-                    )
-                    .map(|resolution| resolution.subject_id)
-                    .unwrap_or_else(|error| {
-                        let _ = self.events.send(AppEvent::Log(format!(
-                            "fallback to grouped subject for {}: {error}",
-                            media.file_name
-                        )));
+                    if let Some(danmaku) = item.danmaku.as_ref() {
+                        self.resolve_bangumi_subject_for_dandanplay_item(
+                            &provider,
+                            anime_id,
+                            &item.media,
+                            danmaku,
+                        )
+                        .map(|resolution| resolution.subject_id)
+                        .unwrap_or_else(|error| {
+                            let _ = self.events.send(AppEvent::Log(format!(
+                                "fallback to grouped subject for {}: {error}",
+                                item.media.file_name
+                            )));
+                            group_resolution.subject_id
+                        })
+                    } else {
                         group_resolution.subject_id
-                    })
+                    }
                 } else {
                     group_resolution.subject_id
                 };
                 let now = task::unix_timestamp_ms();
                 if let Err(error) = self.repository.replace_media_subject_link(
-                    media.id,
+                    item.media.id,
                     subject_id,
                     if resolve_items_individually {
                         "dandanplay_episode_mapping"
                     } else {
-                        "dandanplay_anime_mapping"
+                        item.evidence.source()
                     },
-                    if danmaku.exact { 0.98 } else { 0.78 },
+                    item.evidence.confidence(),
                     true,
                     now,
                 ) {
                     let _ = self.events.send(AppEvent::Log(format!(
                         "failed to link subject for {}: {error}",
-                        media.file_name
+                        item.media.file_name
                     )));
                     continue;
                 }
+                let episode_title = item.danmaku.as_ref().and_then(|danmaku| {
+                    (danmaku.anime_id == Some(anime_id))
+                        .then_some(danmaku.episode.as_deref())
+                        .flatten()
+                });
                 if let Err(error) = self.repository.link_media_episode_by_number(
-                    media.id,
+                    item.media.id,
                     subject_id,
-                    episode_number_from_danmaku(&danmaku),
-                    danmaku.episode.as_deref(),
-                    if danmaku.exact { 0.98 } else { 0.78 },
+                    item.episode_number,
+                    episode_title,
+                    item.evidence.confidence(),
                     now,
                 ) {
                     let _ = self.events.send(AppEvent::Log(format!(
                         "failed to link episode for {}: {error}",
-                        media.file_name
+                        item.media.file_name
                     )));
                     continue;
+                }
+                if item.evidence != ScrapeEvidence::Exact {
+                    let _ = self.events.send(AppEvent::Log(format!(
+                        "series fallback linked #{} {} as episode {}",
+                        item.media.id,
+                        item.media.file_name,
+                        format_scraped_episode(item.episode_number)
+                    )));
                 }
                 scraped += 1;
             }
@@ -608,6 +713,7 @@ impl MetadataService {
 
         let keyword = items
             .iter()
+            .filter(|(_, danmaku)| danmaku.anime_id == Some(anime_id))
             .find_map(|(_, danmaku)| danmaku.anime_title.as_deref())
             .or_else(|| items.first().map(|(_, danmaku)| danmaku.title.as_str()))
             .unwrap_or("");
@@ -808,6 +914,154 @@ fn image_cache_root(database_path: &std::path::Path) -> PathBuf {
         .unwrap_or_else(|| std::path::Path::new("data"))
         .join("cache")
         .join("images")
+}
+
+fn series_group_key(media: &MediaItem) -> String {
+    let parent = media
+        .path
+        .parent()
+        .map(|path| path.to_string_lossy())
+        .unwrap_or_default();
+    format!(
+        "{parent}::{}",
+        crate::metadata::matcher::series_key_from_file_name(&media.file_name)
+    )
+}
+
+fn prepare_scrape_items(records: &[ScrapeRecord]) -> Vec<PreparedScrapeItem> {
+    let mut groups = std::collections::BTreeMap::<&str, Vec<&ScrapeRecord>>::new();
+    for record in records {
+        groups
+            .entry(record.group_key.as_str())
+            .or_default()
+            .push(record);
+    }
+
+    let mut prepared = Vec::new();
+    for records in groups.values() {
+        let dominant = dominant_anime_for_series(records);
+        for record in records {
+            let danmaku_episode = record
+                .danmaku
+                .as_ref()
+                .and_then(episode_number_from_danmaku);
+            let decision = match record.danmaku.as_ref() {
+                Some(danmaku) if danmaku.exact => {
+                    let Some(anime_id) = danmaku.anime_id else {
+                        continue;
+                    };
+                    match dominant {
+                        Some((dominant_id, true)) if anime_id != dominant_id => {
+                            if !episode_numbers_agree(record.file_episode, danmaku_episode) {
+                                continue;
+                            }
+                            Some((
+                                dominant_id,
+                                record.file_episode,
+                                ScrapeEvidence::FilenameSeriesFallback,
+                            ))
+                        }
+                        _ => Some((
+                            anime_id,
+                            episode_number_with_filename_check(
+                                record.file_episode,
+                                danmaku_episode,
+                            ),
+                            ScrapeEvidence::Exact,
+                        )),
+                    }
+                }
+                Some(danmaku) => {
+                    let Some((dominant_id, true)) = dominant else {
+                        continue;
+                    };
+                    if danmaku.anime_id != Some(dominant_id)
+                        || !episode_numbers_agree(record.file_episode, danmaku_episode)
+                    {
+                        continue;
+                    }
+                    Some((
+                        dominant_id,
+                        record.file_episode.or(danmaku_episode),
+                        ScrapeEvidence::SeriesConsensus,
+                    ))
+                }
+                None => dominant.and_then(|(dominant_id, strong)| {
+                    (strong && record.file_episode.is_some()).then_some((
+                        dominant_id,
+                        record.file_episode,
+                        ScrapeEvidence::FilenameSeriesFallback,
+                    ))
+                }),
+            };
+
+            if let Some((anime_id, episode_number, evidence)) = decision {
+                prepared.push(PreparedScrapeItem {
+                    media: record.media.clone(),
+                    danmaku: record.danmaku.clone(),
+                    anime_id,
+                    episode_number,
+                    evidence,
+                });
+            }
+        }
+    }
+    prepared
+}
+
+fn dominant_anime_for_series(records: &[&ScrapeRecord]) -> Option<(i64, bool)> {
+    let mut counts = std::collections::BTreeMap::<i64, (usize, usize)>::new();
+    for danmaku in records.iter().filter_map(|record| record.danmaku.as_ref()) {
+        let Some(anime_id) = danmaku.anime_id else {
+            continue;
+        };
+        let count = counts.entry(anime_id).or_default();
+        count.1 += 1;
+        if danmaku.exact {
+            count.0 += 1;
+        }
+    }
+    let mut ranked = counts.into_iter().collect::<Vec<_>>();
+    ranked.sort_by_key(|(_, (exact, total))| std::cmp::Reverse((*exact, *total)));
+    let (anime_id, (exact_count, total_count)) = *ranked.first()?;
+    let unique_winner = ranked
+        .get(1)
+        .is_none_or(|(_, runner)| (exact_count, total_count) > *runner);
+    let strong = unique_winner
+        && (exact_count >= 2
+            || (exact_count >= 1 && total_count >= 2)
+            || (exact_count == 0 && total_count >= 3));
+    Some((anime_id, strong))
+}
+
+fn episode_numbers_agree(file_episode: Option<f64>, provider_episode: Option<f64>) -> bool {
+    matches!(
+        (file_episode, provider_episode),
+        (Some(file), Some(provider)) if (file - provider).abs() < 0.001
+    )
+}
+
+fn episode_number_with_filename_check(
+    file_episode: Option<f64>,
+    provider_episode: Option<f64>,
+) -> Option<f64> {
+    if episode_numbers_agree(file_episode, provider_episode) {
+        file_episode
+    } else {
+        provider_episode.or(file_episode)
+    }
+}
+
+fn episode_fits_subject(episode_number: Option<f64>, episode_count: usize) -> bool {
+    matches!(episode_number, Some(number) if number > 0.0 && number <= episode_count as f64)
+}
+
+fn format_scraped_episode(number: Option<f64>) -> String {
+    match number {
+        Some(number) if number.fract().abs() < f64::EPSILON => (number as i64).to_string(),
+        Some(number) => format!("{number:.1}"),
+        None => "unknown".to_string(),
+    }
 }
 
 fn should_resolve_dandanplay_items_individually(
@@ -1117,6 +1371,45 @@ fn cache_subject_images_once<'a>(
 mod tests {
     use super::*;
 
+    fn media_item(id: i64, episode: i64) -> MediaItem {
+        let file_name = format!(
+            "サムライチャンプルー.Samurai.Champloo.S01E{episode:02}.2004.BluRay.1080p.HEVC.10bit.FLAC.GOA.mkv"
+        );
+        MediaItem {
+            id,
+            path: PathBuf::from("/media/サムライチャンプルー.Samurai.Champloo.S01.2004.BluRay")
+                .join(&file_name),
+            file_name,
+            file_size: 1,
+            modified_at: 1,
+            file_hash: None,
+            match_ignored: false,
+            deleted_at: None,
+        }
+    }
+
+    fn danmaku_match(anime_id: i64, anime_title: &str, episode: i64, exact: bool) -> DanmakuMatch {
+        DanmakuMatch {
+            provider: "dandanplay".to_string(),
+            title: format!("{anime_title} - 第{episode}话"),
+            anime_id: Some(anime_id),
+            episode_id: Some(anime_id * 10_000 + episode),
+            anime_title: Some(anime_title.to_string()),
+            episode: Some(format!("第{episode}话")),
+            comment_count: 0,
+            exact,
+        }
+    }
+
+    fn scrape_record(media: MediaItem, danmaku: Option<DanmakuMatch>) -> ScrapeRecord {
+        ScrapeRecord {
+            group_key: series_group_key(&media),
+            file_episode: crate::metadata::matcher::episode_number_from_file_name(&media.file_name),
+            media,
+            danmaku,
+        }
+    }
+
     fn search_result(
         id: &str,
         title: &str,
@@ -1176,6 +1469,103 @@ mod tests {
         let selected = choose_bangumi_candidate("弹丸论破 希望的学园和绝望高中生", &candidates);
 
         assert!(selected.is_none());
+    }
+
+    #[test]
+    fn series_consensus_repairs_partial_and_wrong_episode_matches() {
+        let records = (1..=26)
+            .map(|episode| {
+                let exact = (2..=10).contains(&episode);
+                let danmaku = if episode == 3 {
+                    danmaku_match(1674, "铁人28号 (2004)", episode, true)
+                } else {
+                    danmaku_match(1543, "混沌武士", episode, exact)
+                };
+                scrape_record(media_item(episode, episode), Some(danmaku))
+            })
+            .collect::<Vec<_>>();
+
+        let prepared = prepare_scrape_items(&records);
+
+        assert_eq!(prepared.len(), 26);
+        assert!(prepared.iter().all(|item| item.anime_id == 1543));
+        assert_eq!(
+            prepared
+                .iter()
+                .find(|item| item.media.id == 3)
+                .map(|item| item.evidence),
+            Some(ScrapeEvidence::FilenameSeriesFallback)
+        );
+        assert_eq!(
+            prepared
+                .iter()
+                .find(|item| item.media.id == 15)
+                .map(|item| item.evidence),
+            Some(ScrapeEvidence::SeriesConsensus)
+        );
+        assert_eq!(
+            prepared
+                .iter()
+                .find(|item| item.media.id == 7)
+                .and_then(|item| item.episode_number),
+            Some(7.0)
+        );
+    }
+
+    #[test]
+    fn strong_series_anchor_can_fill_an_episode_without_provider_data() {
+        let records = vec![
+            scrape_record(
+                media_item(1, 1),
+                Some(danmaku_match(1543, "混沌武士", 1, true)),
+            ),
+            scrape_record(
+                media_item(2, 2),
+                Some(danmaku_match(1543, "混沌武士", 2, true)),
+            ),
+            scrape_record(media_item(3, 3), None),
+        ];
+
+        let prepared = prepare_scrape_items(&records);
+        let fallback = prepared
+            .iter()
+            .find(|item| item.media.id == 3)
+            .expect("third episode should use the series anchor");
+        assert_eq!(fallback.anime_id, 1543);
+        assert_eq!(fallback.episode_number, Some(3.0));
+        assert_eq!(fallback.evidence, ScrapeEvidence::FilenameSeriesFallback);
+    }
+
+    #[test]
+    fn isolated_non_exact_match_is_not_auto_confirmed() {
+        let media = media_item(1, 1);
+        let records = vec![scrape_record(
+            media,
+            Some(danmaku_match(1543, "混沌武士", 1, false)),
+        )];
+
+        assert!(prepare_scrape_items(&records).is_empty());
+    }
+
+    #[test]
+    fn non_exact_match_with_conflicting_episode_number_is_rejected() {
+        let records = vec![
+            scrape_record(
+                media_item(1, 1),
+                Some(danmaku_match(1543, "混沌武士", 1, true)),
+            ),
+            scrape_record(
+                media_item(2, 2),
+                Some(danmaku_match(1543, "混沌武士", 2, true)),
+            ),
+            scrape_record(
+                media_item(3, 3),
+                Some(danmaku_match(1543, "混沌武士", 8, false)),
+            ),
+        ];
+
+        let prepared = prepare_scrape_items(&records);
+        assert!(prepared.iter().all(|item| item.media.id != 3));
     }
 }
 

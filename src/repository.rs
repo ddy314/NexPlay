@@ -2355,30 +2355,9 @@ fn infer_episode_number_from_media(
         params![media_id],
         |row| row.get::<_, String>(0),
     )?;
-    Ok(infer_episode_number(&file_name))
-}
-
-fn infer_episode_number(file_name: &str) -> Option<f64> {
-    let stem = Path::new(file_name)
-        .file_stem()
-        .and_then(|stem| stem.to_str())
-        .unwrap_or(file_name);
-    let mut best = None;
-    let mut current = String::new();
-    for ch in stem.chars().chain(std::iter::once(' ')) {
-        if ch.is_ascii_digit() {
-            current.push(ch);
-            continue;
-        }
-        if (1..=3).contains(&current.len())
-            && let Ok(value) = current.parse::<i64>()
-            && (1..=999).contains(&value)
-        {
-            best = Some(value as f64);
-        }
-        current.clear();
-    }
-    best
+    Ok(crate::metadata::matcher::episode_number_from_file_name(
+        &file_name,
+    ))
 }
 
 fn format_episode_number(value: f64) -> String {
