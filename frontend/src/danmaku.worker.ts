@@ -16,6 +16,7 @@ type RawDanmakuItem = {
 
 type ActiveDanmaku = WorkerDanmakuItem & {
   lane: number;
+  originX: number;
   width: number;
   height: number;
   speed: number;
@@ -65,7 +66,6 @@ type WorkerMessage =
   | { type: "reset"; position: number; paused: boolean }
   | { type: "clock"; position: number; paused: boolean; seeking: boolean; timestamp: number }
   | { type: "visible"; visible: boolean; position: number }
-  | { type: "area"; area: number; position: number }
   | { type: "profile"; sampleMs: number; targetFps?: number }
   | { type: "renderNow" }
   | { type: "snapshot"; id: number }
@@ -142,7 +142,6 @@ self.onmessage = (event: MessageEvent<WorkerMessage>) => {
     }
     case "resize":
       resize(message.width, message.height, message.dpr, message.area);
-      resetRendererToPosition(currentClockPosition());
       break;
     case "items":
       items = message.items;
@@ -160,17 +159,9 @@ self.onmessage = (event: MessageEvent<WorkerMessage>) => {
       break;
     case "visible":
       state.visible = message.visible;
-      if (message.visible) {
+      if (!message.visible) {
         resetRendererToPosition(message.position);
-      } else {
-        clearCanvas();
-        state.canvasDirty = false;
       }
-      break;
-    case "area":
-      state.area = clamp(message.area, 0.25, 1);
-      state.lanes = createLanes(Math.max(1, Math.floor((state.height * state.area) / state.laneHeight)));
-      resetRendererToPosition(message.position);
       break;
     case "profile":
       profile = {
@@ -188,7 +179,9 @@ self.onmessage = (event: MessageEvent<WorkerMessage>) => {
     case "renderNow":
       renderFrame();
       break;
-    case "snapshot":
+    case "snapshot": {
+      const activeLanes = state.active.map((item) => item.lane);
+      const snapshotPosition = currentClockPosition();
       self.postMessage({
         type: "snapshot",
         id: message.id,
@@ -199,8 +192,21 @@ self.onmessage = (event: MessageEvent<WorkerMessage>) => {
         drawnPosition: Number(state.drawnPosition.toFixed(3)),
         paused: clock.paused,
         visible: state.visible,
+        activeLaneCount: new Set(activeLanes).size,
+        minActiveLane: activeLanes.length > 0 ? Math.min(...activeLanes) : -1,
+        maxActiveLane: activeLanes.length > 0 ? Math.max(...activeLanes) : -1,
+        laneSignature: state.active
+          .map((item) => `${item.id}:${item.lane}`)
+          .sort()
+          .join("|"),
+        scrollXSignature: state.active
+          .filter((item) => item.mode === "scroll")
+          .map((item) => `${item.id}:${(item.originX - (snapshotPosition - item.time) * item.speed).toFixed(2)}`)
+          .sort()
+          .join("|"),
       });
       break;
+    }
     case "dispose":
       disposed = true;
       stopLoop();
@@ -252,7 +258,6 @@ function updateClock(position: number, paused: boolean, seeking: boolean, timest
       timestamp: now,
       paused: true,
     };
-    resetRendererToPosition(nextPosition);
     return;
   }
 
@@ -373,14 +378,13 @@ function rebuildActiveItemsAtPosition(context: OffscreenCanvasRenderingContext2D
   const endCursor = upperBoundByTime(items, currentPosition);
   if (endCursor <= startCursor) return;
 
-  pruneLaneReservations(currentPosition);
   for (let index = startCursor; index < endCursor && state.active.length < MAX_VISIBLE; index += 1) {
     const item = items[index];
     if (!item) continue;
     const duration = item.mode === "scroll" ? SCROLL_DURATION : FIXED_DURATION;
     const elapsed = currentPosition - item.time;
     if (elapsed < -0.05 || elapsed > duration) continue;
-    emitOne(context, item, currentPosition);
+    emitOne(context, item);
   }
   state.cursor = Math.max(state.cursor, endCursor);
   state.prewarmCursor = Math.max(state.prewarmCursor, state.cursor);
@@ -390,7 +394,6 @@ function emitDueItems(context: OffscreenCanvasRenderingContext2D, currentPositio
   const endCursor = upperBoundByTime(items, currentPosition);
   if (endCursor <= state.cursor) return;
 
-  pruneLaneReservations(currentPosition);
   const emitStartedAt = performance.now();
   let index = state.cursor;
   let emitted = 0;
@@ -400,7 +403,7 @@ function emitDueItems(context: OffscreenCanvasRenderingContext2D, currentPositio
     const item = items[index];
     if (!item) continue;
     if (currentPosition - item.time > MAX_LATE_EMIT_SECONDS) continue;
-    emitOne(context, item, currentPosition);
+    emitOne(context, item);
     emitted += 1;
     if (performance.now() - emitStartedAt >= EMIT_BUDGET_MS) {
       index += 1;
@@ -435,20 +438,20 @@ function prewarmUpcomingBitmaps(context: OffscreenCanvasRenderingContext2D, curr
 function emitOne(
   context: OffscreenCanvasRenderingContext2D,
   item: WorkerDanmakuItem,
-  currentPosition: number,
 ) {
   const bitmap = getTextBitmap(context, item);
+  const speed = (state.width + bitmap.width) / SCROLL_DURATION;
   const lane = item.mode === "bottom"
-    ? acquireBottomLane(currentPosition)
+    ? acquireBottomLane(item.time)
     : item.mode === "top"
-      ? acquireTopLane(currentPosition)
-      : acquireScrollLane(currentPosition);
+      ? acquireTopLane(item.time)
+      : acquireScrollLane(item.time, speed);
   if (lane < 0) return;
 
-  const speed = (state.width + bitmap.width) / SCROLL_DURATION;
   const active: ActiveDanmaku = {
     ...item,
     lane,
+    originX: state.width,
     width: bitmap.width,
     height: bitmap.height,
     speed,
@@ -479,7 +482,7 @@ function drawActiveItems(context: OffscreenCanvasRenderingContext2D, currentPosi
     let x = state.width / 2 - item.width / 2;
     let expired = elapsed > item.duration;
     if (item.mode === "scroll") {
-      x = state.width - elapsed * item.speed;
+      x = item.originX - elapsed * item.speed;
       expired = x + item.width < -8;
     }
 
@@ -502,7 +505,12 @@ function resize(width: number, height: number, dpr: number, area: number) {
   state.laneHeight = LINE_HEIGHT;
   canvas.width = Math.max(1, Math.round(state.width * state.dpr));
   canvas.height = Math.max(1, Math.round(state.height * state.dpr));
-  state.lanes = createLanes(Math.max(1, Math.floor((state.height * state.area) / state.laneHeight)));
+  rebuildLaneReservations();
+  state.canvasDirty = false;
+  if (state.active.length > 0) {
+    drawActiveItems(ctx, currentClockPosition());
+    state.canvasDirty = true;
+  }
 }
 
 function resetRendererToPosition(nextPosition: number) {
@@ -524,9 +532,12 @@ function clearCanvas() {
   ctx.restore();
 }
 
-function acquireScrollLane(currentPosition: number) {
+function acquireScrollLane(currentPosition: number, speed: number) {
   for (let index = 0; index < state.lanes.length; index += 1) {
-    if (state.lanes[index].nextAt <= currentPosition) {
+    if (
+      state.lanes[index].nextAt <= currentPosition
+      && canShareScrollingLane(index, currentPosition, speed)
+    ) {
       return index;
     }
   }
@@ -563,10 +574,29 @@ function reserveLane(item: ActiveDanmaku) {
   lane.clearAt = item.time + item.duration;
 }
 
-function pruneLaneReservations(currentPosition: number) {
-  for (const lane of state.lanes) {
-    if (lane.nextAt < currentPosition - SCROLL_DURATION) lane.nextAt = currentPosition;
-    if (lane.clearAt < currentPosition - SCROLL_DURATION) lane.clearAt = currentPosition;
+function canShareScrollingLane(lane: number, startAt: number, speed: number) {
+  const candidateX = state.width;
+  for (const active of state.active) {
+    if (active.lane !== lane || active.mode !== "scroll" || active.time > startAt) continue;
+    const elapsed = startAt - active.time;
+    const activeRight = active.originX - elapsed * active.speed + active.width;
+    if (activeRight < -8) continue;
+    const availableGap = candidateX - activeRight;
+    const remaining = Math.max(0, (activeRight + 8) / active.speed);
+    const closingSpeed = Math.max(0, speed - active.speed);
+    if (availableGap < SCROLL_GAP + closingSpeed * remaining) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function rebuildLaneReservations() {
+  const laneCount = Math.max(1, Math.floor((state.height * state.area) / state.laneHeight));
+  state.lanes = createLanes(laneCount);
+  const activeByTime = [...state.active].sort((left, right) => left.time - right.time);
+  for (const item of activeByTime) {
+    reserveLane(item);
   }
 }
 

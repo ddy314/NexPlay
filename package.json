@@ -33,6 +33,7 @@
     "build:native-render": "node scripts/build-native-render.cjs",
     "diagnose:player": "node scripts/diagnose-player.cjs",
     "diagnose:danmaku": "node scripts/diagnose-danmaku.cjs",
+    "test:danmaku-layout": "node scripts/check-danmaku-layout.cjs",
     "diagnose:player:discover": "node scripts/diagnose-player.cjs --discover",
     "build": "tsc --noEmit && vite build",
     "build:backend": "cargo build --release",

@@ -33,6 +33,7 @@ type NormalizedDanmakuItem = {
 
 type ActiveDanmaku = NormalizedDanmakuItem & {
   lane: number;
+  originX: number;
   width: number;
   height: number;
   speed: number;
@@ -74,7 +75,6 @@ type WorkerMessage =
   | { type: "reset"; position: number; paused: boolean }
   | { type: "clock"; position: number; paused: boolean; seeking: boolean; timestamp: number }
   | { type: "visible"; visible: boolean; position: number }
-  | { type: "area"; area: number; position: number }
   | { type: "dispose" };
 
 const FONT_SIZE = 26;
@@ -148,10 +148,7 @@ export function DanmakuOverlay({
 
   useEffect(() => {
     areaRef.current = area;
-    const resized = resizeCanvas();
-    if (resized && !workerRef.current) {
-      resetRendererToPosition(currentClockPosition(clockRef.current));
-    }
+    resizeCanvas();
   }, [area]);
 
   useEffect(() => {
@@ -175,7 +172,7 @@ export function DanmakuOverlay({
     const nextPosition = Number.isFinite(position) ? Math.max(0, position) : 0;
     const mediaChanged = clockRef.current.mediaId !== mediaId;
 
-    if (mediaChanged || seeking) {
+    if (mediaChanged) {
       clockRef.current = {
         mediaId,
         position: nextPosition,
@@ -184,6 +181,17 @@ export function DanmakuOverlay({
       };
       postWorkerClock();
       resetRendererToPosition(nextPosition);
+      return;
+    }
+
+    if (seeking) {
+      clockRef.current = {
+        mediaId,
+        position: nextPosition,
+        timestamp: now,
+        paused: true,
+      };
+      postWorkerClock();
       return;
     }
 
@@ -295,29 +303,20 @@ export function DanmakuOverlay({
   useEffect(() => {
     const position = currentClockPosition(clockRef.current);
     postWorkerMessage({ type: "visible", visible, position });
-    if (visible) {
+    if (!visible) {
       resetRendererToPosition(position);
-    } else {
-      clearCanvas();
-      stateRef.current.canvasDirty = false;
     }
   }, [visible]);
 
   useEffect(() => {
     initializeWorkerRenderer();
     const resizeObserver = new ResizeObserver(() => {
-      const resized = resizeCanvas();
-      if (resized && !workerRef.current) {
-        resetRendererToPosition(currentClockPosition(clockRef.current));
-      }
+      resizeCanvas();
     });
     const container = containerRef.current;
     if (container) {
       resizeObserver.observe(container);
-      const resized = resizeCanvas();
-      if (resized && !workerRef.current) {
-        resetRendererToPosition(currentClockPosition(clockRef.current));
-      }
+      resizeCanvas();
     }
 
     let disposed = false;
@@ -397,7 +396,6 @@ export function DanmakuOverlay({
     const endCursor = upperBoundByTime(items, currentPosition);
     if (endCursor <= state.cursor) return;
 
-    pruneLaneReservations(currentPosition);
     const emitStartedAt = performance.now();
     let index = state.cursor;
     let emitted = 0;
@@ -407,7 +405,7 @@ export function DanmakuOverlay({
       const item = items[index];
       if (!item) continue;
       if (currentPosition - item.time > MAX_LATE_EMIT_SECONDS) continue;
-      emitOne(ctx, item, currentPosition);
+      emitOne(ctx, item);
       emitted += 1;
       if (performance.now() - emitStartedAt >= EMIT_BUDGET_MS) {
         index += 1;
@@ -429,14 +427,16 @@ export function DanmakuOverlay({
     const endCursor = upperBoundByTime(items, currentPosition);
     if (endCursor <= startCursor) return;
 
-    pruneLaneReservations(currentPosition);
     for (let index = startCursor; index < endCursor && state.active.length < MAX_VISIBLE; index += 1) {
       const item = items[index];
       if (!item) continue;
       const duration = item.mode === "scroll" ? SCROLL_DURATION : FIXED_DURATION;
       const elapsed = currentPosition - item.time;
       if (elapsed < -0.05 || elapsed > duration) continue;
-      emitOne(ctx, item, currentPosition);
+      // Replay lane allocation at the item's original timestamp. Using the seek
+      // target here makes every historical item see old reservations as free and
+      // collapses the reconstructed frame into lane zero.
+      emitOne(ctx, item);
     }
     state.cursor = Math.max(state.cursor, endCursor);
     state.prewarmCursor = Math.max(state.prewarmCursor, state.cursor);
@@ -466,23 +466,23 @@ export function DanmakuOverlay({
   function emitOne(
     ctx: CanvasRenderingContext2D,
     item: NormalizedDanmakuItem,
-    currentPosition: number,
   ) {
     const state = stateRef.current;
     const bitmap = getTextBitmap(ctx, item);
     const width = bitmap.width;
     const height = bitmap.height;
+    const speed = (state.width + width) / SCROLL_DURATION;
     const lane = item.mode === "bottom"
-      ? acquireBottomLane(currentPosition)
+      ? acquireBottomLane(item.time)
       : item.mode === "top"
-        ? acquireTopLane(currentPosition)
-        : acquireScrollLane(currentPosition);
+        ? acquireTopLane(item.time)
+        : acquireScrollLane(item.time, speed);
     if (lane < 0) return;
 
-    const speed = (state.width + width) / SCROLL_DURATION;
     const active: ActiveDanmaku = {
       ...item,
       lane,
+      originX: state.width,
       width,
       height,
       speed,
@@ -495,7 +495,7 @@ export function DanmakuOverlay({
 
   function drawActiveItems(ctx: CanvasRenderingContext2D, currentPosition: number) {
     const state = stateRef.current;
-    const dpr = window.devicePixelRatio || 1;
+    const dpr = state.dpr;
     ctx.save();
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, state.width, state.height);
@@ -515,7 +515,7 @@ export function DanmakuOverlay({
       let x = state.width / 2 - item.width / 2;
       let expired = elapsed > item.duration;
       if (item.mode === "scroll") {
-        x = state.width - elapsed * item.speed;
+        x = item.originX - elapsed * item.speed;
         expired = x + item.width < -8;
       }
 
@@ -551,7 +551,6 @@ export function DanmakuOverlay({
     state.dpr = dpr;
     state.area = nextArea;
     state.laneHeight = LINE_HEIGHT;
-    state.lanes = createLanes(Math.max(1, Math.floor((height * state.area) / LINE_HEIGHT)));
 
     if (workerRef.current) {
       postWorkerMessage({
@@ -569,6 +568,13 @@ export function DanmakuOverlay({
     if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
       canvas.width = pixelWidth;
       canvas.height = pixelHeight;
+    }
+    rebuildLaneReservations();
+    state.canvasDirty = false;
+    const ctx = canvas.getContext("2d");
+    if (ctx && state.active.length > 0) {
+      drawActiveItems(ctx, currentClockPosition(clockRef.current));
+      state.canvasDirty = true;
     }
     return true;
   }
@@ -591,17 +597,20 @@ export function DanmakuOverlay({
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext("2d");
     if (!canvas || !ctx) return;
-    const dpr = window.devicePixelRatio || 1;
+    const dpr = stateRef.current.dpr;
     ctx.save();
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, stateRef.current.width, stateRef.current.height);
     ctx.restore();
   }
 
-  function acquireScrollLane(currentPosition: number) {
+  function acquireScrollLane(currentPosition: number, speed: number) {
     const state = stateRef.current;
     for (let index = 0; index < state.lanes.length; index += 1) {
-      if (state.lanes[index].nextAt <= currentPosition) {
+      if (
+        state.lanes[index].nextAt <= currentPosition
+        && canShareScrollingLane(index, currentPosition, speed)
+      ) {
         return index;
       }
     }
@@ -640,10 +649,30 @@ export function DanmakuOverlay({
     lane.clearAt = item.time + item.duration;
   }
 
-  function pruneLaneReservations(currentPosition: number) {
-    for (const lane of stateRef.current.lanes) {
-      if (lane.nextAt < currentPosition - SCROLL_DURATION) lane.nextAt = currentPosition;
-      if (lane.clearAt < currentPosition - SCROLL_DURATION) lane.clearAt = currentPosition;
+  function canShareScrollingLane(lane: number, startAt: number, speed: number) {
+    const candidateX = stateRef.current.width;
+    for (const active of stateRef.current.active) {
+      if (active.lane !== lane || active.mode !== "scroll" || active.time > startAt) continue;
+      const elapsed = startAt - active.time;
+      const activeRight = active.originX - elapsed * active.speed + active.width;
+      if (activeRight < -8) continue;
+      const availableGap = candidateX - activeRight;
+      const remaining = Math.max(0, (activeRight + 8) / active.speed);
+      const closingSpeed = Math.max(0, speed - active.speed);
+      if (availableGap < SCROLL_GAP + closingSpeed * remaining) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  function rebuildLaneReservations() {
+    const state = stateRef.current;
+    const laneCount = Math.max(1, Math.floor((state.height * state.area) / state.laneHeight));
+    state.lanes = createLanes(laneCount);
+    const activeByTime = [...state.active].sort((left, right) => left.time - right.time);
+    for (const item of activeByTime) {
+      reserveLane(item);
     }
   }
 

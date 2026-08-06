@@ -43,7 +43,6 @@ const SEEK_POSITION_SETTLE_MS = 3500;
 const SEEK_POSITION_ACCEPT_BEFORE_SECONDS = 1.25;
 const SEEK_POSITION_ACCEPT_AFTER_SECONDS = 2.5;
 const FRAME_CLOCK_PUBLISH_INTERVAL_MS = 250;
-const DANMAKU_SEEK_RESET_DELAY_MS = 650;
 const CONTROLS_IDLE_HIDE_MS = 2000;
 const PLAYBACK_HEARTBEAT_MS = 30_000;
 const KEYBOARD_SEEK_STEP_SECONDS = 5;
@@ -81,7 +80,6 @@ export function PlayerPage({
     until: number;
   } | null>(null);
   const lastFrameClockPublishAtRef = useRef(0);
-  const danmakuSeekResetTimerRef = useRef<number | null>(null);
   const danmakuSeekResetVersionRef = useRef(0);
   const seekCommitTimerRef = useRef<number | null>(null);
   const seekingRef = useRef(false);
@@ -306,57 +304,32 @@ export function PlayerPage({
     });
   }, []);
 
-  const clearDanmakuSeekResetTimer = useCallback(() => {
-    if (danmakuSeekResetTimerRef.current !== null) {
-      window.clearTimeout(danmakuSeekResetTimerRef.current);
-      danmakuSeekResetTimerRef.current = null;
-    }
-  }, []);
-
   const suspendDanmakuForSeek = useCallback(() => {
-    clearDanmakuSeekResetTimer();
     setDanmakuSeekSuspended(true);
-  }, [clearDanmakuSeekResetTimer]);
+  }, []);
 
   const resetDanmakuClockAtPosition = useCallback((targetPosition: number) => {
     if (!Number.isFinite(targetPosition)) return;
-    clearDanmakuSeekResetTimer();
     danmakuSeekResetVersionRef.current += 1;
     setDanmakuSeekReset({
       version: danmakuSeekResetVersionRef.current,
       position: Math.max(0, targetPosition),
     });
     setDanmakuSeekSuspended(false);
-  }, [clearDanmakuSeekResetTimer]);
-
-  const scheduleDanmakuSeekReset = useCallback((targetPosition: number) => {
-    clearDanmakuSeekResetTimer();
-    setDanmakuSeekSuspended(true);
-    danmakuSeekResetTimerRef.current = window.setTimeout(() => {
-      danmakuSeekResetTimerRef.current = null;
-      const livePosition = playbackProgressContextRef.current?.position;
-      resetDanmakuClockAtPosition(
-        typeof livePosition === "number" && Number.isFinite(livePosition)
-          ? livePosition
-          : targetPosition,
-      );
-    }, DANMAKU_SEEK_RESET_DELAY_MS);
-  }, [clearDanmakuSeekResetTimer, resetDanmakuClockAtPosition]);
+  }, []);
 
   const settleDanmakuClockAtPosition = useCallback((targetPosition: number) => {
     if (!Number.isFinite(targetPosition)) return null;
     const position = Math.max(0, targetPosition);
-    clearDanmakuSeekResetTimer();
     setDanmakuSeekSuspended(false);
     seekStabilizationRef.current = null;
     latestSeekPositionRef.current = position;
     return position;
-  }, [clearDanmakuSeekResetTimer]);
+  }, []);
 
   const cancelDanmakuSeekReset = useCallback(() => {
-    clearDanmakuSeekResetTimer();
     setDanmakuSeekSuspended(false);
-  }, [clearDanmakuSeekResetTimer]);
+  }, []);
 
   useEffect(() => {
     setCurrentKey(initialEpisode.key);
@@ -638,10 +611,9 @@ export function PlayerPage({
       if (seekCommitTimerRef.current !== null) {
         window.clearTimeout(seekCommitTimerRef.current);
       }
-      clearDanmakuSeekResetTimer();
       void window.nexplay?.mpvStop();
     };
-  }, [clearDanmakuSeekResetTimer, flushPlaybackProgress]);
+  }, [flushPlaybackProgress]);
 
   useEffect(() => {
     const handleFullscreenChange = () => {
@@ -803,7 +775,7 @@ export function PlayerPage({
               startedAt,
               until: startedAt + SEEK_POSITION_SETTLE_MS,
             };
-            scheduleDanmakuSeekReset(targetPosition);
+            resetDanmakuClockAtPosition(targetPosition);
             setMpvState((current) => ({
               ...current,
               ...nextState,
@@ -832,7 +804,7 @@ export function PlayerPage({
         void flushPendingSeek();
       }
     }
-  }, [cancelDanmakuSeekReset, onSnack, scheduleDanmakuSeekReset, source]);
+  }, [cancelDanmakuSeekReset, onSnack, resetDanmakuClockAtPosition, source]);
 
   const commitSeek = useCallback((value: number) => {
     if (!window.nexplay || !Number.isFinite(value)) return;
@@ -853,7 +825,7 @@ export function PlayerPage({
       seekingRef.current = false;
       setSeeking(false);
       setScrubPosition(null);
-      scheduleDanmakuSeekReset(nextPosition);
+      resetDanmakuClockAtPosition(nextPosition);
       setMpvState((current) => current ? { ...current, position: nextPosition } : current);
       return;
     }
@@ -880,7 +852,7 @@ export function PlayerPage({
       seekCommitTimerRef.current = null;
       void flushPendingSeek();
     }, SEEK_COMMIT_DELAY_MS);
-  }, [duration, flushPendingSeek, mpvState?.renderMode, scheduleDanmakuSeekReset, suspendDanmakuForSeek]);
+  }, [duration, flushPendingSeek, mpvState?.renderMode, resetDanmakuClockAtPosition, suspendDanmakuForSeek]);
 
   const setVolume = useCallback(async (value: number) => {
     if (!window.nexplay) return;
@@ -1165,7 +1137,7 @@ export function PlayerPage({
                 ref={stageRef}
                 className={cn(
                   "player-stage relative min-h-0 overflow-hidden rounded-[28px]",
-                  !controlsVisible && "cursor-none"
+                  !paused && !controlsVisible && "player-cursor-hidden"
                 )}
                 onMouseMove={revealControls}
                 onMouseLeave={() => {

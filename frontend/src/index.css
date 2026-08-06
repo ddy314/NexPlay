@@ -740,6 +740,12 @@ body {
   cursor: default;
 }
 
+.player-stage.player-cursor-hidden,
+.player-stage.player-cursor-hidden .player-video-hit-area,
+.player-stage.player-cursor-hidden .player-video-hit-area:disabled {
+  cursor: none;
+}
+
 .player-stage-controls-scrim {
   position: absolute;
   inset-inline: 0;

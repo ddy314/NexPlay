@@ -75,8 +75,8 @@ function readBuiltDanmakuWorker() {
   const rendererDir = path.join(projectRoot, "dist/renderer");
   const workerFile = fs.readdirSync(rendererDir)
     .filter((file) => /^danmaku\.worker-.*\.js$/.test(file))
-    .sort()
-    .pop();
+    .map((file) => ({ file, modifiedAt: fs.statSync(path.join(rendererDir, file)).mtimeMs }))
+    .sort((left, right) => right.modifiedAt - left.modifiedAt)[0]?.file;
   if (!workerFile) {
     throw new Error("built danmaku worker not found; run `npm run build` first");
   }
@@ -146,11 +146,13 @@ async function runBenchmark(workerSource, options) {
         const elapsedMs = performance.now() - startedAt;
         try {
           const pause = await runPauseRetentionCheck();
+          const layout = await runLayoutStabilityChecks(pause.after);
           resolve({
-            ok: true,
+            ok: pause.ok && layout.ok,
             options,
             worker: event.data,
             pause,
+            layout,
             mainThread: {
               durationMs: Number(elapsedMs.toFixed(2)),
               ticks: mainTicks,
@@ -264,6 +266,69 @@ async function runBenchmark(workerSource, options) {
           after,
         };
       }
+
+      async function runLayoutStabilityChecks(pausedSnapshot) {
+        const fullscreenWidth = Math.max(options.width + 320, Math.round(options.width * 1.35));
+        const fullscreenHeight = Math.max(options.height + 180, Math.round(options.height * 1.35));
+        worker.postMessage({
+          type: "resize",
+          width: fullscreenWidth,
+          height: fullscreenHeight,
+          dpr: options.dpr,
+          area: options.area,
+        });
+        worker.postMessage({ type: "renderNow" });
+        await sleep(30);
+        const fullscreen = await snapshot();
+
+        worker.postMessage({
+          type: "resize",
+          width: options.width,
+          height: options.height,
+          dpr: options.dpr,
+          area: options.area,
+        });
+        worker.postMessage({ type: "renderNow" });
+        await sleep(30);
+        const restored = await snapshot();
+        const resizeStable = pausedSnapshot.activeCount > 0
+          && fullscreen.activeCount === pausedSnapshot.activeCount
+          && restored.activeCount === pausedSnapshot.activeCount
+          && fullscreen.laneSignature === pausedSnapshot.laneSignature
+          && restored.laneSignature === pausedSnapshot.laneSignature
+          && fullscreen.scrollXSignature === pausedSnapshot.scrollXSignature
+          && restored.scrollXSignature === pausedSnapshot.scrollXSignature;
+
+        const seekPosition = 16;
+        worker.postMessage({
+          type: "rawItems",
+          items: createSeekRebuildItems(),
+          position: seekPosition,
+        });
+        worker.postMessage({
+          type: "clock",
+          position: seekPosition,
+          paused: true,
+          seeking: false,
+          timestamp: performance.now(),
+        });
+        worker.postMessage({ type: "renderNow" });
+        await sleep(30);
+        const seek = await snapshot();
+        const seekDistributed = seek.activeCount >= 4
+          && seek.activeLaneCount >= 4
+          && seek.maxActiveLane >= 3;
+
+        return {
+          ok: resizeStable && seekDistributed,
+          resizeStable,
+          seekDistributed,
+          paused: pausedSnapshot,
+          fullscreen,
+          restored,
+          seek,
+        };
+      }
     });
   } finally {
     if (rafId) cancelAnimationFrame(rafId);
@@ -298,6 +363,16 @@ async function runBenchmark(workerSource, options) {
       mode: index % 18 === 0 ? "top" : "scroll",
       color: index % 2 === 0 ? 0xffffff : 0xffcc33,
       text: `暂停保留检查 ${index} 弹幕不应该消失`,
+    }));
+  }
+
+  function createSeekRebuildItems() {
+    return Array.from({ length: 34 }, (_, index) => ({
+      id: `seek-rebuild-${index}`,
+      time: 10 + index * 0.18,
+      mode: "scroll",
+      color: index % 2 === 0 ? 0xffffff : 0x66ccff,
+      text: `跳转轨道重建 ${index} 应保持自然分布`,
     }));
   }
 
