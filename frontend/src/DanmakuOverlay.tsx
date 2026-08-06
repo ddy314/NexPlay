@@ -61,6 +61,7 @@ type RendererState = {
   lanes: LaneState[];
   width: number;
   height: number;
+  dpr: number;
   area: number;
   laneHeight: number;
 };
@@ -147,10 +148,10 @@ export function DanmakuOverlay({
 
   useEffect(() => {
     areaRef.current = area;
-    resizeCanvas();
-    const position = currentClockPosition(clockRef.current);
-    postWorkerMessage({ type: "area", area, position });
-    resetRendererToPosition(position);
+    const resized = resizeCanvas();
+    if (resized && !workerRef.current) {
+      resetRendererToPosition(currentClockPosition(clockRef.current));
+    }
   }, [area]);
 
   useEffect(() => {
@@ -305,13 +306,18 @@ export function DanmakuOverlay({
   useEffect(() => {
     initializeWorkerRenderer();
     const resizeObserver = new ResizeObserver(() => {
-      resizeCanvas();
-      resetRendererToPosition(currentClockPosition(clockRef.current));
+      const resized = resizeCanvas();
+      if (resized && !workerRef.current) {
+        resetRendererToPosition(currentClockPosition(clockRef.current));
+      }
     });
     const container = containerRef.current;
     if (container) {
       resizeObserver.observe(container);
-      resizeCanvas();
+      const resized = resizeCanvas();
+      if (resized && !workerRef.current) {
+        resetRendererToPosition(currentClockPosition(clockRef.current));
+      }
     }
 
     let disposed = false;
@@ -533,9 +539,17 @@ export function DanmakuOverlay({
     canvas.style.height = `${height}px`;
 
     const state = stateRef.current;
+    const nextArea = clamp(areaRef.current, 0.25, 1);
+    const changed = state.width !== width
+      || state.height !== height
+      || state.dpr !== dpr
+      || state.area !== nextArea;
+    if (!changed) return false;
+
     state.width = width;
     state.height = height;
-    state.area = clamp(areaRef.current, 0.25, 1);
+    state.dpr = dpr;
+    state.area = nextArea;
     state.laneHeight = LINE_HEIGHT;
     state.lanes = createLanes(Math.max(1, Math.floor((height * state.area) / LINE_HEIGHT)));
 
@@ -547,7 +561,7 @@ export function DanmakuOverlay({
         dpr,
         area: state.area,
       });
-      return;
+      return true;
     }
 
     const pixelWidth = Math.max(1, Math.round(width * dpr));
@@ -556,6 +570,7 @@ export function DanmakuOverlay({
       canvas.width = pixelWidth;
       canvas.height = pixelHeight;
     }
+    return true;
   }
 
   function resetRendererToPosition(nextPosition: number) {
@@ -714,6 +729,7 @@ function createRendererState(): RendererState {
     lanes: [],
     width: 0,
     height: 0,
+    dpr: 1,
     area: 0.5,
     laneHeight: LINE_HEIGHT,
   };
