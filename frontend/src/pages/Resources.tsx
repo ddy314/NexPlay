@@ -11,6 +11,7 @@ import {
   type TorrentFile,
 } from "../backend";
 import type { Subject } from "../data";
+import { friendlyDownloadError } from "../downloadErrors";
 import { appleSpringBouncy, appleSpringSoft } from "../motion";
 import { Dropdown } from "../ui";
 
@@ -155,14 +156,14 @@ export function ResourcesPage({
         loading: false,
         confirming: false,
         closing: false,
-        error: prepared.files.length ? null : "qBittorrent 没有返回文件列表。",
+        error: prepared.files.length ? null : "BT 没有返回种子文件，请稍后再试。",
       });
     } catch (caught) {
-      const message = caught instanceof Error ? caught.message : String(caught);
+      const message = friendlyDownloadError(caught);
       setDownloadPicker((current) => current && current.resource.id === resource.id
         ? { ...current, loading: false, error: message }
         : current);
-      onSnack(`读取种子文件失败：${message}`, "danger");
+      onSnack(message, "danger");
     } finally {
       setDownloadingId(null);
     }
@@ -176,7 +177,7 @@ export function ResourcesPage({
         await controlDownloadTask({ taskId, action: "cancel", deleteFiles: false });
       }
     } catch (caught) {
-      const message = caught instanceof Error ? caught.message : String(caught);
+      const message = friendlyDownloadError(caught);
       onSnack(`取消下载任务失败：${message}`, "danger");
     } finally {
       setDownloadPicker(null);
@@ -197,14 +198,14 @@ export function ResourcesPage({
         selectedFileIndexes,
       });
       if (task.status === "failed") {
-        onSnack(`添加下载失败：${task.error || "qBittorrent 返回失败"}`, "danger");
+        onSnack(friendlyDownloadError(task.error || "BT 添加资源失败"), "danger");
       } else {
         onSnack(`已添加 ${selectedFileIndexes.length} 个文件到 qBittorrent 下载队列。`, "success");
       }
       setDownloadPicker(null);
     } catch (caught) {
-      const message = caught instanceof Error ? caught.message : String(caught);
-      onSnack(`添加下载失败：${message}`, "danger");
+      const message = friendlyDownloadError(caught);
+      onSnack(message, "danger");
       setDownloadPicker((current) => current ? { ...current, confirming: false, error: message } : current);
     }
   }, [downloadPicker, onSnack]);

@@ -307,59 +307,64 @@ impl CatalogService {
         provider_subject_id: &str,
         episode_number: Option<f64>,
     ) -> AppResult<DownloadTaskData> {
-        let now = task::unix_timestamp_ms();
-        let task = DownloadTask {
-            id: 0,
-            resource_id: Some(resource.id).filter(|id| *id > 0),
-            subject_provider: subject_provider.to_string(),
-            provider_subject_id: provider_subject_id.to_string(),
-            episode_number,
-            title: resource.title.clone(),
-            torrent_url: resource.torrent_url.clone(),
-            info_hash: non_empty(resource.info_hash.clone()),
-            qbittorrent_hash: None,
-            status: "pending".to_string(),
-            progress: 0.0,
-            save_path: None,
-            error: None,
-            updated_at: now,
-        };
-        let task = self.repository.create_download_task(&task, now)?;
+        let session = self
+            .login_qbittorrent()
+            .map_err(friendly_qbittorrent_error)?;
+        let info_hash = non_empty(resource.info_hash.clone());
+        let existing = self
+            .repository
+            .find_download_task_by_identity(info_hash.as_deref(), &resource.torrent_url)?;
+        if let Some(task) = existing
+            .as_ref()
+            .filter(|task| can_reuse_download_task(task))
+        {
+            return Ok(frontend_download_task_from_domain((*task).clone()));
+        }
 
-        match self.add_qbittorrent_torrent(resource, false) {
-            Ok(qbit) => {
+        let qbit = self
+            .add_qbittorrent_torrent(&session, resource, false)
+            .map_err(friendly_qbittorrent_error)?;
+        let hash = qbit.hash.clone().or(info_hash).ok_or_else(|| {
+            friendly_qbittorrent_error(AppError::Api(
+                "qBittorrent did not return torrent hash".to_string(),
+            ))
+        })?;
+        let now = task::unix_timestamp_ms();
+        let task = match existing {
+            Some(task) => {
                 self.repository.update_download_task_status(
                     task.id,
                     "queued",
                     qbit.progress,
-                    qbit.hash.as_deref().or(task.info_hash.as_deref()),
+                    Some(&hash),
                     qbit.save_path.as_deref(),
                     None,
-                    task::unix_timestamp_ms(),
+                    now,
                 )?;
+                self.repository.get_download_task(task.id)?
             }
-            Err(error) => {
-                self.repository.update_download_task_status(
-                    task.id,
-                    "failed",
-                    0.0,
-                    None,
-                    None,
-                    Some(&error.to_string()),
-                    task::unix_timestamp_ms(),
-                )?;
-                return self
-                    .repository
-                    .get_download_task(task.id)?
-                    .map(frontend_download_task_from_domain)
-                    .ok_or_else(|| AppError::Api("download task disappeared".to_string()));
-            }
+            None => Some(self.repository.create_download_task(
+                &DownloadTask {
+                    id: 0,
+                    resource_id: Some(resource.id).filter(|id| *id > 0),
+                    subject_provider: subject_provider.to_string(),
+                    provider_subject_id: provider_subject_id.to_string(),
+                    episode_number,
+                    title: resource.title.clone(),
+                    torrent_url: resource.torrent_url.clone(),
+                    info_hash: non_empty(resource.info_hash.clone()),
+                    qbittorrent_hash: Some(hash),
+                    status: "queued".to_string(),
+                    progress: qbit.progress,
+                    save_path: qbit.save_path.clone(),
+                    error: None,
+                    updated_at: now,
+                },
+                now,
+            )?),
         }
-
-        self.repository
-            .get_download_task(task.id)?
-            .map(frontend_download_task_from_domain)
-            .ok_or_else(|| AppError::Api("download task disappeared".to_string()))
+        .ok_or_else(|| AppError::Api("download task disappeared".to_string()))?;
+        Ok(frontend_download_task_from_domain(task))
     }
 
     pub fn prepare_resource_download(
@@ -369,35 +374,45 @@ impl CatalogService {
         provider_subject_id: &str,
         episode_number: Option<f64>,
     ) -> AppResult<(DownloadTaskData, Vec<TorrentFileData>)> {
-        let now = task::unix_timestamp_ms();
-        let task = DownloadTask {
-            id: 0,
-            resource_id: Some(resource.id).filter(|id| *id > 0),
-            subject_provider: subject_provider.to_string(),
-            provider_subject_id: provider_subject_id.to_string(),
-            episode_number,
-            title: resource.title.clone(),
-            torrent_url: resource.torrent_url.clone(),
-            info_hash: non_empty(resource.info_hash.clone()),
-            qbittorrent_hash: None,
-            status: "pending".to_string(),
-            progress: 0.0,
-            save_path: None,
-            error: None,
-            updated_at: now,
-        };
-        let task = self.repository.create_download_task(&task, now)?;
+        let session = self
+            .login_qbittorrent()
+            .map_err(friendly_qbittorrent_error)?;
+        let info_hash = non_empty(resource.info_hash.clone());
+        let existing = self
+            .repository
+            .find_download_task_by_identity(info_hash.as_deref(), &resource.torrent_url)?;
+        if let Some(task) = existing
+            .as_ref()
+            .filter(|task| can_reuse_download_task(task))
+        {
+            if let Some(hash) = task
+                .qbittorrent_hash
+                .as_deref()
+                .or(task.info_hash.as_deref())
+                .map(str::trim)
+                .filter(|hash| !hash.is_empty())
+            {
+                let files = self
+                    .wait_qbittorrent_torrent_files(&session, hash)
+                    .map_err(friendly_qbittorrent_error)?;
+                return Ok((frontend_download_task_from_domain((*task).clone()), files));
+            }
+        }
 
-        match self.add_qbittorrent_torrent(resource, true) {
-            Ok(qbit) => {
-                let hash = qbit
-                    .hash
-                    .as_deref()
-                    .or(task.info_hash.as_deref())
-                    .map(str::to_string)
-                    .ok_or_else(|| {
-                        AppError::Api("qBittorrent did not return torrent hash".to_string())
-                    })?;
+        let qbit = self
+            .add_qbittorrent_torrent(&session, resource, true)
+            .map_err(friendly_qbittorrent_error)?;
+        let hash = qbit.hash.clone().or(info_hash).ok_or_else(|| {
+            friendly_qbittorrent_error(AppError::Api(
+                "qBittorrent did not return torrent hash".to_string(),
+            ))
+        })?;
+        let files = self
+            .wait_qbittorrent_torrent_files(&session, &hash)
+            .map_err(friendly_qbittorrent_error)?;
+        let now = task::unix_timestamp_ms();
+        let task = match existing {
+            Some(task) => {
                 self.repository.update_download_task_status(
                     task.id,
                     "paused",
@@ -405,45 +420,32 @@ impl CatalogService {
                     Some(&hash),
                     qbit.save_path.as_deref(),
                     None,
-                    task::unix_timestamp_ms(),
+                    now,
                 )?;
-                let session = self.login_qbittorrent()?;
-                let files = match self.wait_qbittorrent_torrent_files(&session, &hash) {
-                    Ok(files) => files,
-                    Err(error) => {
-                        let _ = self.qbittorrent_torrent_action("delete", &hash, false);
-                        self.repository.update_download_task_status(
-                            task.id,
-                            "failed",
-                            0.0,
-                            Some(&hash),
-                            qbit.save_path.as_deref(),
-                            Some(&error.to_string()),
-                            task::unix_timestamp_ms(),
-                        )?;
-                        return Err(error);
-                    }
-                };
-                let task = self
-                    .repository
-                    .get_download_task(task.id)?
-                    .map(frontend_download_task_from_domain)
-                    .ok_or_else(|| AppError::Api("download task disappeared".to_string()))?;
-                Ok((task, files))
+                self.repository.get_download_task(task.id)?
             }
-            Err(error) => {
-                self.repository.update_download_task_status(
-                    task.id,
-                    "failed",
-                    0.0,
-                    None,
-                    None,
-                    Some(&error.to_string()),
-                    task::unix_timestamp_ms(),
-                )?;
-                Err(error)
-            }
+            None => Some(self.repository.create_download_task(
+                &DownloadTask {
+                    id: 0,
+                    resource_id: Some(resource.id).filter(|id| *id > 0),
+                    subject_provider: subject_provider.to_string(),
+                    provider_subject_id: provider_subject_id.to_string(),
+                    episode_number,
+                    title: resource.title.clone(),
+                    torrent_url: resource.torrent_url.clone(),
+                    info_hash: non_empty(resource.info_hash.clone()),
+                    qbittorrent_hash: Some(hash),
+                    status: "paused".to_string(),
+                    progress: qbit.progress,
+                    save_path: qbit.save_path.clone(),
+                    error: None,
+                    updated_at: now,
+                },
+                now,
+            )?),
         }
+        .ok_or_else(|| AppError::Api("download task disappeared".to_string()))?;
+        Ok((frontend_download_task_from_domain(task), files))
     }
 
     pub fn confirm_resource_download(
@@ -468,8 +470,12 @@ impl CatalogService {
             .ok_or_else(|| AppError::Api("download task has no qBittorrent hash".to_string()))?
             .to_string();
 
-        let session = self.login_qbittorrent()?;
-        let files = self.qbittorrent_torrent_files(&session, &hash)?;
+        let session = self
+            .login_qbittorrent()
+            .map_err(friendly_qbittorrent_error)?;
+        let files = self
+            .qbittorrent_torrent_files(&session, &hash)
+            .map_err(friendly_qbittorrent_error)?;
         let file_indexes = files.iter().map(|file| file.index).collect::<HashSet<_>>();
         let selected = selected_file_indexes
             .iter()
@@ -486,9 +492,12 @@ impl CatalogService {
             .filter(|file| !selected.contains(&file.index))
             .map(|file| file.index)
             .collect::<Vec<_>>();
-        self.qbittorrent_set_file_priority(&session, &hash, selected.iter().copied(), 1)?;
-        self.qbittorrent_set_file_priority(&session, &hash, excluded.into_iter(), 0)?;
-        self.qbittorrent_torrent_action("resume", &hash, false)?;
+        self.qbittorrent_set_file_priority(&session, &hash, selected.iter().copied(), 1)
+            .map_err(friendly_qbittorrent_error)?;
+        self.qbittorrent_set_file_priority(&session, &hash, excluded.into_iter(), 0)
+            .map_err(friendly_qbittorrent_error)?;
+        self.qbittorrent_torrent_action_with_session(&session, "resume", &hash, false)
+            .map_err(friendly_qbittorrent_error)?;
 
         self.repository.update_download_task_status(
             task_id,
@@ -538,7 +547,7 @@ impl CatalogService {
                         data.error = qbit_by_hash
                             .as_ref()
                             .err()
-                            .map(ToString::to_string)
+                            .map(friendly_qbittorrent_message)
                             .unwrap_or_else(|| "qBittorrent status refresh failed".to_string());
                     }
                 }
@@ -548,8 +557,12 @@ impl CatalogService {
     }
 
     pub fn test_qbittorrent_connection(&self) -> AppResult<()> {
-        let session = self.login_qbittorrent()?;
-        self.validate_qbittorrent_session(&session).map(|_| ())
+        let session = self
+            .login_qbittorrent()
+            .map_err(friendly_qbittorrent_error)?;
+        self.validate_qbittorrent_session(&session)
+            .map(|_| ())
+            .map_err(friendly_qbittorrent_error)
     }
 
     pub fn control_download_task(
@@ -574,7 +587,8 @@ impl CatalogService {
                 let hash = hash.ok_or_else(|| {
                     AppError::Api("download task has no qBittorrent hash".to_string())
                 })?;
-                self.qbittorrent_torrent_action("pause", &hash, false)?;
+                self.qbittorrent_torrent_action("pause", &hash, false)
+                    .map_err(friendly_qbittorrent_error)?;
                 self.repository.update_download_task_status(
                     task_id,
                     "paused",
@@ -589,7 +603,8 @@ impl CatalogService {
                 let hash = hash.ok_or_else(|| {
                     AppError::Api("download task has no qBittorrent hash".to_string())
                 })?;
-                self.qbittorrent_torrent_action("resume", &hash, false)?;
+                self.qbittorrent_torrent_action("resume", &hash, false)
+                    .map_err(friendly_qbittorrent_error)?;
                 self.repository.update_download_task_status(
                     task_id,
                     "queued",
@@ -602,7 +617,8 @@ impl CatalogService {
             }
             "cancel" => {
                 if let Some(hash) = hash.as_deref() {
-                    self.qbittorrent_torrent_action("delete", hash, delete_files)?;
+                    self.qbittorrent_torrent_action("delete", hash, delete_files)
+                        .map_err(friendly_qbittorrent_error)?;
                 }
                 self.repository.delete_download_task(task_id)
             }
@@ -750,10 +766,10 @@ impl CatalogService {
 
     fn add_qbittorrent_torrent(
         &self,
+        session: &QbittorrentSession,
         resource: &EpisodeResourceData,
         paused: bool,
     ) -> AppResult<QbitTorrentInfo> {
-        let session = self.login_qbittorrent()?;
         let mut form = multipart::Form::new().text("urls", resource.torrent_url.clone());
         let save_path = if !session.config.save_path.trim().is_empty() {
             session.config.save_path.clone()
@@ -978,6 +994,16 @@ impl CatalogService {
         delete_files: bool,
     ) -> AppResult<()> {
         let session = self.login_qbittorrent()?;
+        self.qbittorrent_torrent_action_with_session(&session, action, hash, delete_files)
+    }
+
+    fn qbittorrent_torrent_action_with_session(
+        &self,
+        session: &QbittorrentSession,
+        action: &str,
+        hash: &str,
+        delete_files: bool,
+    ) -> AppResult<()> {
         let mut params = vec![("hashes", hash.to_string())];
         if action == "delete" {
             params.push(("deleteFiles", delete_files.to_string()));
@@ -1470,6 +1496,47 @@ fn frontend_download_task_from_domain(task: DownloadTask) -> DownloadTaskData {
         dlspeed: 0,
         eta: -1,
         stale: false,
+    }
+}
+
+fn can_reuse_download_task(task: &DownloadTask) -> bool {
+    matches!(
+        task.status.as_str(),
+        "queued" | "downloading" | "paused" | "completed"
+    )
+}
+
+fn friendly_qbittorrent_error(error: AppError) -> AppError {
+    AppError::Api(friendly_qbittorrent_message(&error))
+}
+
+fn friendly_qbittorrent_message(error: &AppError) -> String {
+    match error {
+        AppError::Http(_) => "BT 未启动或无法连接，请先启动 qBittorrent。".to_string(),
+        AppError::Config(message) if message.contains("integration is disabled") => {
+            "BT 下载未启用，请到设置 > 下载中启用 qBittorrent。".to_string()
+        }
+        AppError::Config(message) if message.contains("qBittorrent") => {
+            "BT 地址设置有误，请检查 qBittorrent WebUI 地址。".to_string()
+        }
+        AppError::Api(message) => {
+            let lower = message.to_ascii_lowercase();
+            if lower.contains("auth/login")
+                || lower.contains("login rejected")
+                || lower.contains("login failed")
+            {
+                "BT 登录失败，请检查 qBittorrent 的用户名和密码。".to_string()
+            } else if lower.contains("did not expose torrent files") {
+                "BT 还在准备种子文件，请稍后再试。".to_string()
+            } else if lower.contains("torrent hash") {
+                "BT 没有返回这个资源的编号，请稍后再试。".to_string()
+            } else if lower.contains("torrents/add") {
+                "BT 添加资源失败，请检查 qBittorrent 设置。".to_string()
+            } else {
+                format!("BT 下载失败：{message}")
+            }
+        }
+        _ => format!("BT 下载失败：{error}"),
     }
 }
 

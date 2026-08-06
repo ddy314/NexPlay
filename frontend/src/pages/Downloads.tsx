@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { AlertCircle, ArrowRight, CheckCircle2, DownloadCloud, Gauge, Loader2, Pause, PauseCircle, Play, RefreshCw, Search, ShieldCheck, Trash2, X } from "lucide-react";
 import { controlDownloadTask, downloadTasks, type DownloadTask } from "../backend";
+import { friendlyDownloadError } from "../downloadErrors";
 import { appleSpringBouncy, appleSpringSoft } from "../motion";
 
 export function DownloadsPage({
@@ -21,7 +22,7 @@ export function DownloadsPage({
       setTasks(response.tasks);
       setError(null);
     } catch (caught) {
-      const message = caught instanceof Error ? caught.message : String(caught);
+      const message = friendlyDownloadError(caught);
       setError(message);
       if (!quiet) onSnack(`读取下载状态失败：${message}`, "danger");
     } finally {
@@ -40,7 +41,7 @@ export function DownloadsPage({
       const labels = { pause: "已暂停", resume: "已继续", cancel: "已取消", remove: "已清除" };
       onSnack(`${labels[action]}下载任务。`, "success");
     } catch (caught) {
-      const message = caught instanceof Error ? caught.message : String(caught);
+      const message = friendlyDownloadError(caught);
       onSnack(`操作下载任务失败：${message}`, "danger");
     } finally {
       setActingTaskId(null);
@@ -173,7 +174,7 @@ function DownloadRow({
           {task.qbittorrentHash && <span className="font-mono">{task.qbittorrentHash.slice(0, 12)}</span>}
         </div>
         {task.error && (
-          <div className="text-[12px] font-medium text-rose-600">{task.error}</div>
+          <div className="text-[12px] font-medium text-rose-600">{friendlyDownloadError(task.error)}</div>
         )}
       </div>
       <div className="download-row-actions">
@@ -216,7 +217,7 @@ function statusMeta(status: string, stale: boolean) {
   }
   if (stale) {
     return {
-      label: "状态未同步",
+      label: "BT 状态未同步",
       className: "text-amber-600 bg-amber-500/8",
       icon: <AlertCircle size={16} />,
     };

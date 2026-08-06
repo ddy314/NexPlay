@@ -9,6 +9,7 @@ import {
   type BangumiAuthStatus,
   type EditableSettings,
 } from "../backend";
+import { friendlyDownloadError } from "../downloadErrors";
 import { Button, Card, Dropdown, Switch } from "../ui";
 import { ChevronRight, KeyIcon } from "../icons";
 import { cn } from "../utils/cn";
@@ -163,8 +164,8 @@ export function SettingsPage({
       const result = await testQbittorrentConnection();
       onSnack(result.message, result.ok ? "success" : "danger");
     } catch (caught) {
-      const message = caught instanceof Error ? caught.message : String(caught);
-      onSnack(`qBittorrent 连接失败：${message}`, "danger");
+      const message = friendlyDownloadError(caught);
+      onSnack(message, "danger");
     } finally {
       setTestingQbit(false);
     }

@@ -27,7 +27,9 @@ impl Repository {
 
     pub fn init(&self) -> AppResult<()> {
         let mut conn = self.connect()?;
-        schema::init_database(&mut conn)
+        schema::init_database(&mut conn)?;
+        drop(conn);
+        self.deduplicate_download_tasks()
     }
 
     pub fn list_series_cards(&self) -> AppResult<Vec<UiSeriesCardData>> {
@@ -1760,6 +1762,127 @@ impl Repository {
         })
     }
 
+    pub fn find_download_task_by_identity(
+        &self,
+        info_hash: Option<&str>,
+        torrent_url: &str,
+    ) -> AppResult<Option<DownloadTask>> {
+        let conn = self.connect()?;
+        conn.query_row(
+            r#"
+            SELECT id, resource_id, subject_provider, provider_subject_id, episode_number,
+                   title, torrent_url, info_hash, qbittorrent_hash, status, progress,
+                   save_path, error, updated_at
+            FROM download_tasks
+            WHERE (
+                NULLIF(TRIM(?1), '') IS NOT NULL
+                AND NULLIF(TRIM(info_hash), '') IS NOT NULL
+                AND LOWER(TRIM(info_hash)) = LOWER(TRIM(?1))
+            )
+               OR TRIM(torrent_url) = TRIM(?2)
+            ORDER BY
+                CASE WHEN NULLIF(TRIM(qbittorrent_hash), '') IS NOT NULL THEN 0 ELSE 1 END,
+                CASE status
+                    WHEN 'downloading' THEN 0
+                    WHEN 'queued' THEN 1
+                    WHEN 'paused' THEN 2
+                    WHEN 'pending' THEN 3
+                    WHEN 'completed' THEN 4
+                    WHEN 'failed' THEN 5
+                    WHEN 'missing' THEN 6
+                    ELSE 7
+                END,
+                updated_at DESC,
+                id DESC
+            LIMIT 1
+            "#,
+            params![info_hash.unwrap_or_default(), torrent_url],
+            map_download_task,
+        )
+        .optional()
+        .map_err(Into::into)
+    }
+
+    pub fn deduplicate_download_tasks(&self) -> AppResult<()> {
+        let conn = self.connect()?;
+        conn.execute(
+            r#"
+            DELETE FROM download_tasks AS task
+            WHERE EXISTS (
+                SELECT 1
+                FROM download_tasks AS other
+                WHERE other.id <> task.id
+                  AND (
+                      (
+                          NULLIF(TRIM(task.info_hash), '') IS NOT NULL
+                          AND NULLIF(TRIM(other.info_hash), '') IS NOT NULL
+                          AND LOWER(TRIM(task.info_hash)) = LOWER(TRIM(other.info_hash))
+                      )
+                      OR TRIM(task.torrent_url) = TRIM(other.torrent_url)
+                  )
+                  AND (
+                      CASE WHEN NULLIF(TRIM(other.qbittorrent_hash), '') IS NOT NULL THEN 0 ELSE 1 END
+                      < CASE WHEN NULLIF(TRIM(task.qbittorrent_hash), '') IS NOT NULL THEN 0 ELSE 1 END
+                      OR (
+                          CASE WHEN NULLIF(TRIM(other.qbittorrent_hash), '') IS NOT NULL THEN 0 ELSE 1 END
+                          = CASE WHEN NULLIF(TRIM(task.qbittorrent_hash), '') IS NOT NULL THEN 0 ELSE 1 END
+                          AND CASE other.status
+                              WHEN 'downloading' THEN 0
+                              WHEN 'queued' THEN 1
+                              WHEN 'paused' THEN 2
+                              WHEN 'pending' THEN 3
+                              WHEN 'completed' THEN 4
+                              WHEN 'failed' THEN 5
+                              WHEN 'missing' THEN 6
+                              ELSE 7
+                          END
+                          < CASE task.status
+                              WHEN 'downloading' THEN 0
+                              WHEN 'queued' THEN 1
+                              WHEN 'paused' THEN 2
+                              WHEN 'pending' THEN 3
+                              WHEN 'completed' THEN 4
+                              WHEN 'failed' THEN 5
+                              WHEN 'missing' THEN 6
+                              ELSE 7
+                          END
+                      )
+                      OR (
+                          CASE WHEN NULLIF(TRIM(other.qbittorrent_hash), '') IS NOT NULL THEN 0 ELSE 1 END
+                          = CASE WHEN NULLIF(TRIM(task.qbittorrent_hash), '') IS NOT NULL THEN 0 ELSE 1 END
+                          AND CASE other.status
+                              WHEN 'downloading' THEN 0
+                              WHEN 'queued' THEN 1
+                              WHEN 'paused' THEN 2
+                              WHEN 'pending' THEN 3
+                              WHEN 'completed' THEN 4
+                              WHEN 'failed' THEN 5
+                              WHEN 'missing' THEN 6
+                              ELSE 7
+                          END
+                          = CASE task.status
+                              WHEN 'downloading' THEN 0
+                              WHEN 'queued' THEN 1
+                              WHEN 'paused' THEN 2
+                              WHEN 'pending' THEN 3
+                              WHEN 'completed' THEN 4
+                              WHEN 'failed' THEN 5
+                              WHEN 'missing' THEN 6
+                              ELSE 7
+                          END
+                          AND (
+                              other.updated_at > task.updated_at
+                              OR (other.updated_at = task.updated_at AND other.id > task.id)
+                          )
+                      )
+                  )
+            )
+            "#,
+            [],
+        )?;
+        Ok(())
+    }
+
     pub fn update_download_task_status(
         &self,
         task_id: i64,
@@ -2451,6 +2574,72 @@ mod tests {
                 .get_progress(media[0].id)
                 .expect("read cleared progress")
                 .is_none()
+        );
+
+        let _ = fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn deduplicates_download_tasks_and_keeps_the_active_torrent() {
+        let db_path = std::env::temp_dir().join(format!(
+            "nexplay-download-dedupe-test-{}.sqlite3",
+            std::process::id()
+        ));
+        let _ = fs::remove_file(&db_path);
+
+        let repository = Repository::new(db_path.clone());
+        repository.init().expect("init database");
+        let failed = repository
+            .create_download_task(
+                &DownloadTask {
+                    id: 0,
+                    resource_id: None,
+                    subject_provider: "bangumi".to_string(),
+                    provider_subject_id: "42".to_string(),
+                    episode_number: Some(1.0),
+                    title: "Example torrent".to_string(),
+                    torrent_url: "https://example.test/example.torrent".to_string(),
+                    info_hash: Some("ABCDEF".to_string()),
+                    qbittorrent_hash: None,
+                    status: "failed".to_string(),
+                    progress: 0.0,
+                    save_path: None,
+                    error: Some("BT 未启动".to_string()),
+                    updated_at: 100,
+                },
+                100,
+            )
+            .expect("insert failed task");
+        repository
+            .create_download_task(
+                &DownloadTask {
+                    id: 0,
+                    qbittorrent_hash: Some("abcdef".to_string()),
+                    status: "downloading".to_string(),
+                    progress: 0.2,
+                    error: None,
+                    updated_at: 200,
+                    ..failed
+                },
+                200,
+            )
+            .expect("insert active task");
+
+        repository
+            .deduplicate_download_tasks()
+            .expect("deduplicate tasks");
+        let tasks = repository
+            .list_download_tasks()
+            .expect("list download tasks");
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].status, "downloading");
+        assert_eq!(tasks[0].qbittorrent_hash.as_deref(), Some("abcdef"));
+        assert_eq!(
+            repository
+                .find_download_task_by_identity(Some("ABCDEF"), "https://other.test/copy.torrent")
+                .expect("find task")
+                .map(|task| task.id),
+            Some(tasks[0].id)
         );
 
         let _ = fs::remove_file(db_path);
