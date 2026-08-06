@@ -27,7 +27,7 @@
   "scripts": {
     "dev": "concurrently -k \"npm:dev:renderer\" \"npm:dev:electron\"",
     "dev:renderer": "vite --host 127.0.0.1 --port 5173 --strictPort",
-    "dev:electron": "wait-on http-get://127.0.0.1:5173 && electron --no-sandbox .",
+    "dev:electron": "wait-on http-get://127.0.0.1:5173 && node scripts/run-electron.cjs --no-sandbox .",
     "generate:types": "cargo run --quiet -- export-types",
     "test:backend-daemon": "node scripts/check-backend-daemon.cjs",
     "build:native-render": "node scripts/build-native-render.cjs",
@@ -39,7 +39,7 @@
     "prepare:release-assets": "node scripts/prepare-release-assets.cjs",
     "package": "npm run build && npm run build:backend && npm run build:native-render && npm run prepare:release-assets && electron-builder --dir",
     "dist": "npm run build && npm run build:backend && npm run build:native-render && npm run prepare:release-assets && electron-builder --publish never",
-    "start": "NEXPLAY_RENDERER_MODE=production electron --no-sandbox .",
+    "start": "NEXPLAY_RENDERER_MODE=production node scripts/run-electron.cjs --no-sandbox .",
     "preview": "vite preview --host 127.0.0.1 --port 4173 --strictPort"
   },
   "dependencies": {

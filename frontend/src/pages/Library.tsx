@@ -348,11 +348,7 @@ export function LibraryPage({
               </Section>
             </>
           ) : (
-            <>
-              <Timeline subjects={sortedSubjects} onJump={(year) => {
-                const target = document.querySelector(`[data-timeline-year="${year}"]`);
-                target?.scrollIntoView({ behavior: "smooth", block: "center" });
-              }} />
+            <div className="library-browser-layout">
               <div className="min-w-0 flex-1">
                 {(scanStatus.running || logs.length > 0) && (
                   <div className="mt-5">
@@ -374,7 +370,11 @@ export function LibraryPage({
                   )}
                 </Section>
               </div>
-            </>
+              <Timeline subjects={sortedSubjects} onJump={(year) => {
+                const target = document.querySelector(`[data-timeline-year="${year}"]`);
+                target?.scrollIntoView({ behavior: "smooth", block: "center" });
+              }} />
+            </div>
           )}
         </motion.div>
       </AnimatePresence>
@@ -799,20 +799,24 @@ function Timeline({
   if (years.length === 0) return null;
 
   return (
-    <div className="library-time-map" aria-label="媒体库年份分布">
-          {years.map(({ year, count }) => (
-            <button
-              key={year}
-              type="button"
-              onClick={() => onJump(year)}
-              className="library-time-node"
-              title={`${year} · ${count} 部`}
-            >
-              <i style={{ height: `${Math.min(42, 8 + count * 4)}px` }} />
-              <span>{year}</span>
-            </button>
-          ))}
-    </div>
+    <aside className="library-time-map" aria-label="媒体库年份分布">
+      <div className="library-time-title">时间线</div>
+      <div className="library-time-track">
+        {years.map(({ year, count }) => (
+          <button
+            key={year}
+            type="button"
+            onClick={() => onJump(year)}
+            className="library-time-node"
+            title={`${year} · ${count} 部`}
+          >
+            <i style={{ width: `${Math.min(12, 6 + count)}px`, height: `${Math.min(12, 6 + count)}px` }} />
+            <span>{year}</span>
+            <small>{count}</small>
+          </button>
+        ))}
+      </div>
+    </aside>
   );
 }
 
