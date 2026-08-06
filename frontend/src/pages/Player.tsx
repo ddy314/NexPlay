@@ -122,6 +122,7 @@ export function PlayerPage({
   const [scrubPosition, setScrubPosition] = useState<number | null>(null);
   const [danmakuSeekSuspended, setDanmakuSeekSuspended] = useState(false);
   const [danmakuSeekReset, setDanmakuSeekReset] = useState<{ version: number; position: number } | null>(null);
+  const [danmakuClockReady, setDanmakuClockReady] = useState(false);
   const [renderFrameGeneration, setRenderFrameGeneration] = useState(0);
   const heroAsset = subject.hero || subject.poster;
   const heroSrc = resolveAssetUrl(heroAsset);
@@ -317,19 +318,30 @@ export function PlayerPage({
     setDanmakuSeekSuspended(true);
   }, [clearDanmakuSeekResetTimer]);
 
+  const resetDanmakuClockAtPosition = useCallback((targetPosition: number) => {
+    if (!Number.isFinite(targetPosition)) return;
+    clearDanmakuSeekResetTimer();
+    danmakuSeekResetVersionRef.current += 1;
+    setDanmakuSeekReset({
+      version: danmakuSeekResetVersionRef.current,
+      position: Math.max(0, targetPosition),
+    });
+    setDanmakuSeekSuspended(false);
+  }, [clearDanmakuSeekResetTimer]);
+
   const scheduleDanmakuSeekReset = useCallback((targetPosition: number) => {
     clearDanmakuSeekResetTimer();
     setDanmakuSeekSuspended(true);
     danmakuSeekResetTimerRef.current = window.setTimeout(() => {
       danmakuSeekResetTimerRef.current = null;
-      danmakuSeekResetVersionRef.current += 1;
-      setDanmakuSeekReset({
-        version: danmakuSeekResetVersionRef.current,
-        position: targetPosition,
-      });
-      setDanmakuSeekSuspended(false);
+      const livePosition = playbackProgressContextRef.current?.position;
+      resetDanmakuClockAtPosition(
+        typeof livePosition === "number" && Number.isFinite(livePosition)
+          ? livePosition
+          : targetPosition,
+      );
     }, DANMAKU_SEEK_RESET_DELAY_MS);
-  }, [clearDanmakuSeekResetTimer]);
+  }, [clearDanmakuSeekResetTimer, resetDanmakuClockAtPosition]);
 
   const settleDanmakuClockAtPosition = useCallback((targetPosition: number) => {
     if (!Number.isFinite(targetPosition)) return null;
@@ -470,6 +482,7 @@ export function PlayerPage({
       }
 
       setLoadingSource(true);
+      setDanmakuClockReady(false);
       setPlaybackError(null);
       setRenderFrameGeneration((generation) => generation + 1);
       seekStabilizationRef.current = null;
@@ -526,6 +539,7 @@ export function PlayerPage({
             forgetRememberedSubtitlePath(currentEpisode.mediaId);
           }
         }
+        let resumedAt: number | null = null;
         if (resumePosition > 1) {
           try {
             const seekState = await window.nexplay.mpvSeek(resumePosition);
@@ -541,7 +555,7 @@ export function PlayerPage({
               startedAt: performance.now(),
               until: performance.now() + SEEK_POSITION_SETTLE_MS,
             };
-            scheduleDanmakuSeekReset(resumePosition);
+            resumedAt = resumePosition;
           } catch {
             // Resume is opportunistic; playback should still start if the seek fails.
           }
@@ -556,6 +570,10 @@ export function PlayerPage({
           });
           setSource(nextSource);
           setPaused(false);
+          if (resumedAt !== null) {
+            resetDanmakuClockAtPosition(resumedAt);
+          }
+          setDanmakuClockReady(true);
         }
       } catch (caught) {
         if (!cancelled) {
@@ -576,7 +594,7 @@ export function PlayerPage({
     return () => {
       cancelled = true;
     };
-  }, [cancelDanmakuSeekReset, currentEpisode.mediaId, onSnack, scheduleDanmakuSeekReset]);
+  }, [cancelDanmakuSeekReset, currentEpisode.mediaId, onSnack, resetDanmakuClockAtPosition]);
 
   useEffect(() => {
     if (loadingSource || playbackError || !window.nexplay?.mpvState || mpvState?.renderMode === "browserVideo") {
@@ -1178,6 +1196,8 @@ export function PlayerPage({
                         volume: Math.round(video.volume * 100),
                       } : current);
                       setPaused(video.paused);
+                      resetDanmakuClockAtPosition(video.currentTime || resumePosition);
+                      setDanmakuClockReady(true);
                     }}
                     onTimeUpdate={(event) => {
                       const video = event.currentTarget;
@@ -1232,7 +1252,7 @@ export function PlayerPage({
                 {danmakuVisible && (
                   <DanmakuOverlay
                     mediaId={currentEpisode.mediaId}
-                    visible={!loadingSource && !playbackError}
+                    visible={danmakuClockReady && !loadingSource && !playbackError}
                     paused={paused}
                     seeking={seeking || danmakuSeekSuspended}
                     seekReset={danmakuSeekReset}

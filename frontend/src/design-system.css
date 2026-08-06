@@ -292,11 +292,18 @@ body {
 .nx-chart-bar { min-height: 3px; border-radius: 6px 6px 2px 2px; background: var(--nx-blue); }
 .nx-chart-column span { overflow: hidden; color: var(--nx-ink-3); font-size: 9px; text-align: center; text-overflow: ellipsis; }
 
-.library-time-map { position: sticky; top: 0; z-index: 12; display: flex; min-height: 88px; align-items: end; gap: 4px; margin-top: 24px; padding: 14px 16px 12px; overflow-x: auto; border-radius: 18px; background: color-mix(in srgb, var(--nx-plane) 92%, transparent); border: 1px solid var(--nx-line); backdrop-filter: blur(18px); }
-.library-time-node { display: flex; min-width: 46px; flex: 1 0 46px; flex-direction: column; align-items: center; justify-content: end; gap: 5px; color: var(--nx-ink-3); }
-.library-time-node i { display: block; width: 8px; min-height: 8px; border-radius: 999px; background: var(--nx-blue); opacity: .62; }
-.library-time-node span { font-size: 10px; font-weight: 650; }
-.library-time-node:hover { color: var(--nx-blue); }
+.library-browser-layout { display: grid; grid-template-columns: minmax(0, 1fr) 108px; align-items: start; gap: 28px; }
+.library-time-map { position: sticky; top: 20px; z-index: 12; max-height: calc(100vh - 40px); margin-top: 24px; padding: 16px 12px 14px; overflow-y: auto; border: 1px solid var(--nx-line); border-radius: 18px; background: color-mix(in srgb, var(--nx-plane) 94%, transparent); box-shadow: 0 12px 34px rgba(20, 24, 38, .07); backdrop-filter: blur(18px); scrollbar-width: none; }
+.library-time-map::-webkit-scrollbar { display: none; }
+.library-time-title { padding: 0 4px 11px; color: var(--nx-ink-3); font-size: 10px; font-weight: 720; letter-spacing: .14em; }
+.library-time-track { position: relative; display: flex; flex-direction: column; gap: 2px; }
+.library-time-track::before { position: absolute; top: 17px; bottom: 17px; left: 9px; width: 1px; background: var(--nx-line); content: ""; }
+.library-time-node { position: relative; display: grid; min-height: 34px; grid-template-columns: 18px 1fr auto; align-items: center; gap: 6px; width: 100%; padding: 4px; border-radius: 10px; color: var(--nx-ink-3); text-align: left; transition: color .16s ease, background .16s ease; }
+.library-time-node i { z-index: 1; display: block; place-self: center; min-width: 6px; min-height: 6px; border: 2px solid var(--nx-plane); border-radius: 999px; background: var(--nx-blue); opacity: .62; box-sizing: content-box; }
+.library-time-node span { color: var(--nx-ink-2); font-size: 11px; font-weight: 680; font-variant-numeric: tabular-nums; }
+.library-time-node small { color: var(--nx-ink-3); font-size: 9px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.library-time-node:hover { color: var(--nx-blue); background: var(--nx-blue-soft); }
+.library-time-node:hover i { opacity: 1; }
 
 /* Bring legacy pages onto the same planes while they are composed from existing behavior. */
 .page-shell { max-width: 1480px; padding: 38px 40px 72px; }
@@ -320,6 +327,7 @@ body {
 @media (max-width: 1100px) {
   .nx-mosaic { grid-template-columns: repeat(6, minmax(0, 1fr)); }
   .nx-page { padding-inline: 28px; }
+  .library-browser-layout { grid-template-columns: minmax(0, 1fr) 96px; gap: 18px; }
 }
 
 @media (max-width: 760px) {
@@ -333,6 +341,13 @@ body {
   .nx-page-header { flex-direction: column; }
   .nx-page-title { font-size: 30px; }
   .nx-insight-rings { flex-wrap: wrap; }
+  .library-browser-layout { display: flex; flex-direction: column; gap: 0; }
+  .library-time-map { position: sticky; top: 0; order: -1; display: flex; width: 100%; max-height: none; margin-top: 18px; padding: 10px 12px; overflow-x: auto; overflow-y: hidden; }
+  .library-time-title { display: flex; align-items: center; padding: 0 12px 0 2px; white-space: nowrap; }
+  .library-time-track { flex-direction: row; gap: 3px; }
+  .library-time-track::before { display: none; }
+  .library-time-node { min-width: 58px; grid-template-columns: 1fr; justify-items: center; gap: 1px; text-align: center; }
+  .library-time-node i, .library-time-node small { display: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {
