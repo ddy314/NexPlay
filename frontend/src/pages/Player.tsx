@@ -1085,7 +1085,6 @@ export function PlayerPage({
           break;
         case "KeyD":
           event.preventDefault();
-          revealControls();
           setDanmakuVisible((current) => !current);
           break;
         case "Escape":
