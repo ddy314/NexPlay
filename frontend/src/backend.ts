@@ -28,7 +28,9 @@ import type {
 export type BackendSnapshot = GeneratedBackendSnapshot;
 export type EditableSettings = FrontendEditableSettings;
 export type ScanResponse = GeneratedScanResponse;
-export type MediaSource = MediaSourceResponse;
+export type MediaSource = MediaSourceResponse & {
+  autoSubtitlePath?: string | null;
+};
 export type DanmakuTrack = GeneratedDanmakuTrackResponse;
 export type CatalogSearch = CatalogSearchResponse;
 export type EpisodeResource = EpisodeResourceData;

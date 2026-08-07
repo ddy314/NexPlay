@@ -52,7 +52,7 @@ process.on("message", (message) => {
         success(id, assertOk(bridge.setTrack(command.kind, command.id ?? null)));
         break;
       case "addSubtitle":
-        success(id, assertOk(bridge.addSubtitle(command.path)));
+        success(id, assertOk(bridge.addSubtitle(command.path, command.select !== false)));
         break;
       case "setPause":
         success(id, assertOk(bridge.setPause(Boolean(command.paused))));

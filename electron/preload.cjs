@@ -3,6 +3,7 @@ const { fileURLToPath } = require("node:url");
 const { contextBridge, ipcRenderer } = require("electron");
 
 const { RenderBridge } = require("./render-bridge.cjs");
+const { findMatchingSubtitle } = require("./subtitle-matcher.cjs");
 
 const projectRoot = process.env.NEXPLAY_PROJECT_ROOT || path.join(__dirname, "..");
 const renderBridge = new RenderBridge({ projectRoot });
@@ -27,10 +28,12 @@ function mediaPathFromSourceUrl(sourceUrl) {
     : sourceUrl;
 }
 
-function normalizeMediaSource(source) {
+async function normalizeMediaSource(source) {
+  const mediaPath = mediaPathFromSourceUrl(source.sourceUrl);
   return {
     ...source,
     sourceUrl: resolveAssetUrl(source.sourceUrl),
+    autoSubtitlePath: await findMatchingSubtitle(mediaPath),
   };
 }
 
@@ -81,6 +84,8 @@ function probeWebglTextureRendererCached() {
 
 async function loadMpvMedia(mediaId) {
   const source = await ipcRenderer.invoke("backend:media-source", mediaId);
+  const mediaPath = mediaPathFromSourceUrl(source.sourceUrl);
+  const autoSubtitlePath = await findMatchingSubtitle(mediaPath);
   const [bridgeInfo, textureProbe] = await Promise.all([
     getRenderInfoCached(),
     probeWebglTextureRendererCached(),
@@ -93,9 +98,9 @@ async function loadMpvMedia(mediaId) {
     throw embeddedMpvUnavailableError(renderUnavailableDetail(bridgeInfo, textureProbe));
   }
 
-  const state = await renderBridge.request({
+  let state = await renderBridge.request({
     type: "load",
-    path: mediaPathFromSourceUrl(source.sourceUrl),
+    path: mediaPath,
   });
   if (state && state.ok === false) {
     throw new Error(state.error || "libmpv failed to load media");
@@ -103,9 +108,20 @@ async function loadMpvMedia(mediaId) {
 
   activeMpvMode = "webglTexture";
   activeTextureProbe = textureProbe;
+  if (autoSubtitlePath) {
+    try {
+      state = await controlMpv({ type: "addSubtitle", path: autoSubtitlePath, select: false });
+    } catch (error) {
+      console.warn(`[subtitle] failed to load ${autoSubtitlePath}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
   return {
     ...state,
-    source: normalizeMediaSource(source),
+    source: {
+      ...source,
+      sourceUrl: resolveAssetUrl(source.sourceUrl),
+      autoSubtitlePath,
+    },
     renderMode: "webglTexture",
     textureProbe,
   };
@@ -168,7 +184,7 @@ contextBridge.exposeInMainWorld("nexplay", {
   openMedia: (mediaId) => ipcRenderer.invoke("backend:open-media", mediaId),
   getMediaSource: async (mediaId) => {
     const source = await ipcRenderer.invoke("backend:media-source", mediaId);
-    return normalizeMediaSource(source);
+    return await normalizeMediaSource(source);
   },
   danmakuTrack: (mediaId) => ipcRenderer.invoke("backend:danmaku-track", mediaId),
   mpvLoad: (mediaId) => loadMpvMedia(mediaId),

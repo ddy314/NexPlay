@@ -771,8 +771,9 @@ body {
   z-index: 22;
   display: inline-flex;
   align-items: center;
-  gap: 10px;
-  padding: 10px 14px 10px 11px;
+  justify-content: center;
+  width: 54px;
+  height: 54px;
   border-radius: 999px;
   color: rgba(255, 255, 255, 0.9);
   background: rgba(12, 12, 14, 0.38);
@@ -783,21 +784,6 @@ body {
   transform: translate(-50%, -50%);
   backdrop-filter: blur(18px) saturate(130%);
   -webkit-backdrop-filter: blur(18px) saturate(130%);
-}
-
-.player-paused-indicator span {
-  display: inline-flex;
-  width: 34px;
-  height: 34px;
-  align-items: center;
-  justify-content: center;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.14);
-}
-
-.player-paused-indicator strong {
-  font-size: 13px;
-  font-weight: 800;
 }
 
 .player-control-timeline {

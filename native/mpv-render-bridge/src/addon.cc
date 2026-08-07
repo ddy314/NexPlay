@@ -76,7 +76,7 @@ bool EnsurePlayer(std::string& error) {
   mpv_set_option_string(player->handle, "vo", "libmpv");
   mpv_set_option_string(player->handle, "idle", "yes");
   mpv_set_option_string(player->handle, "keep-open", "yes");
-  mpv_set_option_string(player->handle, "sub-auto", "fuzzy");
+  mpv_set_option_string(player->handle, "sub-auto", "no");
   mpv_set_option_string(player->handle, "sub-ass", "yes");
   mpv_set_option_string(player->handle, "embeddedfonts", "yes");
   mpv_set_option_string(player->handle, "sub-scale-by-window", "yes");
@@ -330,6 +330,11 @@ std::string GetStringArg(napi_env env, napi_value value) {
   return result;
 }
 
+std::string FileNameFromPath(const std::string& value) {
+  const size_t separator = value.find_last_of("/\\");
+  return separator == std::string::npos ? value : value.substr(separator + 1);
+}
+
 double GetNumberArg(napi_env env, napi_value value, double fallback) {
   double result = fallback;
   napi_get_value_double(env, value, &result);
@@ -468,8 +473,8 @@ napi_value SetTrack(napi_env env, napi_callback_info info) {
 }
 
 napi_value AddSubtitle(napi_env env, napi_callback_info info) {
-  size_t argc = 1;
-  napi_value args[1];
+  size_t argc = 2;
+  napi_value args[2];
   napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
   if (argc < 1) {
     return ErrorObject(env, "addSubtitle", "path is required");
@@ -484,13 +489,23 @@ napi_value AddSubtitle(napi_env env, napi_callback_info info) {
   }
 
   const std::string path = GetStringArg(env, args[0]);
+  const bool select = argc < 2 || GetBoolArg(env, args[1], true);
   if (path.empty()) {
     return ErrorObject(env, "addSubtitle", "path is empty");
   }
-  if (!Command(*g_player, {"sub-add", path, "select"}, error)) {
+  int64_t previous_sid = 0;
+  const bool had_selected_subtitle = GetPropertyInt64(*g_player, "sid", previous_sid);
+  if (!Command(*g_player, {"sub-add", path, "select", FileNameFromPath(path)}, error)) {
     return ErrorObject(env, "sub-add", error);
   }
   std::this_thread::sleep_for(std::chrono::milliseconds(120));
+  if (!select) {
+    const std::string previous_value = had_selected_subtitle ? std::to_string(previous_sid) : "no";
+    if (!SetPropertyString(*g_player, "sid", previous_value, error)) {
+      return ErrorObject(env, "restore-subtitle-selection", error);
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(40));
+  }
   return PlayerState(env);
 }
 

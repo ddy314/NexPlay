@@ -475,7 +475,7 @@ export function PlayerPage({
       try {
         const nextSource = await window.nexplay.getMediaSource(currentEpisode.mediaId);
         const resumePosition = resumePositionFromSource(nextSource);
-        if (canUseBrowserVideoSource(nextSource)) {
+        if (canUseBrowserVideoSource(nextSource) && !nextSource.autoSubtitlePath) {
           if (!cancelled) {
             setSource(nextSource);
             setMpvState({
@@ -1269,10 +1269,7 @@ export function PlayerPage({
                 />
                 {paused && !loadingSource && !playbackError && (
                   <div className="player-paused-indicator" aria-hidden>
-                    <span>
-                      <Pause size={22} fill="currentColor" />
-                    </span>
-                    <strong>已暂停</strong>
+                    <Pause size={24} fill="currentColor" />
                   </div>
                 )}
               </div>
