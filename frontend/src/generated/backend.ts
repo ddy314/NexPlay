@@ -13,7 +13,7 @@ export type FrontendLocalFile = { mediaId: number, fileName: string, fileSize: s
 
 export type FrontendEpisode = { episode: number, bgmEpisodeId?: number, title: string, titleCn: string, airDate: string, cached: boolean, bgmCollectionType?: number, bgmCollectionLabel: string, bgmPending: boolean, mediaId?: number, fileName?: string, fileSize?: string, };
 
-export type FrontendSubject = { id: string, mediaId: number, subjectId: number, source: string, provider: string, providerSubjectId: string, local: boolean, aliases: Array<string>, title: string, titleCn: string, year: number, airDate: string, rating: number, rank: number, tags: Array<string>, summary: string, poster: string, hero: string, status: FrontendMatchStatus, episodes: number, watchedEpisodes: number, currentEpisode?: number, progress: number, bgmCollectionType?: number, bgmCollectionLabel: string, bgmRate: number, bgmPending: boolean, files: number, totalSize: string, lastPlayed?: string, newEpisode: boolean, metadataReady: boolean, fileSummary: string, localFiles: Array<FrontendLocalFile>, episodesDetail: Array<FrontendEpisode>, };
+export type FrontendSubject = { id: string, canonicalKey: string, availability: string, mediaId: number, subjectId: number, source: string, provider: string, providerSubjectId: string, local: boolean, aliases: Array<string>, title: string, titleCn: string, year: number, airDate: string, rating: number, rank: number, tags: Array<string>, summary: string, poster: string, hero: string, status: FrontendMatchStatus, episodes: number, watchedEpisodes: number, currentEpisode?: number, progress: number, bgmCollectionType?: number, bgmCollectionLabel: string, bgmRate: number, bgmPending: boolean, files: number, totalSize: string, lastPlayed?: string, newEpisode: boolean, metadataReady: boolean, fileSummary: string, localFiles: Array<FrontendLocalFile>, episodesDetail: Array<FrontendEpisode>, };
 
 export type BackendSnapshot = { subjects: Array<FrontendSubject>, bangumiCollections: Array<FrontendSubject>, bangumiAuth: BangumiAuthStatusData, stats: LibraryStats, settings: FrontendSettings, };
 
@@ -29,13 +29,17 @@ export type MediaSourceRequest = { mediaId: number, };
 
 export type MediaSourceResponse = { mediaId: number, fileName: string, fileSize: string, sourceUrl: string, playbackPosition?: number, playbackDuration?: number, };
 
-export type DanmakuTrackRequest = { mediaId: number, };
+export type DanmakuTrackRequest = { mediaId: number, videoDuration: number, };
+
+export type SetDanmakuOffsetRequest = { mediaId: number, offsetMs: number, };
+
+export type DanmakuBindingResponse = { mediaId: number, provider: string, matchSource: string, title: string, animeTitle: string, episodeTitle: string, exact: boolean, confidence: string, userOffsetMs: number, };
 
 export type FrontendDanmakuMode = "scroll" | "top" | "bottom";
 
 export type FrontendDanmakuItem = { id: string, time: number, mode: FrontendDanmakuMode, color: number, text: string, userHash?: string, };
 
-export type DanmakuTrackResponse = { mediaId: number, provider: string, episodeId: number, title: string, fetchedAt: number, expiresAt: number, stale: boolean, items: Array<FrontendDanmakuItem>, };
+export type DanmakuTrackResponse = { mediaId: number, provider: string, episodeId: number, title: string, fetchedAt: number, expiresAt: number, stale: boolean, binding: DanmakuBindingResponse, items: Array<FrontendDanmakuItem>, };
 
 export type CatalogSubjectData = { id: string, provider: string, providerSubjectId: string, source: string, title: string, titleCn: string, summary: string, airDate: string, rating: number, rank: number, poster: string, hero: string, episodes: number, files: number, local: boolean, metadataReady: boolean, tags: Array<string>, aliases: Array<string>, };
 
@@ -50,6 +54,10 @@ export type CatalogSearchRequest = { query: string, limit: number, };
 export type CatalogSearchResponse = { subjects: Array<FrontendSubject>, };
 
 export type OnlineSubjectRequest = { provider: string, providerSubjectId: string, };
+
+export type SubjectRef = { canonicalKey: string, provider: string, providerSubjectId: string, mediaId?: number, };
+
+export type ResolveSubjectRequest = { ref: SubjectRef, };
 
 export type RefreshSubjectRequest = { subjectId: number, };
 

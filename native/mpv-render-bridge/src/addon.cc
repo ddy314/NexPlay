@@ -8,7 +8,6 @@
 #include <cstdint>
 #include <memory>
 #include <string>
-#include <thread>
 #include <vector>
 
 namespace {
@@ -17,6 +16,8 @@ struct NativePlayer {
   mpv_handle* handle = nullptr;
   mpv_render_context* render_context = nullptr;
   bool loaded = false;
+  bool frame_pending = false;
+  uint64_t generation = 0;
 };
 
 std::unique_ptr<NativePlayer> g_player;
@@ -247,6 +248,8 @@ napi_value PlayerState(napi_env env) {
 
   SetBool(env, result, "ok", true);
   SetBool(env, result, "loaded", g_player->loaded);
+  SetBool(env, result, "fileReady", g_player->loaded);
+  SetNumber(env, result, "generation", static_cast<double>(g_player->generation));
   AddTracks(env, result, *g_player, "audioTracks", "audio");
   AddTracks(env, result, *g_player, "subtitleTracks", "sub");
 
@@ -397,8 +400,8 @@ napi_value ProbeWebglTextureRenderer(napi_env env, napi_callback_info) {
 }
 
 napi_value Load(napi_env env, napi_callback_info info) {
-  size_t argc = 1;
-  napi_value args[1];
+  size_t argc = 2;
+  napi_value args[2];
   napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
   if (argc < 1) {
     return ErrorObject(env, "load", "path is required");
@@ -410,11 +413,42 @@ napi_value Load(napi_env env, napi_callback_info info) {
   }
 
   const std::string path = GetStringArg(env, args[0]);
+  napi_valuetype generation_type = napi_undefined;
+  if (argc > 1) napi_typeof(env, args[1], &generation_type);
+  const uint64_t generation = generation_type == napi_number
+      ? static_cast<uint64_t>(std::max(0.0, GetNumberArg(env, args[1], 0)))
+      : g_player->generation + 1;
+  g_player->loaded = false;
+  g_player->frame_pending = false;
+  g_player->generation = generation;
   if (!Command(*g_player, {"loadfile", path, "replace"}, error)) {
     return ErrorObject(env, "loadfile", error);
   }
-  g_player->loaded = true;
-  std::this_thread::sleep_for(std::chrono::milliseconds(160));
+
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(15);
+  while (std::chrono::steady_clock::now() < deadline) {
+    mpv_event* event = mpv_wait_event(g_player->handle, 0.1);
+    if (!event || event->event_id == MPV_EVENT_NONE) {
+      continue;
+    }
+    if (event->event_id == MPV_EVENT_FILE_LOADED) {
+      g_player->loaded = true;
+      g_player->frame_pending = true;
+      break;
+    }
+    if (event->event_id == MPV_EVENT_END_FILE) {
+      auto* end = static_cast<mpv_event_end_file*>(event->data);
+      if (end && end->reason == MPV_END_FILE_REASON_ERROR) {
+        return ErrorObject(env, "fileLoaded", MpvError(end->error));
+      }
+    }
+    if (event->event_id == MPV_EVENT_SHUTDOWN) {
+      return ErrorObject(env, "fileLoaded", "libmpv shut down while loading media");
+    }
+  }
+  if (!g_player->loaded) {
+    return ErrorObject(env, "fileLoaded", "timed out waiting for MPV_EVENT_FILE_LOADED");
+  }
   return PlayerState(env);
 }
 
@@ -427,6 +461,7 @@ napi_value Stop(napi_env env, napi_callback_info) {
     return ErrorObject(env, "stop", error);
   }
   g_player->loaded = false;
+  g_player->frame_pending = false;
   return PlayerState(env);
 }
 
@@ -498,13 +533,11 @@ napi_value AddSubtitle(napi_env env, napi_callback_info info) {
   if (!Command(*g_player, {"sub-add", path, "select", FileNameFromPath(path)}, error)) {
     return ErrorObject(env, "sub-add", error);
   }
-  std::this_thread::sleep_for(std::chrono::milliseconds(120));
   if (!select) {
     const std::string previous_value = had_selected_subtitle ? std::to_string(previous_sid) : "no";
     if (!SetPropertyString(*g_player, "sid", previous_value, error)) {
       return ErrorObject(env, "restore-subtitle-selection", error);
     }
-    std::this_thread::sleep_for(std::chrono::milliseconds(40));
   }
   return PlayerState(env);
 }
@@ -550,8 +583,8 @@ napi_value GetState(napi_env env, napi_callback_info) {
 }
 
 napi_value RenderFrame(napi_env env, napi_callback_info info) {
-  size_t argc = 2;
-  napi_value args[2];
+  size_t argc = 3;
+  napi_value args[3];
   napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
   if (argc < 2) {
     return ErrorObject(env, "renderFrame", "width and height are required");
@@ -567,7 +600,22 @@ napi_value RenderFrame(napi_env env, napi_callback_info info) {
   if (!g_player->loaded) {
     return ErrorObject(env, "renderFrame", "no media loaded");
   }
-  mpv_render_context_update(g_player->render_context);
+  napi_valuetype generation_type = napi_undefined;
+  if (argc > 2) napi_typeof(env, args[2], &generation_type);
+  const uint64_t requested_generation = generation_type == napi_number
+      ? static_cast<uint64_t>(std::max(0.0, GetNumberArg(env, args[2], 0)))
+      : g_player->generation;
+  const uint64_t update_flags = mpv_render_context_update(g_player->render_context);
+  const bool has_new_frame = g_player->frame_pending || (update_flags & MPV_RENDER_UPDATE_FRAME) != 0;
+  if (requested_generation != g_player->generation || !has_new_frame) {
+    napi_value result;
+    napi_create_object(env, &result);
+    SetBool(env, result, "ok", true);
+    SetBool(env, result, "hasFrame", false);
+    SetNumber(env, result, "generation", static_cast<double>(g_player->generation));
+    return result;
+  }
+  g_player->frame_pending = false;
 
   const size_t pixel_count = static_cast<size_t>(width) * static_cast<size_t>(height);
   const size_t byte_count = pixel_count * 4;
@@ -592,13 +640,19 @@ napi_value RenderFrame(napi_env env, napi_callback_info info) {
   napi_value result;
   napi_create_object(env, &result);
   SetBool(env, result, "ok", true);
+  SetBool(env, result, "hasFrame", true);
+  SetNumber(env, result, "generation", static_cast<double>(g_player->generation));
   SetNumber(env, result, "width", width);
   SetNumber(env, result, "height", height);
   SetNumber(env, result, "stride", static_cast<double>(stride));
   double position = 0;
   if (GetPropertyDouble(*g_player, "time-pos", position)) {
     SetNumber(env, result, "position", position);
+    SetNumber(env, result, "pts", position);
   }
+  const auto sampled_at = std::chrono::duration<double, std::milli>(
+      std::chrono::steady_clock::now().time_since_epoch()).count();
+  SetNumber(env, result, "sampledAt", sampled_at);
 
   napi_value buffer;
   napi_create_external_buffer(env, byte_count, pixels, FinalizeFrameBuffer, nullptr, &buffer);

@@ -12,16 +12,17 @@ use crate::backend_api::{
     InsightsDashboardRequest, MediaSourceRequest, OnlineSubjectRequest, OpenMediaRequest,
     PlaybackProgressRequest, PlaybackSessionEventRequest, PlaybackSessionFinishRequest,
     PlaybackSessionHeartbeatRequest, PlaybackSessionStartRequest, PrepareResourceDownloadRequest,
-    RefreshSubjectRequest, StartResourceDownloadRequest, bangumi_auth_status,
-    batch_update_bangumi_episodes, clear_playback_analytics, complete_bangumi_oauth,
-    confirm_resource_download, control_download_task, danmaku_track, download_tasks,
-    episode_resources, finish_playback_session, frontend_event_from_app,
-    heartbeat_playback_session, home_feed, insights_dashboard, logout_bangumi, media_source,
-    online_subject, open_media, prepare_resource_download, record_playback_session_event,
-    refresh_subject_metadata, report_playback_progress, save_settings_config, scan, search_catalog,
-    settings_config, snapshot, start_bangumi_login, start_playback_session,
-    start_resource_download, sync_bangumi_now, sync_bangumi_subject, test_qbittorrent_connection,
-    update_bangumi_collection, update_bangumi_episode,
+    RefreshSubjectRequest, ResolveSubjectRequest, SetDanmakuOffsetRequest,
+    StartResourceDownloadRequest, bangumi_auth_status, batch_update_bangumi_episodes,
+    clear_playback_analytics, complete_bangumi_oauth, confirm_resource_download,
+    control_download_task, danmaku_binding, danmaku_track, download_tasks, episode_resources,
+    finish_playback_session, frontend_event_from_app, heartbeat_playback_session, home_feed,
+    insights_dashboard, logout_bangumi, media_source, online_subject, open_media,
+    prepare_resource_download, record_playback_session_event, refresh_subject_metadata,
+    rematch_danmaku, report_playback_progress, resolve_subject, save_settings_config, scan,
+    search_catalog, set_danmaku_offset, settings_config, snapshot, start_bangumi_login,
+    start_playback_session, start_resource_download, sync_bangumi_now, sync_bangumi_subject,
+    test_qbittorrent_connection, update_bangumi_collection, update_bangumi_episode,
 };
 use crate::error::{AppError, AppResult, io_error};
 use crate::service::{
@@ -64,6 +65,26 @@ struct JsonRpcError {
 pub fn run_backend_daemon(context: AppContext) -> AppResult<()> {
     let stdout = Arc::new(Mutex::new(std::io::stdout()));
     start_event_forwarder(&context, stdout.clone());
+    let (requests, receiver) = mpsc::sync_channel::<String>(32);
+    let receiver = Arc::new(Mutex::new(receiver));
+    let mut workers = Vec::new();
+    for _ in 0..4 {
+        let context = context.clone();
+        let stdout = stdout.clone();
+        let receiver = receiver.clone();
+        workers.push(thread::spawn(move || {
+            loop {
+                let line = {
+                    let receiver = receiver.lock().expect("request receiver mutex poisoned");
+                    receiver.recv()
+                };
+                let Ok(line) = line else { break };
+                let response = handle_json_rpc_line(&context, &line);
+                let mut stdout = stdout.lock().expect("stdout mutex poisoned");
+                let _ = write_json_line(&mut *stdout, &response);
+            }
+        }));
+    }
 
     let stdin = std::io::stdin();
     for line in stdin.lock().lines() {
@@ -72,9 +93,13 @@ pub fn run_backend_daemon(context: AppContext) -> AppResult<()> {
             continue;
         }
 
-        let response = handle_json_rpc_line(&context, &line);
-        let mut stdout = stdout.lock().expect("stdout mutex poisoned");
-        write_json_line(&mut *stdout, &response)?;
+        requests
+            .send(line)
+            .map_err(|_| AppError::Api("backend request queue stopped".to_string()))?;
+    }
+    drop(requests);
+    for worker in workers {
+        let _ = worker.join();
     }
 
     Ok(())
@@ -153,6 +178,18 @@ fn dispatch(context: &AppContext, method: &str, params: Option<Value>) -> AppRes
             let input: DanmakuTrackRequest = from_params(params)?;
             to_value(danmaku_track(context, input)?)
         }
+        "danmakuBinding" => {
+            let input: DanmakuTrackRequest = from_params(params)?;
+            to_value(danmaku_binding(context, input)?)
+        }
+        "rematchDanmaku" => {
+            let input: DanmakuTrackRequest = from_params(params)?;
+            to_value(rematch_danmaku(context, input)?)
+        }
+        "setDanmakuOffset" => {
+            let input: SetDanmakuOffsetRequest = from_params(params)?;
+            to_value(set_danmaku_offset(context, input)?)
+        }
         "searchCatalog" => {
             let input: CatalogSearchRequest = from_params(params)?;
             to_value(search_catalog(context, input)?)
@@ -160,6 +197,10 @@ fn dispatch(context: &AppContext, method: &str, params: Option<Value>) -> AppRes
         "onlineSubject" => {
             let input: OnlineSubjectRequest = from_params(params)?;
             to_value(online_subject(context, input)?)
+        }
+        "resolveSubject" => {
+            let input: ResolveSubjectRequest = from_params(params)?;
+            to_value(resolve_subject(context, input)?)
         }
         "refreshSubjectMetadata" => {
             let input: RefreshSubjectRequest = from_params(params)?;

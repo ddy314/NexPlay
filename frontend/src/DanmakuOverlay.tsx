@@ -1,15 +1,19 @@
-import { useEffect, useRef, useState } from "react";
-import type { DanmakuTrack } from "./backend";
+import { useEffect, useRef, useState, type RefObject } from "react";
+import type { DanmakuTrack, PlaybackTimelineSample } from "./backend";
 import { cn } from "./utils/cn";
 
 type DanmakuOverlayProps = {
   mediaId?: number | null;
+  generation: number;
+  timelineSampleRef: RefObject<PlaybackTimelineSample | null>;
   visible: boolean;
   paused: boolean;
   seeking: boolean;
   seekReset?: { version: number; position: number } | null;
   position: number;
   duration: number;
+  offsetMs?: number;
+  reloadVersion?: number;
   area: number;
   className?: string;
   onError?: (message: string) => void;
@@ -21,6 +25,7 @@ type ClockState = {
   position: number;
   timestamp: number;
   paused: boolean;
+  rate: number;
 };
 
 type NormalizedDanmakuItem = {
@@ -90,9 +95,6 @@ const EMIT_BUDGET_MS = 3.5;
 const MAX_LATE_EMIT_SECONDS = 0.8;
 const PREWARM_WINDOW_SECONDS = 3;
 const PREWARM_BUDGET_MS = 2;
-const HARD_SEEK_THRESHOLD_SECONDS = 3;
-const CLOCK_DRIFT_THRESHOLD_SECONDS = 0.35;
-const CLOCK_CORRECTION_FACTOR = 0.18;
 const BITMAP_PADDING = 6;
 const STROKE_WIDTH = 3;
 const MAX_BITMAP_CACHE = 900;
@@ -100,12 +102,16 @@ const bitmapCaches = new WeakMap<HTMLCanvasElement, Map<string, TextBitmap>>();
 
 export function DanmakuOverlay({
   mediaId,
+  generation,
+  timelineSampleRef,
   visible,
   paused,
   seeking,
   seekReset,
   position,
   duration,
+  offsetMs = 0,
+  reloadVersion = 0,
   area,
   className,
   onError,
@@ -122,6 +128,7 @@ export function DanmakuOverlay({
     position: 0,
     timestamp: performance.now(),
     paused: true,
+    rate: 1,
   });
   const visibleRef = useRef(visible);
   const pausedRef = useRef(paused);
@@ -161,86 +168,54 @@ export function DanmakuOverlay({
       position: nextPosition,
       timestamp: now,
       paused: resetPaused,
+      rate: 1,
     };
     postWorkerMessage({ type: "reset", position: nextPosition, paused: resetPaused });
     resetRendererToPosition(nextPosition);
   }, [mediaId, seekReset?.version]);
 
   useEffect(() => {
-    const now = performance.now();
-    const current = currentClockPosition(clockRef.current);
-    const nextPosition = Number.isFinite(position) ? Math.max(0, position) : 0;
-    const mediaChanged = clockRef.current.mediaId !== mediaId;
-
-    if (mediaChanged) {
-      clockRef.current = {
-        mediaId,
-        position: nextPosition,
-        timestamp: now,
-        paused: true,
-      };
-      postWorkerClock();
-      resetRendererToPosition(nextPosition);
-      return;
-    }
-
-    if (seeking) {
-      clockRef.current = {
-        mediaId,
-        position: nextPosition,
-        timestamp: now,
-        paused: true,
-      };
-      postWorkerClock();
-      return;
-    }
-
-    if (paused) {
-      const pausedPosition = clockRef.current.paused
-        ? nextPosition
-        : current;
-      clockRef.current = {
-        mediaId,
-        position: pausedPosition,
-        timestamp: now,
-        paused: true,
-      };
-      postWorkerClock();
-      return;
-    }
-
-    const drift = nextPosition - current;
-    if (Math.abs(drift) > HARD_SEEK_THRESHOLD_SECONDS) {
-      clockRef.current = {
-        mediaId,
-        position: nextPosition,
-        timestamp: now,
-        paused: false,
-      };
-      postWorkerClock();
-      resetRendererToPosition(nextPosition);
-      return;
-    }
-
-    if (Math.abs(drift) > CLOCK_DRIFT_THRESHOLD_SECONDS) {
-      clockRef.current = {
-        mediaId,
-        position: Math.max(0, current + drift * CLOCK_CORRECTION_FACTOR),
-        timestamp: now,
-        paused: false,
-      };
-      postWorkerClock();
-      return;
-    }
-
     clockRef.current = {
       mediaId,
+      position: Math.max(0, position),
+      timestamp: performance.now(),
+      paused: true,
+      rate: 1,
+    };
+  }, [generation, mediaId]);
+
+  useEffect(() => {
+    let disposed = false;
+    let rafId = 0;
+    let lastSampledAt = -1;
+    const publishTimeline = () => {
+      if (disposed) return;
+      const sample = timelineSampleRef.current;
+      if (sample && sample.generation === generation && sample.sampledAt !== lastSampledAt) {
+        lastSampledAt = sample.sampledAt;
+        applyTimelineSample(sample);
+      }
+      rafId = window.requestAnimationFrame(publishTimeline);
+    };
+    rafId = window.requestAnimationFrame(publishTimeline);
+    return () => {
+      disposed = true;
+      window.cancelAnimationFrame(rafId);
+    };
+  }, [generation, timelineSampleRef]);
+
+  useEffect(() => {
+    const now = performance.now();
+    const current = currentClockPosition(clockRef.current);
+    clockRef.current = {
+      ...clockRef.current,
       position: current,
       timestamp: now,
-      paused: false,
+      paused: paused || seeking,
+      rate: 1,
     };
     postWorkerClock();
-  }, [mediaId, paused, position, seeking]);
+  }, [paused, seeking]);
 
   useEffect(() => {
     let cancelled = false;
@@ -258,7 +233,7 @@ export function DanmakuOverlay({
     }
 
     window.nexplay
-      .danmakuTrack(mediaId)
+      .danmakuTrack(mediaId, duration)
       .then((nextTrack) => {
         if (cancelled) return;
         rawTrackRef.current = nextTrack;
@@ -277,7 +252,7 @@ export function DanmakuOverlay({
     return () => {
       cancelled = true;
     };
-  }, [mediaId, onError, onLoaded]);
+  }, [generation, mediaId, onError, onLoaded, reloadVersion]);
 
   useEffect(() => {
     const position = currentClockPosition(clockRef.current);
@@ -290,28 +265,38 @@ export function DanmakuOverlay({
 
     if (workerRef.current) {
       itemsRef.current = [];
-      postWorkerMessage({ type: "rawItems", items: track.items, position });
+      postWorkerMessage({
+        type: "rawItems",
+        items: track.items.map((item) => ({ ...item, time: Math.max(0, item.time + offsetMs / 1000) })),
+        position,
+      });
       return;
     }
 
-    const normalizedItems = normalizeDanmakuItems(track);
+    const normalizedItems = normalizeDanmakuItems(track, offsetMs);
     itemsRef.current = normalizedItems;
     postWorkerMessage({ type: "items", items: normalizedItems, position });
     resetRendererToPosition(position);
-  }, [track]);
+  }, [offsetMs, track]);
 
   useEffect(() => {
     const position = currentClockPosition(clockRef.current);
     postWorkerMessage({ type: "visible", visible, position });
     if (!visible) {
-      resetRendererToPosition(position);
+      clearCanvas();
+      stateRef.current.canvasDirty = false;
     }
   }, [visible]);
 
   useEffect(() => {
     initializeWorkerRenderer();
+    let resizeRafId = 0;
     const resizeObserver = new ResizeObserver(() => {
-      resizeCanvas();
+      if (resizeRafId) return;
+      resizeRafId = window.requestAnimationFrame(() => {
+        resizeRafId = 0;
+        resizeCanvas();
+      });
     });
     const container = containerRef.current;
     if (container) {
@@ -334,6 +319,7 @@ export function DanmakuOverlay({
       disposed = true;
       window.cancelAnimationFrame(rafId);
       resizeObserver.disconnect();
+      if (resizeRafId) window.cancelAnimationFrame(resizeRafId);
       workerRef.current?.postMessage({ type: "dispose" });
       workerRef.current?.terminate();
       workerRef.current = null;
@@ -500,7 +486,7 @@ export function DanmakuOverlay({
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, state.width, state.height);
     ctx.globalAlpha = 0.94;
-    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingEnabled = false;
 
     let nextLength = 0;
     for (let index = 0; index < state.active.length; index += 1) {
@@ -520,7 +506,9 @@ export function DanmakuOverlay({
       }
 
       if (expired) continue;
-      ctx.drawImage(item.bitmap.canvas, x, y - item.height / 2, item.width, item.height);
+      const pixelX = Math.round(x * dpr) / dpr;
+      const pixelY = Math.round((y - item.height / 2) * dpr) / dpr;
+      ctx.drawImage(item.bitmap.canvas, pixelX, pixelY, item.width, item.height);
       state.active[nextLength++] = item;
     }
     state.active.length = nextLength;
@@ -742,6 +730,39 @@ export function DanmakuOverlay({
     });
   }
 
+  function applyTimelineSample(sample: PlaybackTimelineSample) {
+    const now = performance.now();
+    const targetNow = Math.max(0, sample.pts + (pausedRef.current ? 0 : Math.max(0, now - sample.sampledAt) / 1000));
+    const current = currentClockPosition(clockRef.current);
+    if (pausedRef.current || seekingRef.current) {
+      clockRef.current = {
+        mediaId,
+        position: targetNow,
+        timestamp: now,
+        paused: true,
+        rate: 1,
+      };
+    } else {
+      const drift = targetNow - current;
+      const correctionWindow = Math.max(0.25, Math.min(2, Math.abs(drift) * 4));
+      const rate = Math.max(0.9, Math.min(1.1, 1 + drift / correctionWindow));
+      clockRef.current = {
+        mediaId,
+        position: current,
+        timestamp: now,
+        paused: false,
+        rate,
+      };
+    }
+    postWorkerMessage({
+      type: "clock",
+      position: sample.pts,
+      paused: pausedRef.current,
+      seeking: seekingRef.current,
+      timestamp: sample.sampledAt,
+    });
+  }
+
   function postWorkerMessage(message: WorkerMessage) {
     workerRef.current?.postMessage(message);
   }
@@ -771,7 +792,7 @@ function createLanes(count: number): LaneState[] {
   }));
 }
 
-function normalizeDanmakuItems(track: DanmakuTrack | null): NormalizedDanmakuItem[] {
+function normalizeDanmakuItems(track: DanmakuTrack | null, offsetMs = track?.binding.userOffsetMs ?? 0): NormalizedDanmakuItem[] {
   if (!track) {
     return [];
   }
@@ -779,7 +800,7 @@ function normalizeDanmakuItems(track: DanmakuTrack | null): NormalizedDanmakuIte
     .map((item) => ({
       id: item.id,
       text: item.text.trim(),
-      time: item.time,
+      time: Math.max(0, item.time + offsetMs / 1000),
       mode: item.mode,
       color: readableColor(item.color),
     }))
@@ -791,7 +812,7 @@ function currentClockPosition(clock: ClockState) {
   if (clock.paused) {
     return clock.position;
   }
-  return Math.max(0, clock.position + (performance.now() - clock.timestamp) / 1000);
+  return Math.max(0, clock.position + (performance.now() - clock.timestamp) / 1000 * clock.rate);
 }
 
 function lowerBoundByTime(items: NormalizedDanmakuItem[], time: number) {

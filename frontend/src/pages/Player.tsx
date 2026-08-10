@@ -32,17 +32,20 @@ import {
   reportPlaybackProgress,
   startPlaybackSession,
   type MediaSource,
+  type DanmakuTrack,
+  type DanmakuBinding,
   type MpvFrame,
   type MpvRenderInfo,
   type MpvState,
   type MpvTrack,
+  type PlaybackTimelineSample,
+  type PreparedPlaybackSource,
 } from "../backend";
 
 const SEEK_COMMIT_DELAY_MS = 80;
 const SEEK_POSITION_SETTLE_MS = 3500;
 const SEEK_POSITION_ACCEPT_BEFORE_SECONDS = 1.25;
 const SEEK_POSITION_ACCEPT_AFTER_SECONDS = 2.5;
-const FRAME_CLOCK_PUBLISH_INTERVAL_MS = 250;
 const CONTROLS_IDLE_HIDE_MS = 2000;
 const PLAYBACK_HEARTBEAT_MS = 30_000;
 const KEYBOARD_SEEK_STEP_SECONDS = 5;
@@ -52,6 +55,7 @@ const DANMAKU_AREAS = [
   { label: "半屏", value: 0.5 },
   { label: "满屏", value: 1 },
 ] as const;
+let playbackGenerationSequence = 0;
 
 export function PlayerPage({
   subject,
@@ -79,7 +83,7 @@ export function PlayerPage({
     startedAt: number;
     until: number;
   } | null>(null);
-  const lastFrameClockPublishAtRef = useRef(0);
+  const lastUiPositionPublishAtRef = useRef(0);
   const danmakuSeekResetVersionRef = useRef(0);
   const seekCommitTimerRef = useRef<number | null>(null);
   const seekingRef = useRef(false);
@@ -102,10 +106,23 @@ export function PlayerPage({
   const playbackActiveMsRef = useRef(0);
   const playbackActiveStartedAtRef = useRef<number | null>(null);
   const playbackSeekCountRef = useRef(0);
+  const playbackGenerationRef = useRef(0);
+  const loadRequestRef = useRef<{ mediaId?: number; generation: number } | null>(null);
+  const timelineSampleRef = useRef<PlaybackTimelineSample | null>(null);
+  const initialDanmakuResetGenerationRef = useRef(0);
+  const firstFrameSeenGenerationRef = useRef(0);
+  const initialPlaybackPositionRef = useRef(0);
   const [currentKey, setCurrentKey] = useState(initialEpisode.key);
   const [source, setSource] = useState<MediaSource | null>(null);
   const [mpvState, setMpvState] = useState<MpvState | null>(null);
   const [loadingSource, setLoadingSource] = useState(true);
+  const [playbackPhase, setPlaybackPhase] = useState<"preparing" | "fileReady" | "firstFrameReady" | "playing" | "error">("preparing");
+  const [firstFrameGeneration, setFirstFrameGeneration] = useState(0);
+  const [danmakuTrackGeneration, setDanmakuTrackGeneration] = useState(0);
+  const [danmakuBinding, setDanmakuBinding] = useState<DanmakuBinding | null>(null);
+  const [danmakuOffsetMs, setDanmakuOffsetMs] = useState(0);
+  const [danmakuReloadVersion, setDanmakuReloadVersion] = useState(0);
+  const [danmakuRematching, setDanmakuRematching] = useState(false);
   const [danmakuVisible, setDanmakuVisible] = useState(() => readDanmakuPref(subject.id));
   const [danmakuArea, setDanmakuArea] = useState<(typeof DANMAKU_AREAS)[number]["value"]>(0.5);
   const [episodePanelOpen, setEpisodePanelOpen] = useState(false);
@@ -438,10 +455,17 @@ export function PlayerPage({
 
   useEffect(() => {
     let cancelled = false;
+    const previousLoad = loadRequestRef.current;
+    const generation = previousLoad && previousLoad.mediaId === currentEpisode.mediaId
+      ? previousLoad.generation
+      : nextPlaybackGeneration();
+    loadRequestRef.current = { mediaId: currentEpisode.mediaId, generation };
+    playbackGenerationRef.current = generation;
     async function loadSource() {
       if (!currentEpisode.mediaId) {
         setSource(null);
         setLoadingSource(false);
+        setPlaybackPhase("error");
         setPlaybackError("这一集没有可播放的本地文件");
         return;
       }
@@ -449,19 +473,26 @@ export function PlayerPage({
         setSource(null);
         setMpvState(null);
         setLoadingSource(false);
+        setPlaybackPhase("error");
         setPlaybackError("当前不是 Electron 环境，无法加载内置播放器");
         onSnack("当前不是 Electron 环境，无法加载内置播放器", "danger");
         return;
       }
 
       setLoadingSource(true);
+      setPlaybackPhase("preparing");
       setDanmakuClockReady(false);
+      setFirstFrameGeneration(0);
+      setDanmakuTrackGeneration(0);
+      setDanmakuBinding(null);
+      setDanmakuOffsetMs(0);
       setPlaybackError(null);
-      setRenderFrameGeneration((generation) => generation + 1);
+      setRenderFrameGeneration(generation);
+      timelineSampleRef.current = null;
       seekStabilizationRef.current = null;
       pendingSeekPositionRef.current = null;
       latestSeekPositionRef.current = null;
-      lastFrameClockPublishAtRef.current = 0;
+      initialPlaybackPositionRef.current = 0;
       cancelDanmakuSeekReset();
       setDanmakuSeekReset(null);
       const currentBrowserVideo = browserVideoRef.current;
@@ -473,10 +504,13 @@ export function PlayerPage({
       setSource(null);
       setMpvState(null);
       try {
-        const nextSource = await window.nexplay.getMediaSource(currentEpisode.mediaId);
+        const prepared: PreparedPlaybackSource = await window.nexplay.preparePlaybackSource(currentEpisode.mediaId, generation);
+        if (cancelled || generation !== playbackGenerationRef.current) return;
+        const nextSource = prepared.source;
         const resumePosition = resumePositionFromSource(nextSource);
+        initialPlaybackPositionRef.current = resumePosition;
         if (canUseBrowserVideoSource(nextSource) && !nextSource.autoSubtitlePath) {
-          if (!cancelled) {
+          if (!cancelled && generation === playbackGenerationRef.current) {
             setSource(nextSource);
             setMpvState({
               ok: true,
@@ -491,11 +525,13 @@ export function PlayerPage({
               renderMode: "browserVideo",
             });
             setPaused(false);
+            setPlaybackPhase("fileReady");
           }
           return;
         }
 
-        let nextState = await window.nexplay.mpvLoad(currentEpisode.mediaId);
+        let nextState = await window.nexplay.mpvLoad(prepared);
+        if (cancelled || generation !== playbackGenerationRef.current || nextState.stale) return;
         const loadedRenderMode = nextState.renderMode;
         const loadedTextureProbe = nextState.textureProbe;
         const rememberedSubtitlePath = readRememberedSubtitlePath(currentEpisode.mediaId);
@@ -533,7 +569,7 @@ export function PlayerPage({
             // Resume is opportunistic; playback should still start if the seek fails.
           }
         }
-        if (!cancelled) {
+        if (!cancelled && generation === playbackGenerationRef.current) {
           setMpvState({
             ...nextState,
             position: resumePosition > 1 ? resumePosition : nextState.position,
@@ -543,10 +579,8 @@ export function PlayerPage({
           });
           setSource(nextSource);
           setPaused(false);
-          if (resumedAt !== null) {
-            resetDanmakuClockAtPosition(resumedAt);
-          }
-          setDanmakuClockReady(true);
+          if (resumedAt !== null) initialPlaybackPositionRef.current = resumedAt;
+          setPlaybackPhase("fileReady");
         }
       } catch (caught) {
         if (!cancelled) {
@@ -554,6 +588,7 @@ export function PlayerPage({
           setSource(null);
           setMpvState(null);
           setPlaybackError(message);
+          setPlaybackPhase("error");
           onSnack(`libmpv 加载失败：${message}`, "danger");
         }
       } finally {
@@ -578,7 +613,7 @@ export function PlayerPage({
     const refreshState = async () => {
       try {
         const nextState = await window.nexplay?.mpvState();
-        if (!disposed && nextState) {
+        if (!disposed && nextState && (nextState.generation === undefined || nextState.generation === playbackGenerationRef.current)) {
           setMpvState((current) => ({
             ...nextState,
             position: resolveStableMpvPosition(current, nextState.position),
@@ -611,7 +646,7 @@ export function PlayerPage({
       if (seekCommitTimerRef.current !== null) {
         window.clearTimeout(seekCommitTimerRef.current);
       }
-      void window.nexplay?.mpvStop();
+      void window.nexplay?.mpvStop(playbackGenerationRef.current);
     };
   }, [flushPlaybackProgress]);
 
@@ -831,7 +866,6 @@ export function PlayerPage({
     }
 
     latestSeekPositionRef.current = nextPosition;
-    setRenderFrameGeneration((generation) => generation + 1);
     const startedAt = performance.now();
     seekStabilizationRef.current = {
       target: nextPosition,
@@ -885,27 +919,96 @@ export function PlayerPage({
     onSnack(`WebGL 画面渲染失败：${message}`, "danger");
   }, [onSnack]);
 
+  const acceptMpvFrame = useCallback((frame: MpvFrame) => {
+    if (frame.generation !== playbackGenerationRef.current) return false;
+    const pts = frame.pts ?? frame.position;
+    if (!Number.isFinite(pts)) return false;
+    const stabilization = seekStabilizationRef.current;
+    if (!stabilization) return true;
+    return (pts ?? 0) >= stabilization.target - SEEK_POSITION_ACCEPT_BEFORE_SECONDS
+      && (pts ?? 0) <= stabilization.target + SEEK_POSITION_ACCEPT_AFTER_SECONDS;
+  }, []);
+
   const handleMpvFrame = useCallback((frame: MpvFrame) => {
-    if (typeof frame.position !== "number" || !Number.isFinite(frame.position)) {
+    const generation = frame.generation ?? 0;
+    const pts = frame.pts ?? frame.position;
+    if (generation !== playbackGenerationRef.current || typeof pts !== "number" || !Number.isFinite(pts)) {
       return;
     }
 
-    const framePosition = Math.max(0, frame.position);
+    const framePosition = Math.max(0, pts);
+    const sampledAt = frame.uploadedAt ?? frame.sampledAt ?? performance.now();
+    timelineSampleRef.current = { generation, pts: framePosition, sampledAt };
+    if (firstFrameSeenGenerationRef.current !== generation) {
+      firstFrameSeenGenerationRef.current = generation;
+      setFirstFrameGeneration(generation);
+      setPlaybackPhase(danmakuVisible ? "firstFrameReady" : "playing");
+    }
+
     const now = performance.now();
-    if (now - lastFrameClockPublishAtRef.current < FRAME_CLOCK_PUBLISH_INTERVAL_MS) {
-      return;
-    }
-
-    lastFrameClockPublishAtRef.current = now;
+    if (now - lastUiPositionPublishAtRef.current < 250) return;
+    lastUiPositionPublishAtRef.current = now;
     setMpvState((current) => current ? {
       ...current,
       position: resolveStableMpvPosition(current, framePosition),
     } : current);
+  }, [danmakuVisible]);
+
+  const handleDanmakuLoaded = useCallback((track: DanmakuTrack) => {
+    setDanmakuBinding(track.binding);
+    setDanmakuOffsetMs(track.binding.userOffsetMs);
+    setDanmakuTrackGeneration(playbackGenerationRef.current);
   }, []);
 
   const handleDanmakuError = useCallback((message: string) => {
+    setDanmakuTrackGeneration(playbackGenerationRef.current);
+    const mediaId = playbackProgressContextRef.current?.mediaId;
+    if (mediaId) {
+      void window.nexplay?.danmakuBinding(mediaId, playbackProgressContextRef.current?.duration ?? 0)
+        .then(setDanmakuBinding)
+        .catch(() => undefined);
+    }
     onSnack(message, message.includes("旧缓存") ? "neutral" : "danger");
   }, [onSnack]);
+
+  useEffect(() => {
+    const generation = playbackGenerationRef.current;
+    if (!generation || firstFrameGeneration !== generation || danmakuTrackGeneration !== generation) return;
+    if (initialDanmakuResetGenerationRef.current !== generation) {
+      initialDanmakuResetGenerationRef.current = generation;
+      resetDanmakuClockAtPosition(initialPlaybackPositionRef.current);
+    }
+    setDanmakuClockReady(true);
+    setPlaybackPhase("playing");
+  }, [danmakuTrackGeneration, firstFrameGeneration, resetDanmakuClockAtPosition]);
+
+  const updateDanmakuOffset = useCallback(async (nextOffsetMs: number) => {
+    if (!currentEpisode.mediaId || !window.nexplay?.setDanmakuOffset) return;
+    const clamped = Math.max(-10_000, Math.min(10_000, Math.round(nextOffsetMs / 100) * 100));
+    try {
+      const saved = await window.nexplay.setDanmakuOffset(currentEpisode.mediaId, clamped);
+      setDanmakuOffsetMs(saved);
+    } catch (caught) {
+      onSnack(`保存弹幕偏移失败：${caught instanceof Error ? caught.message : String(caught)}`, "danger");
+    }
+  }, [currentEpisode.mediaId, onSnack]);
+
+  const rematchDanmaku = useCallback(async () => {
+    if (!currentEpisode.mediaId || !window.nexplay?.rematchDanmaku) return;
+    setDanmakuRematching(true);
+    setDanmakuClockReady(false);
+    setDanmakuTrackGeneration(0);
+    try {
+      const binding = await window.nexplay.rematchDanmaku(currentEpisode.mediaId, duration);
+      setDanmakuBinding(binding);
+      setDanmakuReloadVersion((current) => current + 1);
+      onSnack(binding.exact ? "已重新匹配精确弹幕轨" : "仅找到非精确候选，未自动启用", binding.exact ? "success" : "neutral");
+    } catch (caught) {
+      onSnack(`重新匹配弹幕失败：${caught instanceof Error ? caught.message : String(caught)}`, "danger");
+    } finally {
+      setDanmakuRematching(false);
+    }
+  }, [currentEpisode.mediaId, duration, onSnack]);
 
   function resolveStableMpvPosition(current: MpvState | null, reportedPosition: number | undefined) {
     const latestSeekPosition = latestSeekPositionRef.current;
@@ -1167,12 +1270,29 @@ export function PlayerPage({
                         volume: Math.round(video.volume * 100),
                       } : current);
                       setPaused(video.paused);
-                      resetDanmakuClockAtPosition(video.currentTime || resumePosition);
-                      setDanmakuClockReady(true);
+                      setPlaybackPhase("fileReady");
+                    }}
+                    onLoadedData={(event) => {
+                      const pts = event.currentTarget.currentTime || initialPlaybackPositionRef.current;
+                      timelineSampleRef.current = {
+                        generation: playbackGenerationRef.current,
+                        pts,
+                        sampledAt: performance.now(),
+                      };
+                      if (firstFrameSeenGenerationRef.current !== playbackGenerationRef.current) {
+                        firstFrameSeenGenerationRef.current = playbackGenerationRef.current;
+                        setFirstFrameGeneration(playbackGenerationRef.current);
+                        setPlaybackPhase(danmakuVisible ? "firstFrameReady" : "playing");
+                      }
                     }}
                     onTimeUpdate={(event) => {
                       const video = event.currentTarget;
                       if (seekingRef.current) return;
+                      timelineSampleRef.current = {
+                        generation: playbackGenerationRef.current,
+                        pts: video.currentTime || 0,
+                        sampledAt: performance.now(),
+                      };
                       setMpvState((current) => current ? {
                         ...current,
                         duration: Number.isFinite(video.duration) ? video.duration : current.duration,
@@ -1209,6 +1329,7 @@ export function PlayerPage({
                     generation={renderFrameGeneration}
                     onError={handleRenderSurfaceError}
                     onFrame={handleMpvFrame}
+                    acceptFrame={acceptMpvFrame}
                   />
                 ) : heroSrc ? (
                   <img
@@ -1220,23 +1341,28 @@ export function PlayerPage({
                 ) : null}
                 {!browserVideoReady && !webglTextureReady && <div className="absolute inset-0 bg-black/62" />}
 
-                {danmakuVisible && (
+                {danmakuVisible && playbackPhase !== "preparing" && duration > 0 && (
                   <DanmakuOverlay
                     mediaId={currentEpisode.mediaId}
+                    generation={renderFrameGeneration}
+                    timelineSampleRef={timelineSampleRef}
                     visible={danmakuClockReady && !loadingSource && !playbackError}
                     paused={paused}
                     seeking={seeking || danmakuSeekSuspended}
                     seekReset={danmakuSeekReset}
                     position={position}
                     duration={duration}
+                    offsetMs={danmakuOffsetMs}
+                    reloadVersion={danmakuReloadVersion}
                     area={danmakuArea}
                     onError={handleDanmakuError}
+                    onLoaded={handleDanmakuLoaded}
                   />
                 )}
 
                 {!browserVideoReady && !webglTextureReady && <div className="absolute inset-0 flex items-center justify-center px-6 text-center text-white">
                   {loadingSource ? (
-                    <div className="text-[14px] text-white/70">正在启动 libmpv</div>
+                    <div className="text-[14px] text-white/70">{playbackPhaseLabel(playbackPhase)}</div>
                   ) : playbackError ? null : (
                     <div className="max-w-[520px] opacity-80">
                       <div className="mx-auto mb-4 flex size-14 items-center justify-center rounded-full bg-white/12">
@@ -1257,6 +1383,11 @@ export function PlayerPage({
                     </div>
                   )}
                 </div>}
+                {playbackPhase !== "playing" && !playbackError && (
+                  <div className="pointer-events-none absolute left-5 top-5 z-20 rounded-full bg-black/58 px-3 py-1.5 text-[11px] font-semibold text-white/78 backdrop-blur-md">
+                    {playbackPhaseLabel(playbackPhase)}
+                  </div>
+                )}
                 <button
                   type="button"
                   className="player-video-hit-area"
@@ -1494,6 +1625,23 @@ export function PlayerPage({
                                     {option.label}
                                   </button>
                                 ))}
+                              </div>
+                            </div>
+                            <div className="player-settings-section">
+                              <div className="player-settings-section-head">
+                                <span>弹幕匹配</span>
+                                <span>{danmakuBinding ? (danmakuBinding.exact ? "精确" : "候选") : "加载中"}</span>
+                              </div>
+                              <div className="mb-3 text-[11px] leading-5 text-white/56">
+                                {danmakuBinding
+                                  ? `${danmakuBinding.animeTitle || danmakuBinding.title}${danmakuBinding.episodeTitle ? ` · ${danmakuBinding.episodeTitle}` : ""} · ${danmakuBinding.matchSource}`
+                                  : "正在确定当前媒体的弹幕轨"}
+                              </div>
+                              <div className="player-segment-row">
+                                <button type="button" className="player-segment-option" onClick={() => void updateDanmakuOffset(danmakuOffsetMs - 100)}>-0.1s</button>
+                                <button type="button" className="player-segment-option is-selected" onClick={() => void updateDanmakuOffset(0)}>{(danmakuOffsetMs / 1000).toFixed(1)}s</button>
+                                <button type="button" className="player-segment-option" onClick={() => void updateDanmakuOffset(danmakuOffsetMs + 100)}>+0.1s</button>
+                                <button type="button" className="player-segment-option" disabled={danmakuRematching} onClick={() => void rematchDanmaku()}>{danmakuRematching ? "匹配中" : "重新匹配"}</button>
                               </div>
                             </div>
                           </motion.div>
@@ -1790,6 +1938,19 @@ function formatTime(value: number) {
     return `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
   }
   return `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
+
+function playbackPhaseLabel(phase: "preparing" | "fileReady" | "firstFrameReady" | "playing" | "error") {
+  if (phase === "preparing") return "正在准备媒体";
+  if (phase === "fileReady") return "媒体已就绪，正在等待首帧";
+  if (phase === "firstFrameReady") return "首帧已显示，正在加载弹幕";
+  if (phase === "error") return "播放准备失败";
+  return "正在播放";
+}
+
+function nextPlaybackGeneration() {
+  playbackGenerationSequence = (playbackGenerationSequence + 1) % 1000;
+  return Date.now() * 1000 + playbackGenerationSequence;
 }
 
 function isEditableTarget(target: EventTarget | null) {

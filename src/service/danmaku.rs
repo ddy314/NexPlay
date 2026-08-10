@@ -73,11 +73,19 @@ impl DanmakuService {
     }
 
     pub fn cached_or_match_dandanplay(&self, media: &MediaItem) -> AppResult<Option<DanmakuMatch>> {
+        self.cached_or_match_dandanplay_with_duration(media, 0)
+    }
+
+    pub fn cached_or_match_dandanplay_with_duration(
+        &self,
+        media: &MediaItem,
+        video_duration: i32,
+    ) -> AppResult<Option<DanmakuMatch>> {
         if let Some(result) = self.repository.danmaku_match_for_media(media.id)? {
             return Ok(Some(result));
         }
 
-        let result = self.match_dandanplay(media)?;
+        let result = self.match_dandanplay_with_duration(media, video_duration)?;
         self.repository
             .upsert_danmaku_match(media.id, &result, task::unix_timestamp_ms())?;
         Ok(Some(result))
@@ -87,16 +95,55 @@ impl DanmakuService {
         self.repository.danmaku_match_for_media(media.id)
     }
 
+    pub fn rematch_dandanplay(
+        &self,
+        media: &MediaItem,
+        video_duration: i32,
+    ) -> AppResult<DanmakuMatch> {
+        self.repository.delete_danmaku_match(media.id)?;
+        let result = self.match_dandanplay_with_duration(media, video_duration)?;
+        self.repository
+            .upsert_danmaku_match(media.id, &result, task::unix_timestamp_ms())?;
+        Ok(result)
+    }
+
+    pub fn offset_ms(&self, media_id: i64) -> AppResult<i64> {
+        self.repository.danmaku_offset_ms(media_id)
+    }
+
+    pub fn set_offset_ms(&self, media_id: i64, offset_ms: i64) -> AppResult<i64> {
+        let offset_ms = offset_ms.clamp(-10_000, 10_000);
+        self.repository
+            .set_danmaku_offset_ms(media_id, offset_ms, task::unix_timestamp_ms())?;
+        Ok(offset_ms)
+    }
+
     pub fn track_for_media(&self, media: &MediaItem) -> AppResult<DanmakuTrack> {
+        self.track_for_media_with_duration(media, 0)
+    }
+
+    pub fn track_for_media_with_duration(
+        &self,
+        media: &MediaItem,
+        video_duration: i32,
+    ) -> AppResult<DanmakuTrack> {
         if media.deleted_at.is_some() {
             return Err(AppError::MediaNotFound);
         }
         let config = self.config.snapshot().dandanplay;
         validate_dandanplay_config(&config)?;
 
-        let match_result = self.cached_or_match_dandanplay(media)?.ok_or_else(|| {
-            AppError::Api("dandanplay returned no match for this media".to_string())
-        })?;
+        let match_result = self
+            .cached_or_match_dandanplay_with_duration(media, video_duration)?
+            .ok_or_else(|| {
+                AppError::Api("dandanplay returned no match for this media".to_string())
+            })?;
+        if !match_result.exact {
+            return Err(AppError::Api(format!(
+                "弹幕仅找到非精确候选：{}；请在播放设置中确认或重新匹配",
+                match_result.title
+            )));
+        }
         let episode_id = match_result.episode_id.ok_or_else(|| {
             AppError::Api("dandanplay match does not include episodeId".to_string())
         })?;
@@ -141,13 +188,21 @@ impl DanmakuService {
     }
 
     pub fn match_dandanplay(&self, media: &MediaItem) -> AppResult<DanmakuMatch> {
+        self.match_dandanplay_with_duration(media, 0)
+    }
+
+    pub fn match_dandanplay_with_duration(
+        &self,
+        media: &MediaItem,
+        video_duration: i32,
+    ) -> AppResult<DanmakuMatch> {
         if media.deleted_at.is_some() {
             return Err(AppError::MediaNotFound);
         }
         let config = self.config.snapshot().dandanplay;
         validate_dandanplay_config(&config)?;
 
-        let match_result = self.match_episode(media, &config)?;
+        let match_result = self.match_episode(media, video_duration, &config)?;
         let comment_count = self.fetch_comment_count(match_result.episode_id, &config)?;
 
         Ok(DanmakuMatch {
@@ -165,6 +220,7 @@ impl DanmakuService {
     fn match_episode(
         &self,
         media: &MediaItem,
+        video_duration: i32,
         config: &DandanplayConfig,
     ) -> AppResult<MatchResult> {
         let path = "/api/v2/match";
@@ -180,7 +236,7 @@ impl DanmakuService {
             file_name: Some(file_name),
             file_hash: media.file_hash.clone(),
             file_size: media.file_size as i64,
-            video_duration: 0,
+            video_duration: video_duration.max(0),
             match_mode: if media.file_hash.is_some() {
                 "hashAndFileName"
             } else {

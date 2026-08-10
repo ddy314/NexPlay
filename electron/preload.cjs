@@ -3,7 +3,7 @@ const { fileURLToPath } = require("node:url");
 const { contextBridge, ipcRenderer } = require("electron");
 
 const { RenderBridge } = require("./render-bridge.cjs");
-const { findMatchingSubtitle } = require("./subtitle-matcher.cjs");
+const { findMatchingSubtitles } = require("./subtitle-matcher.cjs");
 
 const projectRoot = process.env.NEXPLAY_PROJECT_ROOT || path.join(__dirname, "..");
 const renderBridge = new RenderBridge({ projectRoot });
@@ -11,6 +11,9 @@ let activeMpvMode = null;
 let activeTextureProbe = null;
 let renderInfoPromise = null;
 let textureProbePromise = null;
+let requestedPlaybackGeneration = 0;
+let activePlaybackGeneration = 0;
+const preparedPlaybackRequests = new Map();
 const EMBEDDED_MPV_UNAVAILABLE_MESSAGE = "内嵌播放器不可用，已禁用外部 mpv fallback";
 
 function resolveAssetUrl(value) {
@@ -30,11 +33,43 @@ function mediaPathFromSourceUrl(sourceUrl) {
 
 async function normalizeMediaSource(source) {
   const mediaPath = mediaPathFromSourceUrl(source.sourceUrl);
+  const subtitleCandidates = await findMatchingSubtitles(mediaPath);
   return {
     ...source,
     sourceUrl: resolveAssetUrl(source.sourceUrl),
-    autoSubtitlePath: await findMatchingSubtitle(mediaPath),
+    autoSubtitlePath: subtitleCandidates[0]?.path || null,
+    subtitleCandidates,
   };
+}
+
+function preparePlaybackSource(mediaId, generation) {
+  const normalizedGeneration = Math.max(1, Math.trunc(Number(generation) || 1));
+  requestedPlaybackGeneration = Math.max(requestedPlaybackGeneration, normalizedGeneration);
+  const key = `${mediaId}:${normalizedGeneration}`;
+  for (const existingKey of preparedPlaybackRequests.keys()) {
+    if (existingKey.startsWith(`${mediaId}:`) && existingKey !== key) preparedPlaybackRequests.delete(existingKey);
+  }
+  if (!preparedPlaybackRequests.has(key)) {
+    const request = ipcRenderer.invoke("backend:media-source", mediaId)
+      .then(async (rawSource) => {
+        const mediaPath = mediaPathFromSourceUrl(rawSource.sourceUrl);
+        const source = await normalizeMediaSource(rawSource);
+        return {
+          generation: normalizedGeneration,
+          mediaId,
+          mediaPath,
+          source,
+          resumePosition: Number(source.playbackPosition) || 0,
+          subtitleCandidates: source.subtitleCandidates || [],
+        };
+      })
+      .catch((error) => {
+        preparedPlaybackRequests.delete(key);
+        throw error;
+      });
+    preparedPlaybackRequests.set(key, request);
+  }
+  return preparedPlaybackRequests.get(key);
 }
 
 function embeddedMpvUnavailableError(detail) {
@@ -82,10 +117,12 @@ function probeWebglTextureRendererCached() {
   return textureProbePromise;
 }
 
-async function loadMpvMedia(mediaId) {
-  const source = await ipcRenderer.invoke("backend:media-source", mediaId);
-  const mediaPath = mediaPathFromSourceUrl(source.sourceUrl);
-  const autoSubtitlePath = await findMatchingSubtitle(mediaPath);
+async function loadMpvMedia(prepared) {
+  if (!prepared || !prepared.source || !prepared.mediaPath) {
+    throw new Error("mpvLoad requires a PreparedPlaybackSource");
+  }
+  const { generation, mediaPath, source, subtitleCandidates = [] } = prepared;
+  requestedPlaybackGeneration = Math.max(requestedPlaybackGeneration, generation);
   const [bridgeInfo, textureProbe] = await Promise.all([
     getRenderInfoCached(),
     probeWebglTextureRendererCached(),
@@ -101,13 +138,19 @@ async function loadMpvMedia(mediaId) {
   let state = await renderBridge.request({
     type: "load",
     path: mediaPath,
+    generation,
   });
   if (state && state.ok === false) {
     throw new Error(state.error || "libmpv failed to load media");
   }
 
+  if (generation !== requestedPlaybackGeneration) {
+    return { ...state, stale: true, generation };
+  }
   activeMpvMode = "webglTexture";
+  activePlaybackGeneration = generation;
   activeTextureProbe = textureProbe;
+  const autoSubtitlePath = subtitleCandidates[0]?.path || null;
   if (autoSubtitlePath) {
     try {
       state = await controlMpv({ type: "addSubtitle", path: autoSubtitlePath, select: false });
@@ -119,7 +162,6 @@ async function loadMpvMedia(mediaId) {
     ...state,
     source: {
       ...source,
-      sourceUrl: resolveAssetUrl(source.sourceUrl),
       autoSubtitlePath,
     },
     renderMode: "webglTexture",
@@ -156,6 +198,7 @@ contextBridge.exposeInMainWorld("nexplay", {
   saveSettings: (settings) => ipcRenderer.invoke("backend:save-settings", settings),
   searchCatalog: (payload) => ipcRenderer.invoke("backend:search-catalog", payload),
   onlineSubject: (payload) => ipcRenderer.invoke("backend:online-subject", payload),
+  resolveSubject: (payload) => ipcRenderer.invoke("backend:resolve-subject", payload),
   refreshSubjectMetadata: (payload) => ipcRenderer.invoke("backend:refresh-subject-metadata", payload),
   episodeResources: (payload) => ipcRenderer.invoke("backend:episode-resources", payload),
   startResourceDownload: (payload) => ipcRenderer.invoke("backend:start-resource-download", payload),
@@ -182,12 +225,13 @@ contextBridge.exposeInMainWorld("nexplay", {
   homeFeed: () => ipcRenderer.invoke("backend:home-feed"),
   testQbittorrentConnection: () => ipcRenderer.invoke("backend:test-qbittorrent"),
   openMedia: (mediaId) => ipcRenderer.invoke("backend:open-media", mediaId),
-  getMediaSource: async (mediaId) => {
-    const source = await ipcRenderer.invoke("backend:media-source", mediaId);
-    return await normalizeMediaSource(source);
-  },
-  danmakuTrack: (mediaId) => ipcRenderer.invoke("backend:danmaku-track", mediaId),
-  mpvLoad: (mediaId) => loadMpvMedia(mediaId),
+  getMediaSource: async (mediaId) => normalizeMediaSource(await ipcRenderer.invoke("backend:media-source", mediaId)),
+  preparePlaybackSource,
+  danmakuTrack: (mediaId, videoDuration = 0) => ipcRenderer.invoke("backend:danmaku-track", { mediaId, videoDuration }),
+  rematchDanmaku: (mediaId, videoDuration = 0) => ipcRenderer.invoke("backend:rematch-danmaku", { mediaId, videoDuration }),
+  danmakuBinding: (mediaId, videoDuration = 0) => ipcRenderer.invoke("backend:danmaku-binding", { mediaId, videoDuration }),
+  setDanmakuOffset: (mediaId, offsetMs) => ipcRenderer.invoke("backend:set-danmaku-offset", { mediaId, offsetMs }),
+  mpvLoad: (prepared) => loadMpvMedia(prepared),
   mpvSetTrack: (kind, id) => controlMpv({ type: "setTrack", kind, id }),
   mpvAddSubtitle: async () => {
     const path = await ipcRenderer.invoke("dialog:select-subtitle");
@@ -200,10 +244,15 @@ contextBridge.exposeInMainWorld("nexplay", {
   mpvSetPause: (paused) => controlMpv({ type: "setPause", paused }),
   mpvSeek: (position) => controlMpv({ type: "seek", position }),
   mpvSetVolume: (volume) => controlMpv({ type: "setVolume", volume }),
-  mpvStop: async () => {
+  mpvStop: async (generation) => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    if (Number(generation) !== activePlaybackGeneration || requestedPlaybackGeneration > Number(generation)) {
+      return unloadedMpvState();
+    }
     if (activeMpvMode !== "webglTexture") {
       activeMpvMode = null;
       activeTextureProbe = null;
+      activePlaybackGeneration = 0;
       return unloadedMpvState();
     }
     try {
@@ -225,11 +274,13 @@ contextBridge.exposeInMainWorld("nexplay", {
     activeTextureProbe = await textureProbePromise;
     return activeTextureProbe;
   },
-  mpvRenderFrame: async (width, height) => {
+  mpvRenderFrame: async (width, height, generation) => {
+    const requestedAt = performance.now();
     if (activeMpvMode !== "webglTexture") {
       return ipcRenderer.invoke("mpv-render:frame", { width, height });
     }
-    return renderBridge.request({ type: "renderFrame", width, height });
+    const frame = await renderBridge.request({ type: "renderFrame", width, height, generation });
+    return { ...frame, requestMs: performance.now() - requestedAt };
   },
   onBackendEvent: (callback) => {
     const listener = (_event, payload) => callback(payload);
@@ -237,4 +288,9 @@ contextBridge.exposeInMainWorld("nexplay", {
     return () => ipcRenderer.removeListener("backend:event", listener);
   },
   resolveAssetUrl,
+});
+
+queueMicrotask(() => {
+  void getRenderInfoCached();
+  void probeWebglTextureRendererCached();
 });

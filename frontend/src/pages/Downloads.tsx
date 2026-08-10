@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { AlertCircle, ArrowRight, CheckCircle2, DownloadCloud, Gauge, Loader2, Pause, PauseCircle, Play, RefreshCw, Search, ShieldCheck, Trash2, X } from "lucide-react";
 import { controlDownloadTask, downloadTasks, type DownloadTask } from "../backend";
@@ -14,11 +14,14 @@ export function DownloadsPage({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [actingTaskId, setActingTaskId] = useState<number | null>(null);
+  const refreshGenerationRef = useRef(0);
 
   const refresh = useCallback(async (quiet = false) => {
+    const generation = ++refreshGenerationRef.current;
     if (!quiet) setLoading(true);
     try {
       const response = await downloadTasks();
+      if (generation !== refreshGenerationRef.current) return;
       setTasks(response.tasks);
       setError(null);
     } catch (caught) {
@@ -33,10 +36,13 @@ export function DownloadsPage({
   const controlTask = useCallback(async (
     task: DownloadTask,
     action: "pause" | "resume" | "cancel" | "remove",
+    deleteFiles = false,
   ) => {
+    if (action === "cancel" && !window.confirm(deleteFiles ? "确定取消任务并删除已经下载的文件？此操作不可撤销。" : "确定取消任务？已下载文件会保留。")) return;
+    if (action === "remove" && !window.confirm("确定只清除这条下载记录？本地文件不会删除。")) return;
     setActingTaskId(task.id);
     try {
-      const response = await controlDownloadTask({ taskId: task.id, action, deleteFiles: false });
+      const response = await controlDownloadTask({ taskId: task.id, action, deleteFiles });
       setTasks(response.tasks);
       const labels = { pause: "已暂停", resume: "已继续", cancel: "已取消", remove: "已清除" };
       onSnack(`${labels[action]}下载任务。`, "success");
@@ -50,10 +56,21 @@ export function DownloadsPage({
 
   useEffect(() => {
     void refresh();
+    const calibrate = () => {
+      if (document.visibilityState === "visible") void refresh(true);
+    };
     const timer = window.setInterval(() => {
-      void refresh(true);
-    }, 2000);
-    return () => window.clearInterval(timer);
+      calibrate();
+    }, 15_000);
+    document.addEventListener("visibilitychange", calibrate);
+    const unsubscribe = window.nexplay?.onBackendEvent((event) => {
+      if (event.type === "downloadCompleted") void refresh(true);
+    });
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", calibrate);
+      unsubscribe?.();
+    };
   }, [refresh]);
 
   const counts = useMemo(() => ({
@@ -114,7 +131,7 @@ export function DownloadsPage({
               key={task.id}
               task={task}
               acting={actingTaskId === task.id}
-              onAction={(action) => void controlTask(task, action)}
+              onAction={(action, deleteFiles) => void controlTask(task, action, deleteFiles)}
             />
           ))}
           {!loading && tasks.length === 0 && (
@@ -139,7 +156,7 @@ function DownloadRow({
 }: {
   task: DownloadTask;
   acting: boolean;
-  onAction: (action: "pause" | "resume" | "cancel" | "remove") => void;
+  onAction: (action: "pause" | "resume" | "cancel" | "remove", deleteFiles?: boolean) => void;
 }) {
   const progress = Math.round(Math.min(1, Math.max(0, task.progress)) * 100);
   const status = statusMeta(task.status, task.stale);
@@ -197,6 +214,11 @@ function DownloadRow({
             {canCancel && (
               <button type="button" title="取消" aria-label="取消" className="download-action-button danger" onClick={() => onAction("cancel")}>
                 <X size={14} />
+              </button>
+            )}
+            {canCancel && (
+              <button type="button" title="取消并删除文件" aria-label="取消并删除文件" className="download-action-button danger" onClick={() => onAction("cancel", true)}>
+                <Trash2 size={14} />
               </button>
             )}
             {(task.stale || task.status === "failed" || task.status === "completed" || task.status === "missing") && (

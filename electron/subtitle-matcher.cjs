@@ -100,7 +100,11 @@ function scoreSubtitle(videoFileName, subtitleFileName) {
 }
 
 function chooseMatchingSubtitle(videoFileName, entries) {
-  const candidates = entries
+  return matchingSubtitleCandidates(videoFileName, entries)[0]?.fileName || null;
+}
+
+function matchingSubtitleCandidates(videoFileName, entries) {
+  return entries
     .filter((entry) => SUBTITLE_EXTENSIONS.has(path.extname(entry).toLocaleLowerCase("en-US")))
     .filter((entry) => {
       if (path.extname(entry).toLocaleLowerCase("en-US") !== ".sub") return true;
@@ -110,25 +114,34 @@ function chooseMatchingSubtitle(videoFileName, entries) {
     .map((fileName) => ({ fileName, score: scoreSubtitle(videoFileName, fileName) }))
     .filter((candidate) => candidate.score >= 65)
     .sort((left, right) => right.score - left.score || left.fileName.localeCompare(right.fileName));
-  return candidates[0]?.fileName || null;
 }
 
 async function findMatchingSubtitle(mediaPath) {
-  if (typeof mediaPath !== "string" || !mediaPath) return null;
+  const candidates = await findMatchingSubtitles(mediaPath);
+  return candidates[0]?.path || null;
+}
+
+async function findMatchingSubtitles(mediaPath) {
+  if (typeof mediaPath !== "string" || !mediaPath) return [];
   const directory = path.dirname(mediaPath);
   let entries;
   try {
     entries = await fs.promises.readdir(directory, { withFileTypes: true });
   } catch {
-    return null;
+    return [];
   }
   const fileNames = entries.filter((entry) => entry.isFile()).map((entry) => entry.name);
-  const match = chooseMatchingSubtitle(path.basename(mediaPath), fileNames);
-  return match ? path.join(directory, match) : null;
+  return matchingSubtitleCandidates(path.basename(mediaPath), fileNames)
+    .map((candidate) => ({
+      ...candidate,
+      path: path.join(directory, candidate.fileName),
+    }));
 }
 
 module.exports = {
   chooseMatchingSubtitle,
   findMatchingSubtitle,
+  findMatchingSubtitles,
+  matchingSubtitleCandidates,
   scoreSubtitle,
 };

@@ -46,7 +46,7 @@ process.on("message", (message) => {
         success(id, bridge.probeWebglTextureRenderer());
         break;
       case "load":
-        success(id, assertOk(bridge.load(command.path)));
+        success(id, assertOk(bridge.load(command.path, command.generation)));
         break;
       case "setTrack":
         success(id, assertOk(bridge.setTrack(command.kind, command.id ?? null)));
@@ -70,11 +70,11 @@ process.on("message", (message) => {
         success(id, assertOk(bridge.getState()));
         break;
       case "renderFrame":
-        success(id, assertOk(bridge.renderFrame(command.width, command.height)));
+        success(id, assertOk(bridge.renderFrame(command.width, command.height, command.generation)));
         break;
       case "shutdown":
         success(id, assertOk(bridge.shutdown()));
-        process.exit(0);
+        setImmediate(() => process.exit(0));
         break;
       default:
         throw new Error(`unsupported renderer command: ${command.type}`);

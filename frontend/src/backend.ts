@@ -30,8 +30,19 @@ export type EditableSettings = FrontendEditableSettings;
 export type ScanResponse = GeneratedScanResponse;
 export type MediaSource = MediaSourceResponse & {
   autoSubtitlePath?: string | null;
+  subtitleCandidates?: SubtitleCandidate[];
+};
+export type SubtitleCandidate = { path: string; fileName: string; score: number };
+export type PreparedPlaybackSource = {
+  generation: number;
+  mediaId: number;
+  mediaPath: string;
+  source: MediaSource;
+  resumePosition: number;
+  subtitleCandidates: SubtitleCandidate[];
 };
 export type DanmakuTrack = GeneratedDanmakuTrackResponse;
+export type DanmakuBinding = import("./generated/backend").DanmakuBindingResponse;
 export type CatalogSearch = CatalogSearchResponse;
 export type EpisodeResource = EpisodeResourceData;
 export type EpisodeResources = EpisodeResourcesResponse;
@@ -73,15 +84,31 @@ export type MpvState = {
   source?: MediaSource;
   renderMode?: "browserVideo" | "webglTexture";
   textureProbe?: MpvTextureProbe;
+  generation?: number;
+  fileReady?: boolean;
+  stale?: boolean;
 };
 
 export type MpvFrame = {
   ok: boolean;
-  width: number;
-  height: number;
-  stride: number;
+  hasFrame?: boolean;
+  width?: number;
+  height?: number;
+  stride?: number;
   position?: number;
-  pixels: Uint8Array;
+  pts?: number;
+  sampledAt?: number;
+  uploadedAt?: number;
+  generation?: number;
+  requestMs?: number;
+  uploadMs?: number;
+  pixels?: Uint8Array;
+};
+
+export type PlaybackTimelineSample = {
+  generation: number;
+  pts: number;
+  sampledAt: number;
 };
 
 export type MpvRenderProbe = {
@@ -523,6 +550,18 @@ export async function loadOnlineSubject(provider: string, providerSubjectId: str
     throw new Error("当前页面没有连接到 NexPlay 后端。");
   }
   return window.nexplay.onlineSubject({ provider, providerSubjectId });
+}
+
+export async function resolveSubject(subject: import("./data").Subject) {
+  if (!window.nexplay) return subject;
+  return window.nexplay.resolveSubject({
+    ref: {
+      canonicalKey: subject.canonicalKey,
+      provider: subject.provider,
+      providerSubjectId: subject.providerSubjectId,
+      mediaId: subject.mediaId || subject.localFiles[0]?.mediaId,
+    },
+  });
 }
 
 export async function refreshSubjectMetadata(subjectId: number) {

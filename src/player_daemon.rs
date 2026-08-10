@@ -12,10 +12,21 @@ mod imp {
     const MPV_FORMAT_NODE: c_int = 6;
     const MPV_FORMAT_NODE_ARRAY: c_int = 7;
     const MPV_FORMAT_NODE_MAP: c_int = 8;
+    const MPV_EVENT_NONE: c_int = 0;
+    const MPV_EVENT_SHUTDOWN: c_int = 1;
+    const MPV_EVENT_FILE_LOADED: c_int = 8;
 
     #[repr(C)]
     struct MpvHandle {
         _private: [u8; 0],
+    }
+
+    #[repr(C)]
+    struct MpvEvent {
+        event_id: c_int,
+        error: c_int,
+        reply_userdata: u64,
+        data: *mut c_void,
     }
 
     #[repr(C)]
@@ -64,6 +75,7 @@ mod imp {
             data: *mut c_void,
         ) -> c_int;
         fn mpv_free_node_contents(node: *mut MpvNode);
+        fn mpv_wait_event(ctx: *mut MpvHandle, timeout: c_double) -> *mut MpvEvent;
     }
 
     #[derive(Debug, Deserialize)]
@@ -238,10 +250,22 @@ mod imp {
 
         fn load(&self, path: &str) -> Result<(), String> {
             self.command(&["loadfile", path, "replace"])?;
-            // Track metadata is populated after the file starts loading. Give mpv a
-            // short window so the first response can populate frontend controls.
-            std::thread::sleep(std::time::Duration::from_millis(180));
-            Ok(())
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+            while std::time::Instant::now() < deadline {
+                let event = unsafe { mpv_wait_event(self.handle, 0.1) };
+                let Some(event) = (unsafe { event.as_ref() }) else {
+                    continue;
+                };
+                match event.event_id {
+                    MPV_EVENT_FILE_LOADED => return Ok(()),
+                    MPV_EVENT_SHUTDOWN => {
+                        return Err("libmpv shut down while loading media".to_string());
+                    }
+                    MPV_EVENT_NONE => continue,
+                    _ => {}
+                }
+            }
+            Err("timed out waiting for MPV_EVENT_FILE_LOADED".to_string())
         }
 
         fn stop(&self) -> Result<(), String> {

@@ -3,6 +3,8 @@ use rusqlite_migration::{M, Migrations};
 
 use crate::error::AppResult;
 
+pub(crate) const LATEST_SCHEMA_VERSION: i64 = 6;
+
 const BASELINE_SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS media_items (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -366,6 +368,15 @@ CREATE INDEX IF NOT EXISTS idx_playback_events_session
     ON playback_events(session_id, occurred_at);
 "#;
 
+const DANMAKU_PREFERENCES_SCHEMA: &str = r#"
+CREATE TABLE IF NOT EXISTS danmaku_preferences (
+    media_id INTEGER PRIMARY KEY,
+    offset_ms INTEGER NOT NULL DEFAULT 0,
+    updated_at INTEGER NOT NULL,
+    FOREIGN KEY(media_id) REFERENCES media_items(id) ON DELETE CASCADE
+);
+"#;
+
 pub fn init_database(conn: &mut Connection) -> AppResult<()> {
     conn.execute_batch("PRAGMA foreign_keys = ON;")?;
     let migrations = Migrations::new(vec![
@@ -384,6 +395,7 @@ pub fn init_database(conn: &mut Connection) -> AppResult<()> {
         M::up(BANGUMI_ACCOUNT_SCHEMA).comment("store Bangumi account collections and sync queue"),
         M::up(PLAYBACK_ANALYTICS_SCHEMA)
             .comment("store local playback sessions and insight events"),
+        M::up(DANMAKU_PREFERENCES_SCHEMA).comment("store per-media danmaku timing preferences"),
     ]);
     migrations.to_latest(conn)?;
     Ok(())
@@ -422,7 +434,7 @@ mod tests {
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .expect("read version");
-        assert_eq!(version, 5);
+        assert_eq!(version, 6);
         assert!(column_exists(&conn, "media_items", "match_ignored"));
         assert!(table_exists(&conn, "danmaku_comment_cache"));
         assert!(table_exists(&conn, "online_subjects"));
@@ -434,6 +446,7 @@ mod tests {
         assert!(table_exists(&conn, "bangumi_sync_queue"));
         assert!(table_exists(&conn, "playback_sessions"));
         assert!(table_exists(&conn, "playback_events"));
+        assert!(table_exists(&conn, "danmaku_preferences"));
     }
 
     #[test]
@@ -461,7 +474,7 @@ mod tests {
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .expect("read version");
-        assert_eq!(version, 5);
+        assert_eq!(version, 6);
         assert!(column_exists(&conn, "media_items", "match_ignored"));
         assert!(table_exists(&conn, "danmaku_comment_cache"));
         assert!(table_exists(&conn, "online_subjects"));

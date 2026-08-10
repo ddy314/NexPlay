@@ -66,8 +66,10 @@ const emptySettings: EditableSettings = {
 
 export function SettingsPage({
   onSnack,
+  onDirtyChange,
 }: {
   onSnack: (text: string, tone?: "neutral" | "success" | "danger") => void;
+  onDirtyChange?: (dirty: boolean) => void;
 }) {
   const [section, setSection] = useState<Section>("libraries");
   const [settings, setSettings] = useState<EditableSettings>(emptySettings);
@@ -78,6 +80,7 @@ export function SettingsPage({
   const [bangumiAuth, setBangumiAuth] = useState<BangumiAuthStatus | null>(null);
   const [bangumiBusy, setBangumiBusy] = useState<"login" | "sync" | "logout" | null>(null);
   const [showSecrets, setShowSecrets] = useState(false);
+  const [savedSignature, setSavedSignature] = useState("");
 
   useEffect(() => {
     let alive = true;
@@ -93,6 +96,7 @@ export function SettingsPage({
         if (!alive) return;
         setSettings(next);
         setLibrariesText(next.mediaLibraries.join("\n"));
+        setSavedSignature(JSON.stringify(next));
         void bangumiAuthStatus().then((status) => {
           if (alive) setBangumiAuth(status);
         });
@@ -120,6 +124,19 @@ export function SettingsPage({
     }),
     [librariesText, settings]
   );
+  const dirty = savedSignature.length > 0 && JSON.stringify(normalizedSettings) !== savedSignature;
+
+  useEffect(() => {
+    onDirtyChange?.(dirty);
+    const beforeUnload = (event: BeforeUnloadEvent) => {
+      if (!dirty) return;
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", beforeUnload);
+    return () => window.removeEventListener("beforeunload", beforeUnload);
+  }, [dirty, onDirtyChange]);
+  useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
 
   const save = async () => {
     if (!window.nexplay) {
@@ -132,11 +149,8 @@ export function SettingsPage({
       const saved = await window.nexplay.saveSettings(normalizedSettings);
       setSettings(saved);
       setLibrariesText(saved.mediaLibraries.join("\n"));
-      const resolvedTheme = saved.theme === "system"
-        ? (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")
-        : saved.theme;
-      document.documentElement.dataset.theme = resolvedTheme;
-      window.localStorage.setItem("nexplay.theme", resolvedTheme);
+      setSavedSignature(JSON.stringify(saved));
+      window.dispatchEvent(new CustomEvent("nexplay-settings-changed", { detail: saved }));
       onSnack("设置已保存到后端配置。", "success");
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : String(caught);
@@ -161,6 +175,8 @@ export function SettingsPage({
       const saved = await window.nexplay.saveSettings(normalizedSettings);
       setSettings(saved);
       setLibrariesText(saved.mediaLibraries.join("\n"));
+      setSavedSignature(JSON.stringify(saved));
+      window.dispatchEvent(new CustomEvent("nexplay-settings-changed", { detail: saved }));
       const result = await testQbittorrentConnection();
       onSnack(result.message, result.ok ? "success" : "danger");
     } catch (caught) {
@@ -181,6 +197,8 @@ export function SettingsPage({
       const saved = await window.nexplay.saveSettings(normalizedSettings);
       setSettings(saved);
       setLibrariesText(saved.mediaLibraries.join("\n"));
+      setSavedSignature(JSON.stringify(saved));
+      window.dispatchEvent(new CustomEvent("nexplay-settings-changed", { detail: saved }));
       const login = await startBangumiLogin();
       onSnack(`已打开 Bangumi 登录页面，回调地址：${login.redirectUri}`, "success");
     } catch (caught) {
@@ -250,8 +268,8 @@ export function SettingsPage({
             按任务组织媒体来源、账户、播放、下载、外观与隐私。
           </div>
         </div>
-        <Button onClick={save} loading={saving} disabled={loading} className="h-10 px-5 text-[13px]">
-          保存设置
+        <Button onClick={save} loading={saving} disabled={loading || !dirty} className="h-10 px-5 text-[13px]">
+          {dirty ? "保存设置" : "已保存"}
         </Button>
       </div>
 
@@ -300,7 +318,8 @@ export function SettingsPage({
               </div>
               <SettingsRow
                 title="数据库路径"
-                desc="后端 SQLite 数据库位置；修改后下次命令会使用新路径。"
+                desc="后端 SQLite 数据库位置；保存后重启 NexPlay 才会切换。"
+                effect="重启后生效"
                 control={
                   <TextInput
                     value={settings.databasePath}
@@ -312,6 +331,7 @@ export function SettingsPage({
               <SettingsRow
                 title="日志级别"
                 desc="写入配置，供后端日志层读取。"
+                effect="保存后生效"
                 control={
                   <Dropdown
                     size="sm"
@@ -644,8 +664,8 @@ export function SettingsPage({
 
           {section === "appearance" && (
             <Group title="外观与辅助功能" desc="主题状态应用到整个文档，包括浮层、对话框与原生表单。">
-              <SettingsRow title="界面主题" desc="跟随系统会在系统外观变化时使用对应主题。" control={<Dropdown size="sm" value={settings.theme} onChange={(value) => update("theme", value)} matchWidth={false} className="min-w-[132px]" options={[{ value: "system", label: "跟随系统" }, { value: "light", label: "浅色" }, { value: "dark", label: "深色" }]} />} />
-              <SettingsRow title="减少动态效果" desc="关闭空间位移、缩放和非必要的过渡动画。" control={<Switch checked={settings.reducedMotion} onChange={(value) => update("reducedMotion", value)} />} />
+              <SettingsRow title="界面主题" desc="跟随系统会在系统外观变化时使用对应主题。" effect="保存后立即生效" control={<Dropdown size="sm" value={settings.theme} onChange={(value) => update("theme", value)} matchWidth={false} className="min-w-[132px]" options={[{ value: "system", label: "跟随系统" }, { value: "light", label: "浅色" }, { value: "dark", label: "深色" }]} />} />
+              <SettingsRow title="减少动态效果" desc="关闭空间位移、缩放和非必要的过渡动画。" effect="保存后立即生效" control={<Switch checked={settings.reducedMotion} onChange={(value) => update("reducedMotion", value)} />} />
             </Group>
           )}
 
@@ -692,10 +712,12 @@ function Group({ title, desc, children }: { title: string; desc?: string; childr
 function SettingsRow({
   title,
   desc,
+  effect,
   control,
 }: {
   title: string;
   desc?: string;
+  effect?: string;
   control: React.ReactNode;
 }) {
   return (
@@ -703,6 +725,7 @@ function SettingsRow({
       <div className="flex-1 min-w-0">
         <div className="text-[14px] font-semibold">{title}</div>
         {desc && <div className="mt-0.5 text-[12px] font-medium text-[var(--color-on-surface-faint)]">{desc}</div>}
+        {effect && <div className="mt-1 inline-flex rounded-full bg-[var(--color-primary-soft)] px-2 py-0.5 text-[10px] font-semibold text-[var(--color-primary)]">{effect}</div>}
       </div>
       <div className="min-w-0 justify-self-stretch">{control}</div>
     </div>

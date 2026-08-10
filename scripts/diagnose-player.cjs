@@ -18,6 +18,7 @@ const discoverProbeLimit = Number.isFinite(limitArg) && limitArg > 0 ? Math.roun
 const playbackMsArg = Number(rawArgs[rawArgs.indexOf("--playback-ms") + 1]);
 const playbackMs = Number.isFinite(playbackMsArg) && playbackMsArg > 0 ? Math.round(playbackMsArg) : 2000;
 const seekSettleSampleMs = 650;
+const exactSeekFirstFrameBudgetMs = 400;
 const optionValueIndexes = new Set(
   ["--discover", "--limit", "--playback-ms"]
     .map((option) => rawArgs.indexOf(option) + 1)
@@ -36,6 +37,11 @@ const daemon = fork(daemonPath, [], {
   cwd: projectRoot,
   serialization: "advanced",
   stdio: ["ignore", "ignore", "inherit", "ipc"],
+});
+daemon.on("exit", (code, signal) => {
+  if (code && code !== 0) {
+    console.error(`[diagnose-player] render daemon exited: code=${code} signal=${signal || "none"}`);
+  }
 });
 
 let nextRequestId = 1;
@@ -104,6 +110,20 @@ async function sleep(ms) {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function waitForNewFrame(width, height, label = "frame", targetPosition = null, timeoutMs = 3000) {
+  const deadline = performance.now() + timeoutMs;
+  let lastFrame = null;
+  while (performance.now() < deadline) {
+    lastFrame = await request({ type: "renderFrame", width, height }, timeoutMs);
+    const pts = lastFrame?.pts ?? lastFrame?.position;
+    const targetMatches = targetPosition === null
+      || (Number.isFinite(pts) && pts >= targetPosition - 1.25 && pts <= targetPosition + 2.5);
+    if (lastFrame?.hasFrame !== false && lastFrame?.pixels && targetMatches) return lastFrame;
+    await sleep(5);
+  }
+  throw new Error(`timeout waiting for ${label} (${lastFrame?.generation ?? "unknown"})`);
+}
+
 async function waitForPosition(position) {
   let state = null;
   for (let attempt = 0; attempt < 12; attempt += 1) {
@@ -121,9 +141,7 @@ async function renderAt(position, subtitleId, frameSize) {
   await request({ type: "setTrack", kind: "subtitle", id: subtitleId });
   await request({ type: "seek", position });
   const state = await waitForPosition(position);
-  await request({ type: "renderFrame", width: frameSize.width, height: frameSize.height });
-  await sleep(40);
-  const frame = await request({ type: "renderFrame", width: frameSize.width, height: frameSize.height });
+  const frame = await waitForNewFrame(frameSize.width, frameSize.height, "subtitle comparison frame", position);
   return { frame, state };
 }
 
@@ -162,7 +180,7 @@ async function renderMeasurementFrame(load, frameSize) {
       await sleep(120);
     }
     const start = performance.now();
-    const frame = await request({ type: "renderFrame", width: frameSize.width, height: frameSize.height }, 30000);
+    const frame = await waitForNewFrame(frameSize.width, frameSize.height, `measurement frame at ${position}s`, position);
     const ms = performance.now() - start;
     const stats = frameStats(frame);
     const measurement = { position, frame, ms, stats };
@@ -181,6 +199,9 @@ async function measureContinuousPlayback(frameSize, fps, durationMs) {
   let nextDueAt = startedAt;
   let lateFrames = 0;
   let renderedFrames = 0;
+  let requestedFrames = 0;
+  const uniquePts = new Set();
+  const ptsValues = [];
 
   await request({ type: "setPause", paused: false });
   while (performance.now() - startedAt < durationMs) {
@@ -189,10 +210,18 @@ async function measureContinuousPlayback(frameSize, fps, durationMs) {
       await sleep(Math.max(0, nextDueAt - now));
     }
     const frameStart = performance.now();
-    await request({ type: "renderFrame", width: frameSize.width, height: frameSize.height }, 30000);
+    const frame = await request({ type: "renderFrame", width: frameSize.width, height: frameSize.height }, 30000);
     const renderMs = performance.now() - frameStart;
     renderSamples.push(renderMs);
-    renderedFrames += 1;
+    requestedFrames += 1;
+    if (frame.hasFrame !== false) {
+      renderedFrames += 1;
+      if (Number.isFinite(frame.pts ?? frame.position)) {
+        const pts = Number((frame.pts ?? frame.position).toFixed(6));
+        uniquePts.add(pts);
+        ptsValues.push(pts);
+      }
+    }
     if (renderMs > frameBudgetMs) {
       lateFrames += 1;
     }
@@ -207,18 +236,40 @@ async function measureContinuousPlayback(frameSize, fps, durationMs) {
   const elapsedMs = performance.now() - startedAt;
   const expectedFrames = Math.max(1, Math.floor(elapsedMs / frameBudgetMs));
   const avgMs = renderSamples.reduce((sum, value) => sum + value, 0) / Math.max(1, renderSamples.length);
+  const ptsIntervalsMs = ptsValues.slice(1).map((value, index) => Math.max(0, (value - ptsValues[index]) * 1000));
+  const uniqueFrames = uniquePts.size;
+  const droppedFramesEstimate = ptsIntervalsMs.reduce((total, intervalMs) => {
+    if (intervalMs <= frameBudgetMs * 1.5) return total;
+    return total + Math.max(0, Math.round(intervalMs / frameBudgetMs) - 1);
+  }, 0);
+  const uniqueFrameMissRate = droppedFramesEstimate / Math.max(1, uniqueFrames + droppedFramesEstimate);
+  const requestP95Ms = percentile(renderSamples, 0.95);
   return {
     durationMs: Number(elapsedMs.toFixed(2)),
     targetFps: Number(Math.max(1, fps || 24).toFixed(3)),
     achievedFps: Number((renderedFrames / (elapsedMs / 1000)).toFixed(2)),
     expectedFrames,
     renderedFrames,
-    droppedFramesEstimate: Math.max(0, expectedFrames - renderedFrames),
+    requestedFrames,
+    uniqueFrames,
+    uniqueFrameMissRate: Number(uniqueFrameMissRate.toFixed(4)),
+    droppedFramesEstimate,
     lateFrames,
     avgRenderMs: Number(avgMs.toFixed(2)),
     maxRenderMs: Number(Math.max(...renderSamples).toFixed(2)),
+    requestP95Ms: Number(requestP95Ms.toFixed(2)),
+    ptsIntervalP95Ms: Number(percentile(ptsIntervalsMs, 0.95).toFixed(2)),
     frameBudgetMs: Number(frameBudgetMs.toFixed(2)),
+    transportRecommendation: requestP95Ms > frameBudgetMs || uniqueFrameMissRate > 0.01
+      ? "sharedMemoryTripleBuffer"
+      : "softwareFrameUpload",
   };
+}
+
+function percentile(values, ratio) {
+  if (!values.length) return 0;
+  const sorted = [...values].sort((left, right) => left - right);
+  return sorted[Math.min(sorted.length - 1, Math.max(0, Math.ceil(sorted.length * ratio) - 1))];
 }
 
 function discoverMediaFiles(root) {
@@ -297,7 +348,9 @@ async function diagnoseMedia(currentMediaPath, { includeSubtitles = true, native
 
   const info = await request({ type: "info" });
   const textureProbe = await request({ type: "probeWebglTextureRenderer" });
-  const load = await request({ type: "load", path: currentMediaPath }, 30000);
+  const loadStartedAt = performance.now();
+  const load = await request({ type: "load", path: currentMediaPath, generation: 1 }, 30000);
+  const loadMs = performance.now() - loadStartedAt;
   await sleep(500);
   const state = await request({ type: "state" });
   const frameSize = frameSizeFromState(state, { nativeSize });
@@ -330,6 +383,9 @@ async function diagnoseMedia(currentMediaPath, { includeSubtitles = true, native
     avgMs: Number(avgRenderMs.toFixed(2)),
     maxMs: Number(Math.max(...renderSamples).toFixed(2)),
     sourceFrameBudgetMs: Number((1000 / Math.max(1, state.fps || 24)).toFixed(2)),
+    generation: load.generation,
+    fileReady: load.fileReady,
+    loadMs: Number(loadMs.toFixed(2)),
     ...frameStats(frame),
   };
   result.playback = playback;
@@ -338,7 +394,7 @@ async function diagnoseMedia(currentMediaPath, { includeSubtitles = true, native
   const seekTarget = Math.min(300, Math.max(20, (load.duration || 600) / 3));
   await request({ type: "seek", position: seekTarget }, 30000);
   const seekDone = performance.now();
-  const seekFrame = await request({ type: "renderFrame", width: frameSize.width, height: frameSize.height }, 30000);
+  const seekFrame = await waitForNewFrame(frameSize.width, frameSize.height, "seek frame", seekTarget);
   const seekFramePosition = typeof seekFrame.position === "number" ? seekFrame.position : seekTarget;
   result.seek = {
     commandMs: Number((seekDone - seekStart).toFixed(2)),
@@ -346,6 +402,7 @@ async function diagnoseMedia(currentMediaPath, { includeSubtitles = true, native
     targetPosition: Number(seekTarget.toFixed(3)),
     framePosition: Number(seekFramePosition.toFixed(3)),
     framePositionDelta: Number(Math.abs(seekFramePosition - seekTarget).toFixed(3)),
+    firstFrameBudgetMs: exactSeekFirstFrameBudgetMs,
   };
 
   const seekPositions = [30, 90, 180, 300, 420].filter((position) => position < (load.duration || Infinity));
@@ -354,12 +411,12 @@ async function diagnoseMedia(currentMediaPath, { includeSubtitles = true, native
     const start = performance.now();
     await request({ type: "seek", position }, 30000);
     const seekCommandDone = performance.now();
-    const seekFrame = await request({ type: "renderFrame", width: frameSize.width, height: frameSize.height }, 30000);
+    const seekFrame = await waitForNewFrame(frameSize.width, frameSize.height, `continuous seek frame at ${position}s`, position);
     const frameDone = performance.now();
     const framePosition = typeof seekFrame.position === "number" ? seekFrame.position : position;
     await sleep(seekSettleSampleMs);
-    const settledFrame = await request({ type: "renderFrame", width: frameSize.width, height: frameSize.height }, 30000);
-    const settledFramePosition = typeof settledFrame.position === "number" ? settledFrame.position : position;
+    const settledState = await request({ type: "state" });
+    const settledFramePosition = typeof settledState.position === "number" ? settledState.position : framePosition;
     seekSamples.push({
       position,
       framePosition: Number(framePosition.toFixed(3)),
@@ -373,6 +430,7 @@ async function diagnoseMedia(currentMediaPath, { includeSubtitles = true, native
   result.continuousSeek = {
     samples: seekSamples,
     maxFirstFrameMs: Number(Math.max(...seekSamples.map((sample) => sample.firstFrameMs)).toFixed(2)),
+    firstFrameBudgetMs: exactSeekFirstFrameBudgetMs,
   };
 
   const selectedSubtitle = includeSubtitles
@@ -432,8 +490,8 @@ async function diagnoseMedia(currentMediaPath, { includeSubtitles = true, native
     result.render.avgMs < Math.max(16.7, 1000 / Math.max(1, state.fps || 24)) &&
     result.playback.achievedFps >= Math.max(1, (state.fps || 24) * 0.92) &&
     result.playback.lateFrames <= Math.max(2, Math.ceil(result.playback.renderedFrames * 0.08)) &&
-    result.seek.firstFrameMs < 120 &&
-    result.continuousSeek.maxFirstFrameMs < 140 &&
+    result.seek.firstFrameMs < exactSeekFirstFrameBudgetMs &&
+    result.continuousSeek.maxFirstFrameMs < exactSeekFirstFrameBudgetMs &&
     (!includeSubtitles || (state.subtitleTracks?.length ? result.subtitles.detected === true : true));
   result.state = {
     duration: load.duration,
@@ -455,7 +513,6 @@ async function main() {
     for (const sample of samples) {
       results.push(await diagnoseMedia(sample.filePath, { includeSubtitles: false, nativeSize }));
     }
-    await request({ type: "shutdown" });
     const output = {
       ok: results.every((result) => result.ok),
       root,
@@ -464,24 +521,21 @@ async function main() {
       samples: results,
     };
     console.log(JSON.stringify(output, null, 2));
+    daemon.kill();
     if (!output.ok) process.exit(1);
     return;
   }
 
   const result = await diagnoseMedia(mediaPath, { includeSubtitles, nativeSize });
-  await request({ type: "shutdown" });
   console.log(JSON.stringify(result, null, 2));
+  daemon.kill();
   if (!result.ok) {
     process.exit(1);
   }
 }
 
-main().catch(async (error) => {
-  try {
-    await request({ type: "shutdown" }, 1000);
-  } catch {
-    daemon.kill();
-  }
+main().catch((error) => {
+  daemon.kill();
   console.error(JSON.stringify({ ok: false, error: error.message }, null, 2));
   process.exit(1);
 });

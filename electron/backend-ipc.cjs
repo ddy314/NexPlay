@@ -143,14 +143,20 @@ function registerBackendIpc(backendClient, options = {}) {
   ipcMain.handle("backend:media-source", (_event, mediaId) => (
     backendClient.request("mediaSource", { mediaId })
   ));
-  ipcMain.handle("backend:danmaku-track", (_event, mediaId) => (
-    backendClient.request("danmakuTrack", { mediaId })
+  ipcMain.handle("backend:danmaku-track", (_event, payload) => (
+    backendClient.request("danmakuTrack", payload)
   ));
+  ipcMain.handle("backend:rematch-danmaku", (_event, payload) => backendClient.request("rematchDanmaku", payload));
+  ipcMain.handle("backend:danmaku-binding", (_event, payload) => backendClient.request("danmakuBinding", payload));
+  ipcMain.handle("backend:set-danmaku-offset", (_event, payload) => backendClient.request("setDanmakuOffset", payload));
   ipcMain.handle("backend:search-catalog", (_event, payload) => (
     backendClient.request("searchCatalog", payload)
   ));
   ipcMain.handle("backend:online-subject", (_event, payload) => (
     backendClient.request("onlineSubject", payload)
+  ));
+  ipcMain.handle("backend:resolve-subject", (_event, payload) => (
+    backendClient.request("resolveSubject", payload)
   ));
   ipcMain.handle("backend:refresh-subject-metadata", (_event, payload) => (
     backendClient.request("refreshSubjectMetadata", payload)

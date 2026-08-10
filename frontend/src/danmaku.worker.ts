@@ -39,6 +39,7 @@ type ClockState = {
   position: number;
   timestamp: number;
   paused: boolean;
+  rate: number;
 };
 
 type RendererState = {
@@ -84,7 +85,6 @@ const EMIT_BUDGET_MS = 3.5;
 const MAX_LATE_EMIT_SECONDS = 0.8;
 const PREWARM_WINDOW_SECONDS = 3;
 const PREWARM_BUDGET_MS = 2;
-const HARD_SEEK_THRESHOLD_SECONDS = 3;
 const BITMAP_PADDING = 6;
 const STROKE_WIDTH = 3;
 const MAX_BITMAP_CACHE = 1200;
@@ -98,6 +98,7 @@ let clock: ClockState = {
   position: 0,
   timestamp: performance.now(),
   paused: true,
+  rate: 1,
 };
 const state: RendererState = {
   cursor: 0,
@@ -160,7 +161,8 @@ self.onmessage = (event: MessageEvent<WorkerMessage>) => {
     case "visible":
       state.visible = message.visible;
       if (!message.visible) {
-        resetRendererToPosition(message.position);
+        clearCanvas();
+        state.canvasDirty = false;
       }
       break;
     case "profile":
@@ -246,48 +248,39 @@ function stopLoop() {
 }
 
 function updateClock(position: number, paused: boolean, seeking: boolean, timestamp: number) {
-  void timestamp;
   const now = performance.now();
   const nextPosition = Number.isFinite(position) ? Math.max(0, position) : 0;
+  const sampledPosition = paused ? nextPosition : nextPosition + Math.max(0, now - timestamp) / 1000;
   const current = currentClockPosition();
   state.seeking = seeking;
 
   if (seeking) {
     clock = {
-      position: nextPosition,
+      position: sampledPosition,
       timestamp: now,
       paused: true,
+      rate: 1,
     };
     return;
   }
 
   if (paused) {
-    const pausedPosition = clock.paused
-      ? nextPosition
-      : current;
     clock = {
-      position: pausedPosition,
+      position: sampledPosition,
       timestamp: now,
       paused: true,
+      rate: 1,
     };
     return;
   }
 
-  const drift = nextPosition - current;
-  if (Math.abs(drift) > HARD_SEEK_THRESHOLD_SECONDS) {
-    clock = {
-      position: nextPosition,
-      timestamp: now,
-      paused: false,
-    };
-    resetRendererToPosition(nextPosition);
-    return;
-  }
-
+  const drift = sampledPosition - current;
+  const correctionWindow = Math.max(0.25, Math.min(2, Math.abs(drift) * 4));
   clock = {
-    position: Math.abs(drift) > 0.35 ? current + drift * 0.18 : current,
+    position: current,
     timestamp: now,
     paused: false,
+    rate: Math.max(0.9, Math.min(1.1, 1 + drift / correctionWindow)),
   };
 }
 
@@ -299,6 +292,7 @@ function resetClockToPosition(position: number, paused: boolean) {
     position: nextPosition,
     timestamp: now,
     paused,
+    rate: 1,
   };
   resetRendererToPosition(nextPosition);
 }
@@ -467,7 +461,7 @@ function drawActiveItems(context: OffscreenCanvasRenderingContext2D, currentPosi
   context.setTransform(state.dpr, 0, 0, state.dpr, 0, 0);
   context.clearRect(0, 0, state.width, state.height);
   context.globalAlpha = 0.94;
-  context.imageSmoothingEnabled = true;
+  context.imageSmoothingEnabled = false;
 
   let nextLength = 0;
   for (let index = 0; index < state.active.length; index += 1) {
@@ -487,7 +481,9 @@ function drawActiveItems(context: OffscreenCanvasRenderingContext2D, currentPosi
     }
 
     if (!expired) {
-      context.drawImage(item.bitmap.canvas, x, y - item.height / 2, item.width, item.height);
+      const pixelX = Math.round(x * state.dpr) / state.dpr;
+      const pixelY = Math.round((y - item.height / 2) * state.dpr) / state.dpr;
+      context.drawImage(item.bitmap.canvas, pixelX, pixelY, item.width, item.height);
       state.active[nextLength++] = item;
     }
   }
@@ -624,7 +620,7 @@ function currentClockPosition() {
   if (clock.paused) {
     return clock.position;
   }
-  return Math.max(0, clock.position + (performance.now() - clock.timestamp) / 1000);
+  return Math.max(0, clock.position + (performance.now() - clock.timestamp) / 1000 * clock.rate);
 }
 
 function lowerBoundByTime(source: WorkerDanmakuItem[], time: number) {

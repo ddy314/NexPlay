@@ -27,6 +27,20 @@ impl Repository {
 
     pub fn init(&self) -> AppResult<()> {
         let mut conn = self.connect()?;
+        conn.pragma_update(None, "journal_mode", "WAL")?;
+        let current_version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+        if current_version > 0
+            && current_version < schema::LATEST_SCHEMA_VERSION
+            && self.db_path.is_file()
+        {
+            let backup_path = self.db_path.with_extension(format!(
+                "sqlite3.pre-v{}.bak",
+                schema::LATEST_SCHEMA_VERSION
+            ));
+            if !backup_path.exists() {
+                conn.execute("VACUUM INTO ?1", params![backup_path.to_string_lossy()])?;
+            }
+        }
         schema::init_database(&mut conn)?;
         drop(conn);
         self.deduplicate_download_tasks()
@@ -1587,6 +1601,42 @@ impl Repository {
         .map_err(Into::into)
     }
 
+    pub fn delete_danmaku_match(&self, media_id: i64) -> AppResult<()> {
+        let conn = self.connect()?;
+        conn.execute(
+            "DELETE FROM danmaku_matches WHERE media_id = ?1",
+            params![media_id],
+        )?;
+        Ok(())
+    }
+
+    pub fn danmaku_offset_ms(&self, media_id: i64) -> AppResult<i64> {
+        let conn = self.connect()?;
+        conn.query_row(
+            "SELECT offset_ms FROM danmaku_preferences WHERE media_id = ?1",
+            params![media_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map(|value| value.unwrap_or(0))
+        .map_err(Into::into)
+    }
+
+    pub fn set_danmaku_offset_ms(&self, media_id: i64, offset_ms: i64, now: i64) -> AppResult<()> {
+        let conn = self.connect()?;
+        conn.execute(
+            r#"
+            INSERT INTO danmaku_preferences (media_id, offset_ms, updated_at)
+            VALUES (?1, ?2, ?3)
+            ON CONFLICT(media_id) DO UPDATE SET
+                offset_ms = excluded.offset_ms,
+                updated_at = excluded.updated_at
+            "#,
+            params![media_id, offset_ms.clamp(-10_000, 10_000), now],
+        )?;
+        Ok(())
+    }
+
     pub fn danmaku_comment_cache(
         &self,
         provider: &str,
@@ -2309,6 +2359,7 @@ impl Repository {
         }
         let conn = Connection::open(&self.db_path)?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
+        conn.pragma_update(None, "busy_timeout", 5_000)?;
         Ok(conn)
     }
 }

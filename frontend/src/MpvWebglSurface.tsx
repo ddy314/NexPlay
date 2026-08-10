@@ -17,6 +17,7 @@ type MpvWebglSurfaceProps = {
   className?: string;
   onError?: (message: string) => void;
   onFrame?: (frame: MpvFrame) => void;
+  acceptFrame?: (frame: MpvFrame) => boolean;
 };
 
 type GlState = {
@@ -38,6 +39,7 @@ export function MpvWebglSurface({
   className,
   onError,
   onFrame,
+  acceptFrame,
 }: MpvWebglSurfaceProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const glStateRef = useRef<GlState | null>(null);
@@ -47,6 +49,7 @@ export function MpvWebglSurface({
   const dimensionsRef = useRef({ width: videoWidth, height: videoHeight, fps });
   const onErrorRef = useRef(onError);
   const onFrameRef = useRef(onFrame);
+  const acceptFrameRef = useRef(acceptFrame);
 
   useEffect(() => {
     activeRef.current = active;
@@ -71,6 +74,9 @@ export function MpvWebglSurface({
   useEffect(() => {
     onFrameRef.current = onFrame;
   }, [onFrame]);
+  useEffect(() => {
+    acceptFrameRef.current = acceptFrame;
+  }, [acceptFrame]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -123,13 +129,19 @@ export function MpvWebglSurface({
         const { width, height } = chooseRenderSize(canvas, dimensionsRef.current.width, dimensionsRef.current.height);
         const requestStartedAt = performance.now();
         const requestGeneration = generationRef.current;
-        mpvRenderFrame(width, height)
+        mpvRenderFrame(width, height, requestGeneration)
           .then((frame) => {
-            if (disposed || frame.ok === false || requestGeneration !== generationRef.current || !activeRef.current) {
+            if (disposed || frame.ok === false || frame.hasFrame === false || frame.generation !== requestGeneration || requestGeneration !== generationRef.current || !activeRef.current) {
               return;
             }
-            uploadFrame(glState, frame);
-            onFrameRef.current?.(frame);
+            if (acceptFrameRef.current && !acceptFrameRef.current(frame)) return;
+            const uploadStartedAt = performance.now();
+            if (!uploadFrame(glState, frame)) return;
+            onFrameRef.current?.({
+              ...frame,
+              uploadedAt: performance.now(),
+              uploadMs: performance.now() - uploadStartedAt,
+            });
             hasFrame = true;
             pausedFrameCaptured = pausedRef.current;
             lastError = "";
@@ -325,8 +337,9 @@ function resizeCanvasToDisplaySize(canvas: HTMLCanvasElement) {
 }
 
 function uploadFrame(state: GlState, frame: MpvFrame) {
+  if (!(frame.pixels instanceof Uint8Array) || !frame.width || !frame.height) return false;
   const { gl } = state;
-  const pixels = frame.pixels instanceof Uint8Array ? frame.pixels : new Uint8Array(frame.pixels);
+  const pixels = frame.pixels;
   gl.useProgram(state.program);
   gl.activeTexture(gl.TEXTURE0);
   gl.bindTexture(gl.TEXTURE_2D, state.texture);
@@ -338,6 +351,7 @@ function uploadFrame(state: GlState, frame: MpvFrame) {
     gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, frame.width, frame.height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
   }
   drawFrame(state);
+  return true;
 }
 
 function drawFrame(state: GlState) {

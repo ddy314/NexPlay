@@ -102,6 +102,8 @@ function toSubject(item: CalendarItem): Subject {
   const airDate = typeof item.air_date === "string" ? item.air_date : "";
   const subject: Subject = {
     id: `discover-bgm-${item.id ?? Math.random().toString(36).slice(2)}`,
+    canonicalKey: item.id ? `bangumi:${item.id}` : `discover:${item.name ?? "unknown"}`,
+    availability: "onlineOnly",
     mediaId: 0,
     subjectId: item.id ?? 0,
     source: "discover",

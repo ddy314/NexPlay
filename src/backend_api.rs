@@ -9,8 +9,8 @@ use crate::config::{
     NyaaConfig, QbittorrentConfig,
 };
 use crate::domain::{
-    BangumiEpisodeCollection, BangumiSubjectCollection, DanmakuMode, DanmakuTrack, ScanSummary,
-    UiSeriesCardData,
+    BangumiEpisodeCollection, BangumiSubjectCollection, DanmakuMatch, DanmakuMode, DanmakuTrack,
+    ScanSummary, UiSeriesCardData,
 };
 use crate::error::AppResult;
 use crate::service::{
@@ -62,6 +62,8 @@ pub enum FrontendMatchStatus {
 #[serde(rename_all = "camelCase")]
 pub struct FrontendSubject {
     pub id: String,
+    pub canonical_key: String,
+    pub availability: String,
     pub media_id: i64,
     pub subject_id: i64,
     pub source: String,
@@ -217,6 +219,29 @@ pub struct MediaSourceResponse {
 #[serde(rename_all = "camelCase")]
 pub struct DanmakuTrackRequest {
     pub media_id: i64,
+    #[serde(default)]
+    pub video_duration: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct SetDanmakuOffsetRequest {
+    pub media_id: i64,
+    pub offset_ms: i64,
+}
+
+#[derive(Debug, Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct DanmakuBindingResponse {
+    pub media_id: i64,
+    pub provider: String,
+    pub match_source: String,
+    pub title: String,
+    pub anime_title: String,
+    pub episode_title: String,
+    pub exact: bool,
+    pub confidence: String,
+    pub user_offset_ms: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -237,6 +262,23 @@ pub struct CatalogSearchResponse {
 pub struct OnlineSubjectRequest {
     pub provider: String,
     pub provider_subject_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct SubjectRef {
+    pub canonical_key: String,
+    pub provider: String,
+    pub provider_subject_id: String,
+    #[ts(optional)]
+    pub media_id: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ResolveSubjectRequest {
+    #[serde(rename = "ref")]
+    pub subject_ref: SubjectRef,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -496,6 +538,7 @@ pub struct DanmakuTrackResponse {
     pub fetched_at: i64,
     pub expires_at: i64,
     pub stale: bool,
+    pub binding: DanmakuBindingResponse,
     pub items: Vec<FrontendDanmakuItem>,
 }
 
@@ -690,21 +733,121 @@ pub fn danmaku_track(
     input: DanmakuTrackRequest,
 ) -> AppResult<DanmakuTrackResponse> {
     let media = context.media.playback_media_by_id(input.media_id)?;
-    let track = context.danmaku.track_for_media(&media)?;
-    Ok(frontend_danmaku_track_from_domain(track))
+    let track = context
+        .danmaku
+        .track_for_media_with_duration(&media, input.video_duration.round() as i32)?;
+    let binding = context
+        .danmaku
+        .cached_dandanplay(&media)?
+        .ok_or_else(|| crate::error::AppError::Api("dandanplay binding disappeared".to_string()))?;
+    let offset_ms = context.danmaku.offset_ms(media.id)?;
+    Ok(frontend_danmaku_track_from_domain(
+        track,
+        binding,
+        offset_ms,
+        media.file_hash.is_some(),
+    ))
+}
+
+pub fn rematch_danmaku(
+    context: &AppContext,
+    input: DanmakuTrackRequest,
+) -> AppResult<DanmakuBindingResponse> {
+    let media = context.media.playback_media_by_id(input.media_id)?;
+    let binding = context
+        .danmaku
+        .rematch_dandanplay(&media, input.video_duration.round() as i32)?;
+    let offset_ms = context.danmaku.offset_ms(media.id)?;
+    Ok(frontend_danmaku_binding(
+        binding,
+        media.id,
+        offset_ms,
+        media.file_hash.is_some(),
+    ))
+}
+
+pub fn danmaku_binding(
+    context: &AppContext,
+    input: DanmakuTrackRequest,
+) -> AppResult<DanmakuBindingResponse> {
+    let media = context.media.playback_media_by_id(input.media_id)?;
+    let binding = context
+        .danmaku
+        .cached_or_match_dandanplay_with_duration(&media, input.video_duration.round() as i32)?
+        .ok_or_else(|| crate::error::AppError::Api("dandanplay returned no match".to_string()))?;
+    let offset_ms = context.danmaku.offset_ms(media.id)?;
+    Ok(frontend_danmaku_binding(
+        binding,
+        media.id,
+        offset_ms,
+        media.file_hash.is_some(),
+    ))
+}
+
+pub fn set_danmaku_offset(context: &AppContext, input: SetDanmakuOffsetRequest) -> AppResult<i64> {
+    context.media.playback_media_by_id(input.media_id)?;
+    context
+        .danmaku
+        .set_offset_ms(input.media_id, input.offset_ms)
 }
 
 pub fn search_catalog(
     context: &AppContext,
     input: CatalogSearchRequest,
 ) -> AppResult<CatalogSearchResponse> {
-    let subjects = context
-        .catalog
-        .search_catalog(&input.query, input.limit)?
+    let current = snapshot(context)?;
+    let mut subjects = current
+        .subjects
         .into_iter()
-        .map(frontend_subject_from_catalog)
-        .collect();
+        .chain(current.bangumi_collections)
+        .filter(|subject| subject_matches_query(subject, &input.query))
+        .collect::<Vec<_>>();
+    match context.catalog.search_catalog(&input.query, input.limit) {
+        Ok(online_subjects) => subjects.extend(
+            online_subjects
+                .into_iter()
+                .map(frontend_subject_from_catalog),
+        ),
+        Err(error) if subjects.is_empty() => return Err(error),
+        Err(_) => {}
+    }
+    subjects = merge_subjects_by_canonical_key(subjects);
+    subjects.truncate(input.limit);
     Ok(CatalogSearchResponse { subjects })
+}
+
+pub fn resolve_subject(
+    context: &AppContext,
+    input: ResolveSubjectRequest,
+) -> AppResult<FrontendSubject> {
+    let subject_ref = input.subject_ref;
+    let current = snapshot(context)?;
+    if let Some(subject) = current
+        .subjects
+        .into_iter()
+        .chain(current.bangumi_collections)
+        .find(|subject| {
+            subject.canonical_key == subject_ref.canonical_key
+                || (subject.provider == subject_ref.provider
+                    && subject.provider_subject_id == subject_ref.provider_subject_id)
+                || subject_ref.media_id.is_some_and(|media_id| {
+                    subject
+                        .local_files
+                        .iter()
+                        .any(|file| file.media_id == media_id)
+                })
+        })
+    {
+        return Ok(subject);
+    }
+
+    online_subject(
+        context,
+        OnlineSubjectRequest {
+            provider: subject_ref.provider,
+            provider_subject_id: subject_ref.provider_subject_id,
+        },
+    )
 }
 
 pub fn online_subject(
@@ -1465,6 +1608,12 @@ fn frontend_subject_from_series(
 
     FrontendSubject {
         id: format!("subject-{}", card.subject_id),
+        canonical_key: canonical_subject_key(
+            &card.provider,
+            &card.provider_subject_id,
+            card.subject_id,
+        ),
+        availability: "localPlayable".to_string(),
         media_id: 0,
         subject_id: card.subject_id,
         source: "local".to_string(),
@@ -1509,6 +1658,60 @@ fn frontend_subject_from_series(
         file_summary: card.latest_file_name,
         local_files,
         episodes_detail,
+    }
+}
+
+fn canonical_subject_key(provider: &str, provider_subject_id: &str, fallback_id: i64) -> String {
+    let provider = provider.trim();
+    let external_id = provider_subject_id.trim();
+    if provider == "bangumi" && !external_id.is_empty() {
+        return format!("bangumi:{external_id}");
+    }
+    if !provider.is_empty() && provider != "manual" && !external_id.is_empty() {
+        return format!("{provider}:{external_id}");
+    }
+    format!("local:{fallback_id}")
+}
+
+fn subject_matches_query(subject: &FrontendSubject, query: &str) -> bool {
+    let query = query.trim().to_lowercase();
+    query.is_empty()
+        || subject.title.to_lowercase().contains(&query)
+        || subject.title_cn.to_lowercase().contains(&query)
+        || subject
+            .aliases
+            .iter()
+            .any(|alias| alias.to_lowercase().contains(&query))
+        || subject
+            .tags
+            .iter()
+            .any(|tag| tag.to_lowercase().contains(&query))
+}
+
+fn merge_subjects_by_canonical_key(subjects: Vec<FrontendSubject>) -> Vec<FrontendSubject> {
+    let mut merged = Vec::<FrontendSubject>::new();
+    let mut indexes = HashMap::<String, usize>::new();
+    for subject in subjects {
+        if let Some(index) = indexes.get(&subject.canonical_key).copied() {
+            let current = &merged[index];
+            let replace = availability_priority(&subject.availability)
+                > availability_priority(&current.availability);
+            if replace {
+                merged[index] = subject;
+            }
+            continue;
+        }
+        indexes.insert(subject.canonical_key.clone(), merged.len());
+        merged.push(subject);
+    }
+    merged
+}
+
+fn availability_priority(value: &str) -> u8 {
+    match value {
+        "localPlayable" => 3,
+        "cloudCollection" => 2,
+        _ => 1,
     }
 }
 
@@ -1564,6 +1767,16 @@ fn frontend_subject_from_catalog(subject: CatalogSubjectData) -> FrontendSubject
     };
     FrontendSubject {
         id: subject.id,
+        canonical_key: canonical_subject_key(
+            &subject.provider,
+            &subject.provider_subject_id,
+            subject_id,
+        ),
+        availability: if subject.local {
+            "localPlayable".to_string()
+        } else {
+            "onlineOnly".to_string()
+        },
         media_id: 0,
         subject_id,
         source: subject.source,
@@ -1711,6 +1924,8 @@ fn frontend_subject_from_bangumi_collection(
 
     FrontendSubject {
         id: format!("bangumi-collection-{}", collection.subject_id),
+        canonical_key: format!("bangumi:{}", collection.subject_id),
+        availability: "cloudCollection".to_string(),
         media_id: 0,
         subject_id: collection.subject_id,
         source: "bangumiCollection".to_string(),
@@ -1762,7 +1977,12 @@ fn frontend_subject_from_bangumi_collection(
     }
 }
 
-fn frontend_danmaku_track_from_domain(track: DanmakuTrack) -> DanmakuTrackResponse {
+fn frontend_danmaku_track_from_domain(
+    track: DanmakuTrack,
+    binding: DanmakuMatch,
+    offset_ms: i64,
+    matched_with_hash: bool,
+) -> DanmakuTrackResponse {
     DanmakuTrackResponse {
         media_id: track.media_id,
         provider: track.provider,
@@ -1771,6 +1991,7 @@ fn frontend_danmaku_track_from_domain(track: DanmakuTrack) -> DanmakuTrackRespon
         fetched_at: track.fetched_at,
         expires_at: track.expires_at,
         stale: track.stale,
+        binding: frontend_danmaku_binding(binding, track.media_id, offset_ms, matched_with_hash),
         items: track
             .items
             .into_iter()
@@ -1787,6 +2008,30 @@ fn frontend_danmaku_track_from_domain(track: DanmakuTrack) -> DanmakuTrackRespon
                 user_hash: item.user_hash,
             })
             .collect(),
+    }
+}
+
+fn frontend_danmaku_binding(
+    binding: DanmakuMatch,
+    media_id: i64,
+    offset_ms: i64,
+    matched_with_hash: bool,
+) -> DanmakuBindingResponse {
+    DanmakuBindingResponse {
+        media_id,
+        provider: binding.provider,
+        match_source: if matched_with_hash {
+            "hashAndFileName"
+        } else {
+            "fileNameOnly"
+        }
+        .to_string(),
+        title: binding.title,
+        anime_title: binding.anime_title.unwrap_or_default(),
+        episode_title: binding.episode.unwrap_or_default(),
+        exact: binding.exact,
+        confidence: if binding.exact { "exact" } else { "candidate" }.to_string(),
+        user_offset_ms: offset_ms,
     }
 }
 
@@ -1920,6 +2165,8 @@ pub fn export_types(output_path: impl AsRef<Path>) -> AppResult<()> {
         MediaSourceRequest::decl(&ts_config),
         MediaSourceResponse::decl(&ts_config),
         DanmakuTrackRequest::decl(&ts_config),
+        SetDanmakuOffsetRequest::decl(&ts_config),
+        DanmakuBindingResponse::decl(&ts_config),
         FrontendDanmakuMode::decl(&ts_config),
         FrontendDanmakuItem::decl(&ts_config),
         DanmakuTrackResponse::decl(&ts_config),
@@ -1930,6 +2177,8 @@ pub fn export_types(output_path: impl AsRef<Path>) -> AppResult<()> {
         CatalogSearchRequest::decl(&ts_config),
         CatalogSearchResponse::decl(&ts_config),
         OnlineSubjectRequest::decl(&ts_config),
+        SubjectRef::decl(&ts_config),
+        ResolveSubjectRequest::decl(&ts_config),
         RefreshSubjectRequest::decl(&ts_config),
         EpisodeResourcesRequest::decl(&ts_config),
         EpisodeResourcesResponse::decl(&ts_config),
@@ -1978,6 +2227,31 @@ pub fn export_types(output_path: impl AsRef<Path>) -> AppResult<()> {
     std::fs::write(output_path, content)
         .map_err(|error| crate::error::io_error(output_path, error))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod identity_tests {
+    use super::canonical_subject_key;
+
+    #[test]
+    fn bangumi_identity_is_stable_across_local_cloud_and_online_entries() {
+        assert_eq!(
+            canonical_subject_key("bangumi", "12345", 8),
+            "bangumi:12345"
+        );
+        assert_eq!(
+            canonical_subject_key("bangumi", "12345", 99),
+            "bangumi:12345"
+        );
+    }
+
+    #[test]
+    fn unmapped_local_subjects_remain_independent() {
+        assert_ne!(
+            canonical_subject_key("manual", "", 8),
+            canonical_subject_key("manual", "", 9)
+        );
+    }
 }
 
 fn frontend_settings_from_config(config: AppConfig) -> FrontendEditableSettings {
