@@ -210,6 +210,12 @@ const fallbackSnapshot: BackendSnapshot = {
   },
 };
 const BACKEND_EVENT_UI_FLUSH_MS = 120;
+const BANGUMI_SUBJECT_SYNC_TTL_MS = 5 * 60_000;
+const bangumiSubjectSyncs = new Map<number, {
+  promise?: Promise<BangumiSyncSummary>;
+  result?: BangumiSyncSummary;
+  syncedAt: number;
+}>();
 type ScanStatusUpdater = (current: ScanStatus) => ScanStatus;
 
 function normalizeScanSummary(summary: BackendEvent["summary"] | ScanResponse["summary"] | undefined): ScanResponse["summary"] {
@@ -662,7 +668,22 @@ export async function syncBangumiSubject(subjectId: number): Promise<BangumiSync
   if (!window.nexplay) {
     throw new Error("当前页面没有连接到 NexPlay 后端。");
   }
-  return window.nexplay.syncBangumiSubject({ subjectId });
+  const current = bangumiSubjectSyncs.get(subjectId);
+  if (current?.promise) return current.promise;
+  if (current?.result && Date.now() - current.syncedAt < BANGUMI_SUBJECT_SYNC_TTL_MS) {
+    return current.result;
+  }
+  const promise = window.nexplay.syncBangumiSubject({ subjectId })
+    .then((result) => {
+      bangumiSubjectSyncs.set(subjectId, { result, syncedAt: Date.now() });
+      return result;
+    })
+    .catch((error) => {
+      bangumiSubjectSyncs.delete(subjectId);
+      throw error;
+    });
+  bangumiSubjectSyncs.set(subjectId, { promise, syncedAt: current?.syncedAt ?? 0 });
+  return promise;
 }
 
 export async function updateBangumiCollection(input: {

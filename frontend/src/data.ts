@@ -69,7 +69,7 @@ export function makePlaybackEpisodes(subject: Subject): PlaybackEpisode[] {
       titleCn: episode.titleCn,
       airDate: episode.airDate,
       cached: episode.cached,
-      watched: episode.bgmCollectionType === 2 || (episode.cached && episode.episode <= subject.watchedEpisodes),
+      watched: episode.watched,
       bgmEpisodeId: episode.bgmEpisodeId,
       bgmCollectionType: episode.bgmCollectionType,
       bgmCollectionLabel: episode.bgmCollectionLabel,

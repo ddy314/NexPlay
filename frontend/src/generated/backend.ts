@@ -11,7 +11,7 @@ export type FrontendMatchStatus = "matched" | "tentative" | "unmatched" | "faile
 
 export type FrontendLocalFile = { mediaId: number, fileName: string, fileSize: string, episode?: number, modifiedAt: number, };
 
-export type FrontendEpisode = { episode: number, bgmEpisodeId?: number, title: string, titleCn: string, airDate: string, cached: boolean, bgmCollectionType?: number, bgmCollectionLabel: string, bgmPending: boolean, mediaId?: number, fileName?: string, fileSize?: string, };
+export type FrontendEpisode = { episode: number, bgmEpisodeId?: number, title: string, titleCn: string, airDate: string, cached: boolean, watched: boolean, bgmCollectionType?: number, bgmCollectionLabel: string, bgmPending: boolean, mediaId?: number, fileName?: string, fileSize?: string, };
 
 export type FrontendSubject = { id: string, canonicalKey: string, availability: string, mediaId: number, subjectId: number, source: string, provider: string, providerSubjectId: string, local: boolean, aliases: Array<string>, title: string, titleCn: string, year: number, airDate: string, rating: number, rank: number, tags: Array<string>, summary: string, poster: string, hero: string, status: FrontendMatchStatus, episodes: number, watchedEpisodes: number, currentEpisode?: number, progress: number, bgmCollectionType?: number, bgmCollectionLabel: string, bgmRate: number, bgmPending: boolean, files: number, totalSize: string, lastPlayed?: string, newEpisode: boolean, metadataReady: boolean, fileSummary: string, localFiles: Array<FrontendLocalFile>, episodesDetail: Array<FrontendEpisode>, };
 

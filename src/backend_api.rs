@@ -124,6 +124,7 @@ pub struct FrontendEpisode {
     pub title_cn: String,
     pub air_date: String,
     pub cached: bool,
+    pub watched: bool,
     #[ts(optional)]
     pub bgm_collection_type: Option<i64>,
     pub bgm_collection_label: String,
@@ -1556,11 +1557,6 @@ fn frontend_subject_from_series(
             bgm_by_sort.insert(rounded_episode_number(sort), episode);
         }
     }
-    let local_watched_episodes = card
-        .episodes
-        .iter()
-        .filter(|episode| episode.media_id.is_some() && episode.watched)
-        .count();
     let local_current_episode = card
         .episodes
         .iter()
@@ -1573,6 +1569,8 @@ fn frontend_subject_from_series(
         .map(|episode| {
             let episode_number = rounded_episode_number(episode.episode_number);
             let bgm = bgm_by_sort.get(&episode_number).copied();
+            let watched =
+                merged_episode_watched(episode.watched, bgm.map(|episode| episode.collection_type));
             FrontendEpisode {
                 episode: episode_number,
                 bgm_episode_id: bgm.map(|episode| episode.episode_id),
@@ -1586,6 +1584,7 @@ fn frontend_subject_from_series(
                     .and_then(|episode| episode.air_date.clone())
                     .unwrap_or(episode.air_date),
                 cached: episode.media_id.is_some(),
+                watched,
                 bgm_collection_type: bgm.map(|episode| episode.collection_type),
                 bgm_collection_label: bgm
                     .map(|episode| episode_collection_label(episode.collection_type).to_string())
@@ -1596,15 +1595,24 @@ fn frontend_subject_from_series(
                 file_size: episode.file_size.map(format_bytes),
             }
         })
-        .collect();
+        .collect::<Vec<_>>();
     let episode_total = card.episode_count.max(bangumi_episodes.len());
+    let watched_episodes = episodes_detail
+        .iter()
+        .filter(|episode| episode.watched)
+        .count();
     let progress = if episode_total == 0 {
         0.0
     } else {
-        (local_watched_episodes as f64 / episode_total as f64).clamp(0.0, 1.0)
+        (watched_episodes as f64 / episode_total as f64).clamp(0.0, 1.0)
     };
-    let current_episode = local_current_episode
-        .or_else(|| (local_watched_episodes < episode_total).then_some(local_watched_episodes + 1));
+    let current_episode = local_current_episode.or_else(|| {
+        episodes_detail
+            .iter()
+            .filter(|episode| !episode.watched)
+            .map(|episode| episode.episode)
+            .min()
+    });
 
     FrontendSubject {
         id: format!("subject-{}", card.subject_id),
@@ -1637,7 +1645,7 @@ fn frontend_subject_from_series(
         hero: normalize_asset_path(&card.hero_path),
         status: FrontendMatchStatus::Matched,
         episodes: episode_total,
-        watched_episodes: local_watched_episodes,
+        watched_episodes,
         current_episode,
         progress,
         bgm_collection_type: collection.map(|collection| collection.collection_type),
@@ -1671,6 +1679,10 @@ fn canonical_subject_key(provider: &str, provider_subject_id: &str, fallback_id:
         return format!("{provider}:{external_id}");
     }
     format!("local:{fallback_id}")
+}
+
+fn merged_episode_watched(local_watched: bool, bangumi_collection_type: Option<i64>) -> bool {
+    local_watched || bangumi_collection_type == Some(2)
 }
 
 fn subject_matches_query(subject: &FrontendSubject, query: &str) -> bool {
@@ -1734,6 +1746,7 @@ fn frontend_subject_from_catalog(subject: CatalogSubjectData) -> FrontendSubject
                 title_cn: String::new(),
                 air_date: String::new(),
                 cached: false,
+                watched: false,
                 bgm_collection_type: None,
                 bgm_collection_label: episode_collection_label(0).to_string(),
                 bgm_pending: false,
@@ -1755,6 +1768,7 @@ fn frontend_subject_from_catalog(subject: CatalogSubjectData) -> FrontendSubject
                     title_cn: ep.title_cn.unwrap_or_default(),
                     air_date: ep.air_date.unwrap_or_default(),
                     cached: false,
+                    watched: false,
                     bgm_collection_type: None,
                     bgm_collection_label: episode_collection_label(0).to_string(),
                     bgm_pending: false,
@@ -1871,10 +1885,7 @@ fn frontend_subject_from_bangumi_collection(
         .as_ref()
         .and_then(|summary| summary.total_episodes.or(summary.eps))
         .unwrap_or(bangumi_episodes.len());
-    let watched_episodes = 0;
-    let progress = 0.0;
-    let current_episode = None;
-    let episodes_detail = if bangumi_episodes.is_empty() {
+    let episodes_detail: Vec<FrontendEpisode> = if bangumi_episodes.is_empty() {
         (1..=episode_total)
             .map(|episode| FrontendEpisode {
                 episode,
@@ -1883,6 +1894,7 @@ fn frontend_subject_from_bangumi_collection(
                 title_cn: String::new(),
                 air_date: String::new(),
                 cached: false,
+                watched: false,
                 bgm_collection_type: None,
                 bgm_collection_label: episode_collection_label(0).to_string(),
                 bgm_pending: false,
@@ -1910,6 +1922,7 @@ fn frontend_subject_from_bangumi_collection(
                     title_cn: episode.title_cn.clone().unwrap_or_default(),
                     air_date: episode.air_date.clone().unwrap_or_default(),
                     cached: false,
+                    watched: episode.collection_type == 2,
                     bgm_collection_type: Some(episode.collection_type),
                     bgm_collection_label: episode_collection_label(episode.collection_type)
                         .to_string(),
@@ -1921,6 +1934,20 @@ fn frontend_subject_from_bangumi_collection(
             })
             .collect()
     };
+    let watched_episodes = episodes_detail
+        .iter()
+        .filter(|episode| episode.watched)
+        .count();
+    let progress = if episode_total == 0 {
+        0.0
+    } else {
+        (watched_episodes as f64 / episode_total as f64).clamp(0.0, 1.0)
+    };
+    let current_episode = episodes_detail
+        .iter()
+        .filter(|episode| !episode.watched)
+        .map(|episode| episode.episode)
+        .min();
 
     FrontendSubject {
         id: format!("bangumi-collection-{}", collection.subject_id),
@@ -2231,7 +2258,7 @@ pub fn export_types(output_path: impl AsRef<Path>) -> AppResult<()> {
 
 #[cfg(test)]
 mod identity_tests {
-    use super::canonical_subject_key;
+    use super::{canonical_subject_key, merged_episode_watched};
 
     #[test]
     fn bangumi_identity_is_stable_across_local_cloud_and_online_entries() {
@@ -2251,6 +2278,14 @@ mod identity_tests {
             canonical_subject_key("manual", "", 8),
             canonical_subject_key("manual", "", 9)
         );
+    }
+
+    #[test]
+    fn episode_watched_state_is_the_union_of_local_and_bangumi_truth() {
+        assert!(merged_episode_watched(true, None));
+        assert!(merged_episode_watched(true, Some(0)));
+        assert!(merged_episode_watched(false, Some(2)));
+        assert!(!merged_episode_watched(false, Some(0)));
     }
 }
 

@@ -1344,8 +1344,22 @@ impl Repository {
             INSERT INTO watch_progress (media_id, position_ms, duration_ms, updated_at)
             VALUES (?1, ?2, ?3, ?4)
             ON CONFLICT(media_id) DO UPDATE SET
-                position_ms = excluded.position_ms,
-                duration_ms = excluded.duration_ms,
+                position_ms = CASE
+                    WHEN watch_progress.duration_ms > 0
+                         AND watch_progress.position_ms * 10 >= watch_progress.duration_ms * 9
+                         AND (excluded.duration_ms <= 0
+                              OR excluded.position_ms * 10 < excluded.duration_ms * 9)
+                    THEN watch_progress.position_ms
+                    ELSE excluded.position_ms
+                END,
+                duration_ms = CASE
+                    WHEN watch_progress.duration_ms > 0
+                         AND watch_progress.position_ms * 10 >= watch_progress.duration_ms * 9
+                         AND (excluded.duration_ms <= 0
+                              OR excluded.position_ms * 10 < excluded.duration_ms * 9)
+                    THEN watch_progress.duration_ms
+                    ELSE excluded.duration_ms
+                END,
                 updated_at = excluded.updated_at
             "#,
             params![media_id, position_ms, duration_ms, now],
@@ -2227,7 +2241,8 @@ impl Repository {
         let mut conn = self.connect()?;
         let tx = conn.transaction()?;
         tx.execute(
-            "DELETE FROM bangumi_episode_collections WHERE subject_id = ?1 AND pending = 0",
+            "DELETE FROM bangumi_episode_collections
+             WHERE subject_id = ?1 AND pending = 0 AND collection_type != 2",
             params![subject_id],
         )?;
         for episode in episodes {
@@ -2525,10 +2540,19 @@ fn upsert_bangumi_episode_collection_tx(
             title = excluded.title,
             title_cn = excluded.title_cn,
             air_date = excluded.air_date,
-            collection_type = excluded.collection_type,
+            collection_type = CASE
+                WHEN bangumi_episode_collections.collection_type = 2 THEN 2
+                ELSE excluded.collection_type
+            END,
             updated_at = excluded.updated_at,
-            synced_at = excluded.synced_at,
-            pending = excluded.pending
+            synced_at = CASE
+                WHEN bangumi_episode_collections.pending = 1 THEN bangumi_episode_collections.synced_at
+                ELSE excluded.synced_at
+            END,
+            pending = CASE
+                WHEN bangumi_episode_collections.pending = 1 THEN 1
+                ELSE excluded.pending
+            END
         "#,
         params![
             episode.episode_id,
@@ -2597,6 +2621,19 @@ mod tests {
         assert_eq!(progress.duration_ms, 5678);
 
         repository
+            .save_progress(media[0].id, 95_000, 100_000, 10)
+            .expect("mark progress completed");
+        repository
+            .save_progress(media[0].id, 10_000, 100_000, 11)
+            .expect("save replay progress");
+        let completed = repository
+            .get_progress(media[0].id)
+            .expect("read completed progress")
+            .expect("completed progress exists");
+        assert_eq!(completed.position_ms, 95_000);
+        assert_eq!(completed.duration_ms, 100_000);
+
+        repository
             .clear_progress(media[0].id)
             .expect("clear progress");
         assert!(
@@ -2604,6 +2641,68 @@ mod tests {
                 .get_progress(media[0].id)
                 .expect("read cleared progress")
                 .is_none()
+        );
+
+        let _ = fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn bangumi_episode_watched_state_is_monotonic_across_refreshes() {
+        let db_path = std::env::temp_dir().join(format!(
+            "nexplay-bangumi-watched-test-{}.sqlite3",
+            std::process::id()
+        ));
+        let _ = fs::remove_file(&db_path);
+        let repository = Repository::new(db_path.clone());
+        repository.init().expect("init database");
+
+        let watched = BangumiEpisodeCollection {
+            episode_id: 101,
+            subject_id: 42,
+            sort_number: Some(3.0),
+            ep_number: Some(3.0),
+            title: Some("Episode 3".to_string()),
+            title_cn: None,
+            air_date: None,
+            collection_type: 2,
+            updated_at: 10,
+            synced_at: 10,
+            pending: false,
+        };
+        repository
+            .upsert_bangumi_episode_collection(&watched)
+            .expect("insert watched episode");
+
+        repository
+            .replace_bangumi_episode_collections(
+                42,
+                &[BangumiEpisodeCollection {
+                    collection_type: 0,
+                    updated_at: 20,
+                    synced_at: 20,
+                    ..watched.clone()
+                }],
+            )
+            .expect("refresh episode state");
+        assert_eq!(
+            repository
+                .bangumi_episode_collection(101)
+                .expect("read episode")
+                .expect("episode exists")
+                .collection_type,
+            2
+        );
+
+        repository
+            .replace_bangumi_episode_collections(42, &[])
+            .expect("refresh empty episode state");
+        assert_eq!(
+            repository
+                .bangumi_episode_collection(101)
+                .expect("read preserved episode")
+                .expect("watched episode remains")
+                .collection_type,
+            2
         );
 
         let _ = fs::remove_file(db_path);

@@ -367,6 +367,9 @@ export function PlayerPage({
   useEffect(() => {
     const episodeId = currentEpisode.bgmEpisodeId;
     const hasBangumiCompletionTarget = Number.isFinite(bgmSubjectId) && episodeId;
+    if (currentEpisode.watched) {
+      return;
+    }
     if (!currentEpisode.mediaId || !Number.isFinite(duration) || !Number.isFinite(position) || duration <= 0) {
       return;
     }
@@ -399,7 +402,7 @@ export function PlayerPage({
         const message = caught instanceof Error ? caught.message : String(caught);
         onSnack(hasBangumiCompletionTarget ? `Bangumi 完播同步失败：${message}` : `保存播放进度失败：${message}`, "danger");
       });
-  }, [bgmSubjectId, currentEpisode.bgmEpisodeId, currentEpisode.key, currentEpisode.mediaId, duration, onSnack, onSubjectUpdated, position, subject]);
+  }, [bgmSubjectId, currentEpisode.bgmEpisodeId, currentEpisode.key, currentEpisode.mediaId, currentEpisode.watched, duration, onSnack, onSubjectUpdated, position, subject]);
 
   useEffect(() => {
     if (!currentEpisode.mediaId || !Number.isFinite(duration) || !Number.isFinite(position) || duration <= 0 || position <= 0) {

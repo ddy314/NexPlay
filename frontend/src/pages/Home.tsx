@@ -8,6 +8,19 @@ import { appleEase } from "../motion";
 import { resolveAssetUrl } from "../utils/assets";
 import { cn } from "../utils/cn";
 
+const HOME_FEED_TTL_MS = 5 * 60_000;
+let homeFeedCache: { feed: HomeFeed; fetchedAt: number } | null = null;
+let homeFeedRequest: Promise<HomeFeed> | null = null;
+
+function requestHomeFeed() {
+  if (homeFeedRequest) return homeFeedRequest;
+  const request = fetchHomeFeed().finally(() => {
+    if (homeFeedRequest === request) homeFeedRequest = null;
+  });
+  homeFeedRequest = request;
+  return request;
+}
+
 export function HomePage({
   subjects,
   onOpen,
@@ -17,16 +30,31 @@ export function HomePage({
   onOpen: (subject: Subject) => void;
   onNavigate: (route: "discover" | "library" | "insights") => void;
 }) {
-  const [feed, setFeed] = useState<HomeFeed>({ generatedAt: Date.now(), sections: [] });
-  const [loading, setLoading] = useState(true);
+  const [feed, setFeed] = useState<HomeFeed | null>(() => homeFeedCache?.feed ?? null);
+  const [loading, setLoading] = useState(() => !homeFeedCache);
 
   useEffect(() => {
+    const cachedAtMount = homeFeedCache;
+    if (cachedAtMount && Date.now() - cachedAtMount.fetchedAt < HOME_FEED_TTL_MS) {
+      setLoading(false);
+      return;
+    }
     let cancelled = false;
-    fetchHomeFeed()
-      .then((next) => { if (!cancelled) setFeed(next); })
+    const hasStableFeed = Boolean(cachedAtMount?.feed);
+    if (!hasStableFeed) setLoading(true);
+    requestHomeFeed()
+      .then((next) => {
+        homeFeedCache = { feed: next, fetchedAt: Date.now() };
+        // A stale feed stays visible for this mount. The refreshed ordering is used
+        // on the next navigation, so cards never swap identities under the cursor.
+        if (!cancelled && !hasStableFeed) setFeed(next);
+      })
+      .catch(() => {
+        // The local fallback is revealed below only when no stable feed exists.
+      })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [subjects]);
+  }, []);
 
   const fallback = useMemo<HomeFeed>(() => ({
     generatedAt: Date.now(),
@@ -39,10 +67,24 @@ export function HomePage({
       items: subjects.slice(0, 12).map((subject) => ({ subject, reason: "本地可播放" })),
     }] : [],
   }), [subjects]);
-  const resolvedFeed = feed.sections.length ? feed : fallback;
-  const continueSection = resolvedFeed.sections.find((section) => section.id === "continue");
-  const hero = continueSection?.items[0] ?? resolvedFeed.sections.flatMap((section) => section.items)[0];
-  const remaining = resolvedFeed.sections.filter((section) => section.id !== "continue");
+  const resolvedFeed = useMemo(() => {
+    const source = feed?.sections.length ? feed : loading ? null : fallback;
+    if (!source) return null;
+    const currentSubjects = new Map(subjects.map((subject) => [subject.canonicalKey, subject]));
+    return {
+      ...source,
+      sections: source.sections.map((section) => ({
+        ...section,
+        items: section.items.map((item) => ({
+          ...item,
+          subject: currentSubjects.get(item.subject.canonicalKey) ?? item.subject,
+        })),
+      })),
+    };
+  }, [fallback, feed, loading, subjects]);
+  const continueSection = resolvedFeed?.sections.find((section) => section.id === "continue");
+  const hero = continueSection?.items[0] ?? resolvedFeed?.sections.flatMap((section) => section.items)[0];
+  const remaining = resolvedFeed?.sections.filter((section) => section.id !== "continue") ?? [];
 
   return (
     <div className="h-full overflow-y-auto overflow-x-hidden">
@@ -110,7 +152,7 @@ function HeroPlane({ item, onOpen }: { item: HomeFeed["sections"][number]["items
   const image = resolveAssetUrl(subject.hero || subject.poster);
   return (
     <button type="button" className="nx-plane nx-plane-dark group col-span-7 row-span-3 min-h-[390px] text-left max-[1100px]:col-span-6" onClick={onOpen}>
-      {image && <img src={image} alt="" className="absolute inset-0 size-full object-cover opacity-65 transition-transform duration-300 group-hover:scale-[1.015]" />}
+      {image && <Poster src={subject.hero || subject.poster} alt="" className="absolute inset-0 size-full opacity-65 transition-transform duration-300 group-hover:scale-[1.015]" loading="eager" fetchPriority="high" />}
       <div className="absolute inset-0 bg-gradient-to-r from-black/85 via-black/50 to-black/10" />
       <div className="relative flex h-full min-h-[390px] max-w-[620px] flex-col justify-end p-8">
         <span className="mb-auto flex w-fit items-center gap-2 rounded-full bg-white/14 px-3 py-1.5 text-[11px] font-semibold text-white/85 backdrop-blur-md">
@@ -157,7 +199,7 @@ function FeedSection({ section, onOpen }: { section: HomeFeed["sections"][number
       </div>
       <div className="nx-scroll-row">
         {section.items.map((item) => (
-          <button key={`${item.subject.provider}-${item.subject.providerSubjectId}`} type="button" className={cn("nx-media-tile", section.layout === "wide" && "wide")} onClick={() => onOpen(item.subject)}>
+          <button key={item.subject.canonicalKey} type="button" className={cn("nx-media-tile", section.layout === "wide" && "wide")} onClick={() => onOpen(item.subject)}>
             <div className="nx-media-art">
               <Poster src={item.subject.poster || item.subject.hero} alt={item.subject.title} className="size-full" />
               <span className="nx-reason">{item.reason}</span>

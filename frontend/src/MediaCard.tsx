@@ -21,9 +21,11 @@ export const Poster = memo(function Poster({
   loading?: ImageLoading;
   fetchPriority?: ImageFetchPriority;
 }) {
-  const [loaded, setLoaded] = useState(false);
-  const [failed, setFailed] = useState(false);
   const resolvedSrc = resolveAssetUrl(src);
+  const [loadedSrc, setLoadedSrc] = useState<string | null>(null);
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
+  const loaded = Boolean(resolvedSrc) && loadedSrc === resolvedSrc;
+  const failed = Boolean(resolvedSrc) && failedSrc === resolvedSrc;
   if (!src || failed) {
     return (
       <div
@@ -45,13 +47,14 @@ export const Poster = memo(function Poster({
     <div className={cn("relative overflow-hidden", className)}>
       {!loaded && <div className="absolute inset-0 skeleton" />}
       <img
+        key={resolvedSrc}
         src={resolvedSrc}
         alt={alt}
         loading={loading}
         decoding="async"
         fetchPriority={fetchPriority}
-        onLoad={() => setLoaded(true)}
-        onError={() => setFailed(true)}
+        onLoad={() => setLoadedSrc(resolvedSrc)}
+        onError={() => setFailedSrc(resolvedSrc)}
         className={cn(
           "size-full object-cover transition-all duration-500",
           loaded ? "opacity-100" : "opacity-0"

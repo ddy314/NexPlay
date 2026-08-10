@@ -131,7 +131,7 @@ export default function App() {
       <div data-theme={theme} data-nav-collapsed={navCollapsed ? "true" : "false"} className="app-shell relative h-screen w-screen overflow-hidden" onMouseDownCapture={suppressNonTextControlFocus} onPointerUpCapture={blurActiveNonTextControl}>
         {!playerActive && <NavRail route={route} onRoute={handleRoute} onSearch={() => setSearchOpen(true)} theme={theme} onToggleTheme={() => setThemeMode(theme === "light" ? "dark" : "light")} collapsed={navCollapsed} onToggleCollapsed={() => setNavCollapsed((value) => !value)} />}
         <main className="app-main absolute inset-y-0 right-0 z-10 min-w-0 overflow-hidden transition-[left] duration-200" style={{ left: playerActive ? 0 : "var(--nav-width)" }}>
-          <AnimatePresence initial={false} mode="sync">
+          <AnimatePresence initial={false} mode="wait">
             <motion.div key={viewKey(currentView)} className="absolute inset-0" initial={{ opacity: 0, x: currentView.kind === "route" ? 0 : 18 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: currentView.kind === "route" ? 0 : -12 }} transition={appleEase}>
               {currentView.kind === "playback" ? <PlayerPage subject={currentView.playback.subject} initialEpisode={currentView.playback.episode} onBack={goBack} onSubjectUpdated={refreshSubjectInStack} onSnack={snack.show} />
                 : currentView.kind === "detail" ? <DetailPage subject={currentView.subject} onBack={goBack} onPlay={(subject, episode) => setViewStack((current) => [...current, { kind: "playback", playback: { subject, episode } }])} onFindResources={openResourceSearch} onSubjectUpdated={() => refreshSubjectInStack(currentView.subject)} onSnack={snack.show} />

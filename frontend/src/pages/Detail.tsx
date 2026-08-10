@@ -610,7 +610,7 @@ const EpisodeRow = memo(function EpisodeRow({
             {row.fileSize}
           </span>
         )}
-        {row.bgmEpisodeId && row.bgmCollectionType !== 2 && (
+        {row.bgmEpisodeId && !row.watched && (
           <button
             type="button"
             onClick={onMarkWatched}

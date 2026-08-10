@@ -354,22 +354,7 @@ impl BangumiService {
     }
 
     pub fn sync_subject(&self, subject_id: i64) -> AppResult<BangumiSyncSummaryData> {
-        let result = self.sync_subject_inner(subject_id);
-        match &result {
-            Ok(summary) => {
-                let _ = self.events.send(AppEvent::BangumiSyncFinished {
-                    subjects: summary.subjects,
-                    episodes: summary.episodes,
-                    message: summary.message.clone(),
-                });
-            }
-            Err(error) => {
-                let _ = self.events.send(AppEvent::BangumiSyncFailed {
-                    error: error.to_string(),
-                });
-            }
-        }
-        result
+        self.sync_subject_inner(subject_id)
     }
 
     fn sync_subject_inner(&self, subject_id: i64) -> AppResult<BangumiSyncSummaryData> {
@@ -589,6 +574,18 @@ impl BangumiService {
         subject_id: i64,
         episode_id: i64,
     ) -> AppResult<BangumiSyncSummaryData> {
+        if self
+            .repository
+            .bangumi_episode_collection(episode_id)?
+            .is_some_and(|episode| episode.collection_type == BANGUMI_EPISODE_DONE)
+        {
+            return Ok(BangumiSyncSummaryData {
+                subjects: 0,
+                episodes: 0,
+                queued: self.repository.list_bangumi_sync_queue(1000)?.len(),
+                message: "该集已经标记为看过".to_string(),
+            });
+        }
         self.update_episode(BangumiUpdateEpisodeInput {
             subject_id,
             episode_id,
