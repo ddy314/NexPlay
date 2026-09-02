@@ -3461,7 +3461,7 @@ fn open_resources(state: &Rc<UiState>, subject: FrontendSubject, episode_number:
     container.set_margin_bottom(28);
     container.set_margin_start(28);
     container.set_margin_end(28);
-    container.append(&skeleton::detail());
+    container.append(&skeleton::resources());
     let tag = format!("resources-{}", state.next_page_id.get());
     state
         .next_page_id
