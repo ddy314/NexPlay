@@ -21,7 +21,7 @@ use crate::service::{
 };
 use crate::task::AppEvent;
 
-#[derive(Debug, Serialize, TS)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct BackendSnapshot {
     pub subjects: Vec<FrontendSubject>,
@@ -31,7 +31,7 @@ pub struct BackendSnapshot {
     pub settings: FrontendSettings,
 }
 
-#[derive(Debug, Serialize, TS)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct LibraryStats {
     pub total: usize,
@@ -40,7 +40,7 @@ pub struct LibraryStats {
     pub tentative: usize,
 }
 
-#[derive(Debug, Serialize, TS)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct FrontendSettings {
     pub bangumi_enabled: bool,
@@ -252,7 +252,7 @@ pub struct CatalogSearchRequest {
     pub limit: usize,
 }
 
-#[derive(Debug, Serialize, TS)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct CatalogSearchResponse {
     pub subjects: Vec<FrontendSubject>,
@@ -301,7 +301,7 @@ pub struct EpisodeResourcesRequest {
     pub limit: usize,
 }
 
-#[derive(Debug, Serialize, TS)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct EpisodeResourcesResponse {
     pub resources: Vec<EpisodeResourceData>,
@@ -327,7 +327,7 @@ pub struct PrepareResourceDownloadRequest {
     pub episode_number: Option<f64>,
 }
 
-#[derive(Debug, Serialize, TS)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct PreparedResourceDownloadResponse {
     pub task: DownloadTaskData,
@@ -341,7 +341,7 @@ pub struct ConfirmResourceDownloadRequest {
     pub selected_file_indexes: Vec<i64>,
 }
 
-#[derive(Debug, Serialize, TS)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct DownloadTasksResponse {
     pub tasks: Vec<DownloadTaskData>,
@@ -500,6 +500,13 @@ pub struct HomeFeedSection {
 pub struct HomeFeedResponse {
     pub generated_at: i64,
     pub sections: Vec<HomeFeedSection>,
+}
+
+#[derive(Debug, Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct DiscoveryFeedResponse {
+    pub today: Vec<FrontendSubject>,
+    pub trending: Vec<FrontendSubject>,
 }
 
 #[derive(Debug, Serialize, TS)]
@@ -839,16 +846,82 @@ pub fn resolve_subject(
                 })
         })
     {
+        if subject.provider == "bangumi" {
+            if let Ok(enriched) = resolve_online_subject(context, &subject_ref) {
+                return Ok(merge_frontend_subject(subject, enriched));
+            }
+        }
         return Ok(subject);
     }
 
-    online_subject(
-        context,
-        OnlineSubjectRequest {
-            provider: subject_ref.provider,
-            provider_subject_id: subject_ref.provider_subject_id,
-        },
-    )
+    resolve_online_subject(context, &subject_ref)
+}
+
+fn resolve_online_subject(
+    context: &AppContext,
+    subject_ref: &SubjectRef,
+) -> AppResult<FrontendSubject> {
+    let direct = context
+        .catalog
+        .online_subject(&subject_ref.provider, &subject_ref.provider_subject_id);
+    let catalog = match direct {
+        Ok(subject) => subject,
+        Err(direct_error) if subject_ref.provider == "bangumi" => context
+            .catalog
+            .public_bangumi_subject(&subject_ref.provider_subject_id)
+            .or_else(|_| {
+                context
+                    .catalog
+                    .public_search_catalog(&subject_ref.provider_subject_id, 12)
+                    .and_then(|candidates| {
+                        let matching = candidates.iter().position(|candidate| {
+                            candidate.provider == subject_ref.provider
+                                && candidate.provider_subject_id == subject_ref.provider_subject_id
+                        });
+                        candidates
+                            .into_iter()
+                            .nth(matching.unwrap_or(0))
+                            .ok_or(direct_error)
+                    })
+            })?,
+        Err(error) => return Err(error),
+    };
+    Ok(frontend_subject_from_catalog(catalog))
+}
+
+pub fn discovery_feed(context: &AppContext) -> AppResult<DiscoveryFeedResponse> {
+    let current = snapshot(context)?;
+    let by_key = current
+        .subjects
+        .into_iter()
+        .chain(current.bangumi_collections)
+        .map(|subject| (subject.canonical_key.clone(), subject))
+        .collect::<HashMap<_, _>>();
+    let feed = context.catalog.discovery_feed()?;
+    Ok(DiscoveryFeedResponse {
+        today: feed
+            .today
+            .into_iter()
+            .map(|subject| merge_discovery_subject(&by_key, subject))
+            .collect(),
+        trending: feed
+            .trending
+            .into_iter()
+            .map(|subject| merge_discovery_subject(&by_key, subject))
+            .collect(),
+    })
+}
+
+fn merge_discovery_subject(
+    current: &HashMap<String, FrontendSubject>,
+    subject: CatalogSubjectData,
+) -> FrontendSubject {
+    let online = frontend_subject_from_catalog(subject);
+    current
+        .get(&online.canonical_key)
+        .cloned()
+        .map(|existing| merge_frontend_subject(existing, online.clone()))
+        .unwrap_or(online)
 }
 
 pub fn online_subject(
@@ -1727,6 +1800,79 @@ fn availability_priority(value: &str) -> u8 {
     }
 }
 
+fn merge_frontend_subject(
+    mut primary: FrontendSubject,
+    enrichment: FrontendSubject,
+) -> FrontendSubject {
+    if primary.title.trim().is_empty() {
+        primary.title = enrichment.title.clone();
+    }
+    if primary.title_cn.trim().is_empty() {
+        primary.title_cn = enrichment.title_cn.clone();
+    }
+    if primary.summary.trim().is_empty() {
+        primary.summary = enrichment.summary.clone();
+    }
+    if primary.air_date.trim().is_empty() {
+        primary.air_date = enrichment.air_date.clone();
+    }
+    if primary.rating == 0.0 {
+        primary.rating = enrichment.rating;
+    }
+    if primary.rank == 0 {
+        primary.rank = enrichment.rank;
+    }
+    if primary.poster.trim().is_empty() {
+        primary.poster = enrichment.poster.clone();
+    }
+    if primary.hero.trim().is_empty() {
+        primary.hero = enrichment.hero.clone();
+    }
+    primary.year = if primary.year == 0 {
+        enrichment.year
+    } else {
+        primary.year
+    };
+    primary.episodes = primary.episodes.max(enrichment.episodes);
+    primary.aliases.extend(enrichment.aliases);
+    primary.tags.extend(enrichment.tags);
+    primary.aliases.sort();
+    primary.aliases.dedup();
+    primary.tags.sort();
+    primary.tags.dedup();
+
+    for incoming in enrichment.episodes_detail {
+        if let Some(existing) = primary
+            .episodes_detail
+            .iter_mut()
+            .find(|episode| episode.episode == incoming.episode)
+        {
+            if existing.title.trim().is_empty() {
+                existing.title = incoming.title.clone();
+            }
+            if existing.title_cn.trim().is_empty() {
+                existing.title_cn = incoming.title_cn.clone();
+            }
+            if existing.air_date.trim().is_empty() {
+                existing.air_date = incoming.air_date.clone();
+            }
+            if existing.bgm_episode_id.is_none() {
+                existing.bgm_episode_id = incoming.bgm_episode_id;
+            }
+            if existing.bgm_collection_type.is_none() {
+                existing.bgm_collection_type = incoming.bgm_collection_type;
+            }
+            existing.bgm_pending |= incoming.bgm_pending;
+        } else {
+            primary.episodes_detail.push(incoming);
+        }
+    }
+    primary
+        .episodes_detail
+        .sort_by_key(|episode| episode.episode);
+    primary
+}
+
 fn frontend_subject_from_catalog(subject: CatalogSubjectData) -> FrontendSubject {
     let display_title = if subject.title_cn.trim().is_empty() {
         subject.title.clone()
@@ -2238,6 +2384,7 @@ pub fn export_types(output_path: impl AsRef<Path>) -> AppResult<()> {
         HomeFeedItem::decl(&ts_config),
         HomeFeedSection::decl(&ts_config),
         HomeFeedResponse::decl(&ts_config),
+        DiscoveryFeedResponse::decl(&ts_config),
         ConnectionTestResponse::decl(&ts_config),
         BackendEventType::decl(&ts_config),
         BackendEvent::decl(&ts_config),

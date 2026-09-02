@@ -3,8 +3,13 @@
 /dist
 /release
 /native/*/build
+/experiments/**/build
+/experiments/**/target
 /config.toml
 /data/
+!/data/
+/data/*
+!/data/dev.nexplay.NexPlay.desktop
 *.sqlite3
 *.sqlite3-shm
 *.sqlite3-wal

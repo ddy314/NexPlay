@@ -1,5 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, mpsc};
+use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use base64::Engine;
@@ -18,7 +18,7 @@ use crate::config::{ConfigStore, DandanplayConfig, QbittorrentConfig};
 use crate::domain::{DownloadTask, ResourceCandidate, SubjectEpisode};
 use crate::error::{AppError, AppResult};
 use crate::metadata::bangumi::BangumiProvider;
-use crate::metadata::provider::{MetadataProvider, SubjectSearchResult};
+use crate::metadata::provider::{MetadataProvider, SubjectDetail, SubjectSearchResult};
 use crate::repository::Repository;
 use crate::task::{self, AppEvent};
 
@@ -110,12 +110,25 @@ pub struct TorrentFileData {
     pub availability: f64,
 }
 
+#[derive(Debug, Clone)]
+pub struct DiscoveryFeedData {
+    pub today: Vec<CatalogSubjectData>,
+    pub trending: Vec<CatalogSubjectData>,
+}
+
+#[derive(Debug, Clone)]
+struct CachedDiscoveryFeed {
+    fetched_at: i64,
+    feed: DiscoveryFeedData,
+}
+
 #[derive(Clone)]
 pub struct CatalogService {
     config: Arc<ConfigStore>,
     repository: Repository,
     client: Client,
     events: mpsc::Sender<AppEvent>,
+    discovery_cache: Arc<Mutex<Option<CachedDiscoveryFeed>>>,
 }
 
 impl CatalogService {
@@ -134,6 +147,7 @@ impl CatalogService {
             repository,
             client,
             events,
+            discovery_cache: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -176,31 +190,7 @@ impl CatalogService {
                 let episodes = provider
                     .get_episodes(provider_subject_id)
                     .unwrap_or_default();
-                Ok(CatalogSubjectData {
-                    id: format!("online-bangumi-{provider_subject_id}"),
-                    provider: detail.provider,
-                    provider_subject_id: detail.provider_subject_id,
-                    source: "bangumi".to_string(),
-                    title: detail.title,
-                    title_cn: detail.title_cn.unwrap_or_default(),
-                    summary: detail
-                        .summary
-                        .as_deref()
-                        .map(strip_html)
-                        .unwrap_or_default(),
-                    air_date: detail.air_date.unwrap_or_default(),
-                    rating: detail.rating.unwrap_or_default(),
-                    rank: detail.rank.unwrap_or_default(),
-                    poster: detail.images.large.unwrap_or_default(),
-                    hero: detail.images.common.unwrap_or_default(),
-                    episodes: episodes.len().max(detail.episode_count.unwrap_or_default()),
-                    files: 0,
-                    local: false,
-                    metadata_ready: true,
-                    tags: detail.tags,
-                    aliases: detail.aliases,
-                    episode_list: episodes,
-                })
+                Ok(catalog_from_bangumi_detail(detail, episodes, "online"))
             }
             "dandanplay" => self.dandanplay_subject(provider_subject_id).or_else(|_| {
                 Ok(CatalogSubjectData {
@@ -229,6 +219,63 @@ impl CatalogService {
                 "unsupported online provider: {other}"
             ))),
         }
+    }
+
+    pub fn public_bangumi_subject(
+        &self,
+        provider_subject_id: &str,
+    ) -> AppResult<CatalogSubjectData> {
+        let provider = self.bangumi_provider()?;
+        let detail = provider.get_subject_public(provider_subject_id)?;
+        let episodes = provider
+            .get_episodes_public(provider_subject_id)
+            .unwrap_or_default();
+        Ok(catalog_from_bangumi_detail(detail, episodes, "public"))
+    }
+
+    pub fn public_search_catalog(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> AppResult<Vec<CatalogSubjectData>> {
+        let provider = self.bangumi_provider()?;
+        Ok(provider
+            .search_subjects_public(query)?
+            .into_iter()
+            .take(limit.max(1))
+            .map(catalog_from_bangumi_search)
+            .collect())
+    }
+
+    pub fn discovery_feed(&self) -> AppResult<DiscoveryFeedData> {
+        const CACHE_TTL_MS: i64 = 6 * 60 * 60 * 1000;
+        let now = task::unix_timestamp_ms();
+        if let Some(cached) = self
+            .discovery_cache
+            .lock()
+            .expect("discovery cache mutex poisoned")
+            .as_ref()
+            .filter(|cached| now.saturating_sub(cached.fetched_at) < CACHE_TTL_MS)
+        {
+            return Ok(cached.feed.clone());
+        }
+
+        let response = self
+            .client
+            .get("https://api.bgm.tv/calendar")
+            .header(reqwest::header::ACCEPT, "application/json")
+            .send()?
+            .error_for_status()?;
+        let days = response.json::<Vec<CalendarDay>>()?;
+        let feed = build_discovery_feed(days);
+        *self
+            .discovery_cache
+            .lock()
+            .expect("discovery cache mutex poisoned") = Some(CachedDiscoveryFeed {
+            fetched_at: now,
+            feed: feed.clone(),
+        });
+        Ok(feed)
     }
 
     pub fn search_episode_resources(
@@ -1157,6 +1204,197 @@ fn provider_priority(provider: &str) -> i64 {
         "dandanplay" => 2,
         _ => 0,
     }
+}
+
+fn catalog_from_bangumi_detail(
+    detail: SubjectDetail,
+    episodes: Vec<SubjectEpisode>,
+    source: &str,
+) -> CatalogSubjectData {
+    let provider_subject_id = detail.provider_subject_id.clone();
+    let images = detail.images;
+    let poster = images
+        .large
+        .clone()
+        .or_else(|| images.common.clone())
+        .unwrap_or_default();
+    let hero = images
+        .common
+        .or_else(|| images.large.clone())
+        .unwrap_or_default();
+    CatalogSubjectData {
+        id: format!("online-bangumi-{provider_subject_id}"),
+        provider: detail.provider,
+        provider_subject_id,
+        source: source.to_string(),
+        title: detail.title,
+        title_cn: detail.title_cn.unwrap_or_default(),
+        summary: detail
+            .summary
+            .as_deref()
+            .map(strip_html)
+            .unwrap_or_default(),
+        air_date: detail.air_date.unwrap_or_default(),
+        rating: detail.rating.unwrap_or_default(),
+        rank: detail.rank.unwrap_or_default(),
+        poster,
+        hero,
+        episodes: episodes.len().max(detail.episode_count.unwrap_or_default()),
+        files: 0,
+        local: false,
+        metadata_ready: true,
+        tags: detail.tags,
+        aliases: detail.aliases,
+        episode_list: episodes,
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct CalendarDay {
+    weekday: Option<CalendarWeekday>,
+    items: Option<Vec<CalendarItem>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CalendarWeekday {
+    id: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CalendarItem {
+    id: Option<i64>,
+    name: Option<String>,
+    name_cn: Option<String>,
+    summary: Option<String>,
+    air_date: Option<String>,
+    eps: Option<i64>,
+    rank: Option<i64>,
+    collection: Option<CalendarCollection>,
+    rating: Option<CalendarRating>,
+    images: Option<CalendarImages>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CalendarCollection {
+    collect: Option<i64>,
+    doing: Option<i64>,
+    wish: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CalendarRating {
+    score: Option<f64>,
+    rank: Option<i64>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct CalendarImages {
+    large: Option<String>,
+    common: Option<String>,
+    medium: Option<String>,
+    grid: Option<String>,
+}
+
+fn build_discovery_feed(days: Vec<CalendarDay>) -> DiscoveryFeedData {
+    let days_since_epoch = task::unix_timestamp_ms().div_euclid(24 * 60 * 60 * 1000);
+    let js_weekday = (days_since_epoch + 4).rem_euclid(7);
+    let bgm_weekday = if js_weekday == 0 { 7 } else { js_weekday };
+    let mut today = Vec::new();
+    let mut all = Vec::<(CatalogSubjectData, f64)>::new();
+
+    for day in days {
+        let items = day.items.unwrap_or_default();
+        let is_today = day.weekday.and_then(|weekday| weekday.id) == Some(bgm_weekday);
+        let mut day_subjects = Vec::new();
+        for item in items {
+            let Some(id) = item.id else { continue };
+            let title = item.name.unwrap_or_default().trim().to_string();
+            let title_cn = item.name_cn.unwrap_or_default().trim().to_string();
+            if title.is_empty() && title_cn.is_empty() {
+                continue;
+            }
+            let collection = item.collection.unwrap_or(CalendarCollection {
+                collect: None,
+                doing: None,
+                wish: None,
+            });
+            let popularity = collection.collect.unwrap_or_default() as f64
+                + collection.doing.unwrap_or_default() as f64
+                + collection.wish.unwrap_or_default() as f64 * 0.5;
+            let rating = item
+                .rating
+                .as_ref()
+                .and_then(|rating| rating.score)
+                .unwrap_or_default();
+            let rank = item
+                .rank
+                .or_else(|| item.rating.as_ref().and_then(|rating| rating.rank))
+                .unwrap_or_default();
+            let air_date = item.air_date.unwrap_or_default();
+            let images = item.images.unwrap_or_default();
+            let subject = CatalogSubjectData {
+                id: format!("discover-bgm-{id}"),
+                provider: "bangumi".to_string(),
+                provider_subject_id: id.to_string(),
+                source: "discover".to_string(),
+                title,
+                title_cn,
+                summary: item.summary.unwrap_or_default().trim().to_string(),
+                air_date,
+                rating,
+                rank,
+                poster: images
+                    .large
+                    .clone()
+                    .or(images.common.clone())
+                    .or(images.medium.clone())
+                    .or(images.grid.clone())
+                    .unwrap_or_default(),
+                hero: images
+                    .common
+                    .or(images.large)
+                    .or(images.medium)
+                    .unwrap_or_default(),
+                episodes: item.eps.unwrap_or_default().max(0) as usize,
+                files: 0,
+                local: false,
+                metadata_ready: true,
+                tags: Vec::new(),
+                aliases: Vec::new(),
+                episode_list: Vec::new(),
+            };
+            if is_today {
+                day_subjects.push(subject.clone());
+            }
+            all.push((subject, popularity));
+        }
+        if is_today {
+            today = day_subjects;
+        }
+    }
+
+    let mut seen = HashSet::new();
+    all.retain(|(subject, _)| seen.insert(subject.provider_subject_id.clone()));
+    all.sort_by(|(left, left_popularity), (right, right_popularity)| {
+        right_popularity
+            .partial_cmp(left_popularity)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| right.rating.total_cmp(&left.rating))
+            .then_with(|| {
+                let left_rank = if left.rank > 0 { left.rank } else { i64::MAX };
+                let right_rank = if right.rank > 0 { right.rank } else { i64::MAX };
+                left_rank.cmp(&right_rank)
+            })
+    });
+    let trending = all
+        .into_iter()
+        .map(|(subject, _)| subject)
+        .collect::<Vec<_>>();
+    if today.is_empty() {
+        today = trending.iter().take(16).cloned().collect();
+    }
+
+    DiscoveryFeedData { today, trending }
 }
 
 fn catalog_from_bangumi_search(subject: SubjectSearchResult) -> CatalogSubjectData {

@@ -27,6 +27,95 @@ impl BangumiProvider {
         Ok(Self { client, config })
     }
 
+    /// Fetch public subject metadata without requiring the configured Bangumi
+    /// source or an access token.  Native clients use this as the final detail
+    /// hydration fallback, so a disabled/private API configuration does not
+    /// make public discovery entries unusable.
+    pub fn get_subject_public(&self, provider_subject_id: &str) -> AppResult<SubjectDetail> {
+        let client = public_client(&self.config)?;
+        let response = client
+            .get(format!(
+                "{}/v0/subjects/{provider_subject_id}",
+                PUBLIC_BANGUMI_BASE_URL
+            ))
+            .send()?;
+        let status = response.status();
+        if !status.is_success() {
+            return Err(AppError::Api(format!(
+                "public bangumi subject rejected: {status}"
+            )));
+        }
+
+        Ok(response.json::<BangumiSubject>()?.into_detail())
+    }
+
+    pub fn get_episodes_public(&self, provider_subject_id: &str) -> AppResult<Vec<SubjectEpisode>> {
+        let client = public_client(&self.config)?;
+        let mut offset = 0;
+        let mut episodes = Vec::new();
+        loop {
+            let response = client
+                .get(format!("{PUBLIC_BANGUMI_BASE_URL}/v0/episodes"))
+                .query(&[
+                    ("subject_id", provider_subject_id),
+                    ("type", "0"),
+                    ("limit", "200"),
+                    ("offset", &offset.to_string()),
+                ])
+                .send()?;
+            let status = response.status();
+            if !status.is_success() {
+                return Err(AppError::Api(format!(
+                    "public bangumi episodes rejected: {status}"
+                )));
+            }
+
+            let page = response.json::<EpisodesResponse>()?;
+            let count = page.data.len();
+            episodes.extend(
+                page.data
+                    .into_iter()
+                    .map(BangumiEpisode::into_subject_episode),
+            );
+            offset += count as i64;
+            if count == 0 || offset >= page.total.unwrap_or(offset) {
+                break;
+            }
+        }
+        Ok(episodes)
+    }
+
+    pub fn search_subjects_public(&self, keyword: &str) -> AppResult<Vec<SubjectSearchResult>> {
+        let keyword = keyword.trim();
+        if keyword.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let client = public_client(&self.config)?;
+        let response = client
+            .post(format!("{PUBLIC_BANGUMI_BASE_URL}/v0/search/subjects"))
+            .json(&SearchRequest {
+                keyword,
+                filter: SearchFilter {
+                    subject_type: vec![2],
+                },
+            })
+            .send()?;
+        let status = response.status();
+        if !status.is_success() {
+            return Err(AppError::Api(format!(
+                "public bangumi search rejected: {status}"
+            )));
+        }
+
+        Ok(response
+            .json::<SearchResponse>()?
+            .data
+            .into_iter()
+            .map(BangumiSubject::into_search_result)
+            .collect())
+    }
+
     pub fn test_connection(&self) -> AppResult<()> {
         ensure_enabled(&self.config)?;
         let response = self
@@ -45,6 +134,16 @@ impl BangumiProvider {
             )))
         }
     }
+}
+
+pub const PUBLIC_BANGUMI_BASE_URL: &str = "https://api.bgm.tv";
+
+fn public_client(config: &BangumiConfig) -> AppResult<Client> {
+    Client::builder()
+        .timeout(Duration::from_secs(config.request_timeout_secs.max(1)))
+        .user_agent(config.user_agent.clone())
+        .build()
+        .map_err(AppError::from)
 }
 
 impl MetadataProvider for BangumiProvider {

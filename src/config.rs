@@ -206,9 +206,15 @@ pub struct ConfigStore {
 
 impl ConfigStore {
     pub fn load_or_create(path: impl Into<PathBuf>) -> AppResult<Self> {
+        Self::load_or_create_with_default(path, AppConfig::default())
+    }
+
+    pub fn load_or_create_with_default(
+        path: impl Into<PathBuf>,
+        default_config: AppConfig,
+    ) -> AppResult<Self> {
         let path = path.into();
         if !path.exists() {
-            let default_config = AppConfig::default();
             write_config(&path, &default_config)?;
             return Ok(Self {
                 path,

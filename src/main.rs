@@ -6,6 +6,7 @@ mod backend_daemon;
 mod config;
 mod domain;
 mod error;
+mod gtk_frontend;
 mod metadata;
 mod player_daemon;
 mod repository;
@@ -26,12 +27,16 @@ use std::sync::mpsc;
 use std::thread;
 
 fn main() -> AppResult<()> {
-    let config_path = std::env::var("NEXPLAY_CONFIG").unwrap_or_else(|_| "config.toml".to_string());
-    let config = ConfigStore::load_or_create(config_path)?;
-    let context = AppContext::new(config)?;
     let command = std::env::args()
         .nth(1)
         .unwrap_or_else(|| "snapshot".to_string());
+    if command == "gtk" {
+        return gtk_frontend::run();
+    }
+
+    let config_path = std::env::var("NEXPLAY_CONFIG").unwrap_or_else(|_| "config.toml".to_string());
+    let config = ConfigStore::load_or_create(config_path)?;
+    let context = AppContext::new(config)?;
 
     match command.as_str() {
         "snapshot" => print_json(&snapshot(&context)?)?,
@@ -83,6 +88,7 @@ fn main() -> AppResult<()> {
         "help" | "--help" | "-h" => {
             println!("NexPlay backend commands:");
             println!("  snapshot  print the current library snapshot as JSON");
+            println!("  gtk       run the native GTK4/libadwaita Linux frontend");
             println!("  scan      scan configured media libraries and print JSON");
             println!("  settings  print editable settings as JSON");
             println!(

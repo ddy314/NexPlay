@@ -1,209 +1,171 @@
 # NexPlay
 
-NexPlay is a desktop anime media library for local collections. It combines an
-Electron + React interface with a Rust backend, SQLite storage, Bangumi metadata,
-dandanplay danmaku matching, Nyaa resource discovery, qBittorrent integration,
-and a local libmpv-based player path.
+NexPlay is a desktop anime media library. The official Linux frontend is a
+native GTK4 + libadwaita application backed by Rust, SQLite, Bangumi metadata,
+Nyaa resource discovery, and qBittorrent integration.
 
-The project is in active early development. Core media-library, metadata,
-download, and playback flows are usable, while release packaging and the native
-player bridge are still being hardened across platforms.
+The GTK application runs `AppContext` and the frontend in one process. It uses
+GNOME's standard adaptive navigation, preferences, status pages, dialogs, and
+notifications instead of the former renderer's visual system.
 
 ## Features
 
-- Local media-library indexing with recursive scans, SQLite persistence, and
-  per-file watch history.
-- Bangumi metadata search, automatic matching, poster/hero image caching,
-  collection sync, OAuth login, rating updates, and episode status updates.
-- dandanplay danmaku matching and canvas-based danmaku rendering in the player.
-- Local playback through Electron with mpv/libmpv integration, WebGL rendering
-  support, manual subtitle import, subtitle memory, and playback-position resume.
-- Nyaa resource search with resolution/batch filters and qBittorrent task
-  creation, file selection, progress polling, pause/resume/cancel, and cleanup.
-- React 19 frontend with Vite, TypeScript, Tailwind CSS, Framer Motion, and
-  generated TypeScript contracts from the Rust backend.
-- JSON-RPC backend daemon launched by Electron; the app does not expose an HTTP
-  service for normal frontend/backend communication.
-- GitHub Actions release workflow for Windows, macOS, and Linux artifacts.
+- Recursive local media indexing with SQLite persistence and per-episode watch
+  state.
+- Home, discovery, local/cloud library, global search, subject details,
+  resource search, downloads, insights, and settings pages.
+- Bangumi public-calendar discovery with six-hour caching, metadata hydration,
+  collection sync, OAuth loopback login, and episode status updates.
+- Nyaa search with resolution/batch filters and qBittorrent task creation,
+  file selection, progress polling, pause/resume/cancel, and cleanup.
+- Native background image loading with local files, HTTP(S), process cache,
+  and failure placeholders.
+- A bounded backend worker pool so scanning, network calls, database work, and
+  download operations do not block the GTK main loop.
 
-## Current Status
+The GTK frontend intentionally does not migrate video playback yet. Its detail
+page keeps a disabled `播放器尚未迁移` entry and never calls mpv, subtitles,
+danmaku rendering, playback controls, or new playback-session recording.
 
-| Area | Status | Notes |
+Electron/React, the backend daemon, mpv path, and native bridge remain in the
+repository as temporary reference and fallback code. They are not used by the
+GTK Linux entrypoint and will be removed separately.
+
+## Current status
+
+| Area | GTK status | Notes |
 | --- | --- | --- |
-| Media library scan | Usable | Scans configured directories, stores file metadata, tracks matched/unmatched subjects, and preserves watch state. |
-| Bangumi metadata | Usable | Search, detail hydration, image cache, collection sync, OAuth, and episode status updates are implemented. |
-| Danmaku | Usable | dandanplay matching and frontend canvas rendering are implemented; performance tuning is ongoing. |
-| Local playback | Usable on development machines with mpv/libmpv | Resume position, remembered subtitles, manual subtitle import, and WebGL/mpv paths are implemented; platform packaging still needs more validation. |
-| Resource search | Usable | Nyaa search and qBittorrent download task flow are implemented. |
-| Release packaging | Partial | Linux/macOS packaging includes the native backend path; Windows player packaging still needs libmpv packaging work. |
-| Tests/diagnostics | Partial | Backend daemon and player/danmaku diagnostic scripts exist; broader automated test coverage is still planned. |
-
-For a more detailed milestone view, see [docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md).
-
-## Screens
-
-NexPlay currently includes:
-
-- Home dashboard with continue-watching and library statistics.
-- Library/search views for local media and Bangumi catalog results.
-- Subject detail pages with local episode mapping and Bangumi actions.
-- Player view with danmaku, subtitle controls, progress persistence, and mpv
-  control bridge.
-- Resource search and download task pages.
-- Settings pages for media folders, Bangumi, dandanplay, Nyaa, qBittorrent, and
-  logging.
+| Library and scan | Available | Local folders, scan progress, logs, grid/list, cloud/local switch, and sorting. |
+| Bangumi | Available | Public discovery, detail fallback, search, OAuth, sync, and episode status. |
+| Resources/downloads | Available | Nyaa filters, torrent file selection, qBittorrent controls, and confirmation dialogs. |
+| Insights/settings | Available | Existing history/settings are preserved; edits require an explicit save. |
+| Video playback | Not migrated | Electron/mpv remains a temporary fallback. |
 
 ## Requirements
 
-- Node.js 22 or newer.
-- npm 10 or newer.
-- Rust toolchain with edition 2024 support.
-- Electron-supported desktop environment.
-- mpv/libmpv runtime for playback features.
-- `pkg-config` and libmpv development headers when building the native render
-  bridge.
-- Optional service credentials:
-  - Bangumi OAuth client or access token for authenticated sync.
-  - dandanplay credentials/API key for danmaku matching.
-  - qBittorrent Web UI for download management.
+For the official Linux frontend:
 
-## Quick Start
+- Linux with GTK 4 and libadwaita development packages.
+- `pkg-config`.
+- Rust with edition 2024 support.
 
-Install dependencies:
+On Arch Linux:
 
 ```bash
-npm install
+sudo pacman -S gtk4 libadwaita pkgconf
 ```
 
-Create a local configuration from the example if needed:
+Node.js/npm and the Electron dependencies are only needed for the temporary
+Electron fallback and its existing Windows/macOS packaging path.
+
+Optional service configuration includes Bangumi OAuth or access-token
+credentials, dandanplay credentials retained for the existing playback path,
+and qBittorrent Web UI access.
+
+## Quick start
+
+Run the native Linux frontend:
 
 ```bash
-cp config.example.toml config.toml
+cargo run -- gtk
 ```
 
-Start the development app:
+Or use the npm convenience command:
 
 ```bash
-npm run dev
+npm run dev:gtk
 ```
 
-`npm run dev` starts the Vite renderer and the Electron main process. In
-development, Electron starts the Rust backend with:
+Open Settings, add one or more media-library directories, save, and start a
+scan from the Library page.
+
+The release binary and desktop entry are built/located with:
 
 ```bash
-cargo run --quiet -- backend-daemon
+cargo build --release
+# target/release/nexplay
+# data/dev.nexplay.NexPlay.desktop
 ```
 
-Open Settings in the app, add one or more media-library directories, save, and
-run a scan from the library page.
+See [docs/GTK_FRONTEND.md](docs/GTK_FRONTEND.md) for installation, isolated
+configuration, XDG paths, and the GTK playback boundary.
 
 ## Configuration
 
-The repository includes [config.example.toml](config.example.toml). Local
-configuration belongs in `config.toml`, which is intentionally ignored by Git.
+The repository includes [config.example.toml](config.example.toml). For GTK,
+`NEXPLAY_CONFIG` has the highest priority. Without it, configuration is stored
+under `$XDG_CONFIG_HOME/nexplay/config.toml` or `~/.config/nexplay/config.toml`.
+When creating a new GTK configuration, the default database is under
+`$XDG_DATA_HOME/nexplay/nexplay.sqlite3` or `~/.local/share/nexplay/nexplay.sqlite3`.
 
-Important sections:
+Existing configurations, databases, media paths, and watch states are read
+without schema migration or path rewriting.
+
+Important configuration sections are:
 
 - `media_libraries`: directories to scan.
 - `database.path`: SQLite database location.
-- `bangumi`: metadata, OAuth, token, image cache, and matching options.
-- `dandanplay`: danmaku matching credentials.
+- `bangumi`: API, OAuth, token, image-cache, and matching options.
+- `dandanplay`: retained danmaku/playback credentials.
 - `nyaa`: resource-search provider settings.
 - `qbittorrent`: Web UI connection and download defaults.
-- `logging`: backend log level.
+- `experience` and `logging`: appearance, privacy, and backend log settings.
 
-Packaged builds store production configuration under Electron's userData
-directory instead of the installation directory.
-
-## Development Commands
+## Development commands
 
 ```bash
-npm run dev                    # Vite + Electron development mode
-npm run generate:types         # regenerate frontend TypeScript API contracts
-npm run test:backend-daemon    # smoke-test the Rust backend daemon protocol
-npm run build:native-render    # build the optional mpv native render bridge
-npm run diagnose:player        # inspect player/mpv bridge behavior
-npm run diagnose:danmaku       # inspect danmaku timing/render behavior
-npm run build                  # type-check and build the renderer
-npm run build:backend          # release-build the Rust backend
-npm run package                # build unpacked Electron app for current OS
-npm run dist                   # build distributable artifacts for current OS
+cargo fmt --check             # formatting gate
+cargo check                   # compile the GTK and backend paths
+cargo test                    # Rust tests
+cargo build --release         # official Linux binary
+cargo run -- gtk              # native GTK frontend
+npm run dev:gtk               # native GTK convenience command
+npm run generate:types        # regenerate legacy Electron API contracts
+npm run test:backend-daemon   # legacy daemon protocol smoke test
 ```
 
-The frontend API types in `frontend/src/generated/backend.ts` are generated from
-Rust types. Run `npm run generate:types` after changing backend request/response
-contracts.
-
-## Build And Release
-
-Build the renderer and run Electron in production renderer mode:
+The Electron fallback remains available through explicitly named commands when
+needed for Windows/macOS or playback comparison:
 
 ```bash
+npm run dev
 npm run build
-npm start
+npm run package:electron
+npm run dist:electron
 ```
 
-Build the current platform package:
-
-```bash
-npm run dist
-```
-
-The release build performs:
-
-1. `tsc --noEmit && vite build`
-2. `cargo build --release`
-3. `node scripts/build-native-render.cjs`
-4. `node scripts/prepare-release-assets.cjs`
-5. `electron-builder`
-
-Artifacts are written to `release/`.
-
-Pushing a `v*` tag triggers the GitHub Actions release workflow:
-
-```bash
-git tag v0.1.0
-git push origin v0.1.0
-```
-
-Expected artifact families:
-
-- Windows: NSIS installer (`.exe`)
-- macOS: `.dmg` and `.zip`
-- Linux: `.AppImage`, `.deb`, and `.tar.gz`
+`npm run package` and `npm run dist` now resolve to the native GTK release
+build. Electron Builder is not part of the official Linux release path.
 
 ## Architecture
 
 ```text
-React/Vite renderer
-  -> Electron preload IPC
-  -> Electron main process
-  -> Rust JSON-RPC backend daemon
-  -> SQLite, filesystem scan, Bangumi, dandanplay, Nyaa, qBittorrent
+GTK4/libadwaita application (`nexplay gtk`)
+  -> bounded Rust worker pool
+  -> shared AppContext
+  -> SQLite, filesystem scan, Bangumi, Nyaa, qBittorrent
 
-Player UI
-  -> Electron player control bridge
-  -> mpv/libmpv and optional native render bridge
+Electron/React fallback (temporary)
+  -> preload IPC / backend daemon
+  -> existing Rust services and playback/native bridge
 ```
 
 Main directories:
 
-- `frontend/src/`: React renderer source.
-- `electron/`: Electron main process, preload, backend RPC client, asset
-  protocol, player control, and render bridge.
-- `src/`: Rust backend, domain model, repository, services, metadata providers,
-  backend daemon, and generated API contract types.
-- `native/mpv-render-bridge/`: optional native libmpv render bridge.
-- `scripts/`: release preparation and diagnostics.
-- `.github/workflows/release.yml`: multi-platform release workflow.
-
-The old Slint frontend is no longer the app entrypoint.
+- `src/gtk_frontend/`: GTK shell, native pages, worker runtime, image loader,
+  and OAuth callback handling.
+- `src/`: shared Rust backend, domain model, repository, services, metadata
+  providers, and JSON-RPC daemon.
+- `frontend/` and `electron/`: retained temporary React/Electron reference and
+  fallback.
+- `native/mpv-render-bridge/`: retained playback bridge.
+- `data/dev.nexplay.NexPlay.desktop`: Linux desktop launcher.
+- `docs/GTK_FRONTEND.md`: native frontend build and runtime notes.
+- `experiments/`: experimental work, intentionally outside this migration.
 
 ## Contributing
 
-Contributions are welcome while the project is stabilizing. Please read
-[CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request.
-
+Please read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request.
 For security-sensitive reports, use [SECURITY.md](SECURITY.md).
 
 ## License

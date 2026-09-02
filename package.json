@@ -2,7 +2,7 @@
   "name": "nexplay",
   "version": "0.1.0",
   "private": true,
-  "description": "Desktop anime media library with local playback, Bangumi metadata, danmaku, and download integration.",
+  "description": "Desktop anime media library with a native GTK4/libadwaita Linux frontend and a temporary Electron fallback.",
   "license": "MIT",
   "homepage": "https://github.com/ddy314/NexPlay#readme",
   "repository": {
@@ -26,6 +26,7 @@
   "main": "electron/main.cjs",
   "scripts": {
     "dev": "concurrently -k \"npm:dev:renderer\" \"npm:dev:electron\"",
+    "dev:gtk": "cargo run -- gtk",
     "dev:renderer": "vite --host 127.0.0.1 --port 5173 --strictPort",
     "dev:electron": "wait-on http-get://127.0.0.1:5173 && node scripts/run-electron.cjs --no-sandbox .",
     "generate:types": "cargo run --quiet -- export-types",
@@ -38,9 +39,14 @@
     "diagnose:player:discover": "node scripts/diagnose-player.cjs --discover",
     "build": "tsc --noEmit && vite build",
     "build:backend": "cargo build --release",
+    "build:gtk": "cargo build --release",
     "prepare:release-assets": "node scripts/prepare-release-assets.cjs",
-    "package": "npm run build && npm run build:backend && npm run build:native-render && npm run prepare:release-assets && electron-builder --dir",
-    "dist": "npm run build && npm run build:backend && npm run build:native-render && npm run prepare:release-assets && electron-builder --publish never",
+    "package": "npm run package:gtk",
+    "package:gtk": "npm run build:gtk",
+    "package:electron": "npm run build && npm run build:backend && npm run build:native-render && npm run prepare:release-assets && electron-builder --dir",
+    "dist": "npm run dist:gtk",
+    "dist:gtk": "npm run build:gtk",
+    "dist:electron": "npm run build && npm run build:backend && npm run build:native-render && npm run prepare:release-assets && electron-builder --publish never",
     "start": "NEXPLAY_RENDERER_MODE=production node scripts/run-electron.cjs --no-sandbox .",
     "preview": "vite preview --host 127.0.0.1 --port 4173 --strictPort"
   },

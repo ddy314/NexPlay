@@ -15,14 +15,15 @@ use crate::backend_api::{
     RefreshSubjectRequest, ResolveSubjectRequest, SetDanmakuOffsetRequest,
     StartResourceDownloadRequest, bangumi_auth_status, batch_update_bangumi_episodes,
     clear_playback_analytics, complete_bangumi_oauth, confirm_resource_download,
-    control_download_task, danmaku_binding, danmaku_track, download_tasks, episode_resources,
-    finish_playback_session, frontend_event_from_app, heartbeat_playback_session, home_feed,
-    insights_dashboard, logout_bangumi, media_source, online_subject, open_media,
-    prepare_resource_download, record_playback_session_event, refresh_subject_metadata,
-    rematch_danmaku, report_playback_progress, resolve_subject, save_settings_config, scan,
-    search_catalog, set_danmaku_offset, settings_config, snapshot, start_bangumi_login,
-    start_playback_session, start_resource_download, sync_bangumi_now, sync_bangumi_subject,
-    test_qbittorrent_connection, update_bangumi_collection, update_bangumi_episode,
+    control_download_task, danmaku_binding, danmaku_track, discovery_feed, download_tasks,
+    episode_resources, finish_playback_session, frontend_event_from_app,
+    heartbeat_playback_session, home_feed, insights_dashboard, logout_bangumi, media_source,
+    online_subject, open_media, prepare_resource_download, record_playback_session_event,
+    refresh_subject_metadata, rematch_danmaku, report_playback_progress, resolve_subject,
+    save_settings_config, scan, search_catalog, set_danmaku_offset, settings_config, snapshot,
+    start_bangumi_login, start_playback_session, start_resource_download, sync_bangumi_now,
+    sync_bangumi_subject, test_qbittorrent_connection, update_bangumi_collection,
+    update_bangumi_episode,
 };
 use crate::error::{AppError, AppResult, io_error};
 use crate::service::{
@@ -277,6 +278,7 @@ fn dispatch(context: &AppContext, method: &str, params: Option<Value>) -> AppRes
         }
         "clearPlaybackAnalytics" => to_value(clear_playback_analytics(context)?),
         "homeFeed" => to_value(home_feed(context)?),
+        "discoveryFeed" => to_value(discovery_feed(context)?),
         "testQbittorrentConnection" => to_value(test_qbittorrent_connection(context)),
         other => Err(AppError::Api(format!("unknown JSON-RPC method: {other}"))),
     }

@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=NexPlay
+Comment=Native GTK4 anime media library
+Exec=nexplay gtk
+Icon=video-x-generic
+Terminal=false
+Type=Application
+Categories=AudioVideo;Video;Player;
+Keywords=Anime;Video;Bangumi;Library;
+StartupNotify=true

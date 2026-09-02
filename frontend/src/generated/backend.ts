@@ -123,6 +123,8 @@ export type HomeFeedSection = { id: string, kind: string, title: string, subtitl
 
 export type HomeFeedResponse = { generatedAt: number, sections: Array<HomeFeedSection>, };
 
+export type DiscoveryFeedResponse = { today: Array<FrontendSubject>, trending: Array<FrontendSubject>, };
+
 export type ConnectionTestResponse = { ok: boolean, message: string, };
 
 export type BackendEventType = "log" | "scanStarted" | "scanProgress" | "scanFinished" | "scanFailed" | "danmakuMatched" | "metadataStarted" | "metadataProgress" | "metadataFinished" | "subjectUpdated" | "imageCached" | "metadataFailed" | "metadataStatus" | "bangumiSyncStarted" | "bangumiSyncProgress" | "bangumiSyncFinished" | "bangumiSyncFailed" | "bangumiOAuthCompleted" | "bangumiOAuthFailed" | "downloadCompleted";
