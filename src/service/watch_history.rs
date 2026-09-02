@@ -136,6 +136,10 @@ impl WatchHistoryService {
         self.repository.playback_insight_rows_since(since)
     }
 
+    pub fn recent_played_subject_ids(&self, limit: usize) -> AppResult<Vec<i64>> {
+        self.repository.recent_played_subject_ids(limit)
+    }
+
     pub fn local_day_key(&self, timestamp_ms: i64) -> AppResult<i64> {
         self.repository.local_day_key(timestamp_ms)
     }

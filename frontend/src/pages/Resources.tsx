@@ -10,7 +10,7 @@ import {
   type EpisodeResource,
   type TorrentFile,
 } from "../backend";
-import type { Subject } from "../data";
+import { subjectDisplayTitle, type Subject } from "../data";
 import { friendlyDownloadError } from "../downloadErrors";
 import { appleSpringBouncy, appleSpringSoft } from "../motion";
 import { Dropdown } from "../ui";
@@ -114,7 +114,7 @@ export function ResourcesPage({
   useEffect(() => {
     if (!prefill) return;
     setContext(prefill.subject);
-    setQuery(prefill.subject.title || prefill.subject.titleCn);
+    setQuery(subjectDisplayTitle(prefill.subject));
   }, [prefill]);
 
   useEffect(() => {

@@ -157,7 +157,11 @@ pub struct FrontendEditableSettings {
     pub bangumi_cache_images: bool,
     pub dandanplay_app_id: String,
     pub dandanplay_app_secret: String,
+    #[serde(default)]
+    pub dandanplay_app_secret_configured: bool,
     pub dandanplay_api_key: String,
+    #[serde(default)]
+    pub dandanplay_api_key_configured: bool,
     pub nyaa_enabled: bool,
     pub nyaa_base_url: String,
     pub nyaa_category: String,
@@ -165,6 +169,8 @@ pub struct FrontendEditableSettings {
     pub qbittorrent_base_url: String,
     pub qbittorrent_username: String,
     pub qbittorrent_password: String,
+    #[serde(default)]
+    pub qbittorrent_password_configured: bool,
     pub qbittorrent_save_path: String,
     pub qbittorrent_category: String,
     pub qbittorrent_tags: String,
@@ -203,7 +209,7 @@ pub struct MediaSourceRequest {
     pub media_id: i64,
 }
 
-#[derive(Debug, Serialize, TS)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct MediaSourceResponse {
     pub media_id: i64,
@@ -1400,6 +1406,45 @@ pub fn home_feed(context: &AppContext) -> AppResult<HomeFeedResponse> {
         "已保存本地播放进度",
     );
 
+    let recent_played_ids = context.watch_history.recent_played_subject_ids(12)?;
+    let recent_played_order = recent_played_ids
+        .iter()
+        .enumerate()
+        .map(|(index, subject_id)| (*subject_id, index))
+        .collect::<HashMap<_, _>>();
+    let mut recently_watched = subjects
+        .iter()
+        .filter(|subject| {
+            subject.local
+                && (recent_played_order.contains_key(&subject.subject_id)
+                    || subject
+                        .provider_subject_id
+                        .parse::<i64>()
+                        .ok()
+                        .is_some_and(|id| recent_played_order.contains_key(&id)))
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    recently_watched.sort_by_key(|subject| {
+        subject
+            .provider_subject_id
+            .parse::<i64>()
+            .ok()
+            .and_then(|id| recent_played_order.get(&id).copied())
+            .or_else(|| recent_played_order.get(&subject.subject_id).copied())
+            .unwrap_or(usize::MAX)
+    });
+    push_home_section(
+        &mut sections,
+        "recentlyPlayed",
+        "recent",
+        "最近观看",
+        "回到你最近打开的本地内容",
+        "poster",
+        recently_watched,
+        "最近播放过的本地媒体",
+    );
+
     let mut recent = subjects
         .iter()
         .filter(|subject| subject.local)
@@ -1608,11 +1653,6 @@ fn frontend_subject_from_series(
     collection: Option<&BangumiSubjectCollection>,
     bangumi_episodes: &[BangumiEpisodeCollection],
 ) -> FrontendSubject {
-    let display_title = if card.title_cn.trim().is_empty() {
-        card.title.clone()
-    } else {
-        card.title_cn.clone()
-    };
     let local_files = card
         .local_files
         .into_iter()
@@ -1702,8 +1742,8 @@ fn frontend_subject_from_series(
         provider_subject_id: card.provider_subject_id,
         local: true,
         aliases: Vec::new(),
-        title: display_title,
-        title_cn: card.title,
+        title: card.title,
+        title_cn: card.title_cn,
         year: card
             .air_date
             .get(0..4)
@@ -1874,11 +1914,6 @@ fn merge_frontend_subject(
 }
 
 fn frontend_subject_from_catalog(subject: CatalogSubjectData) -> FrontendSubject {
-    let display_title = if subject.title_cn.trim().is_empty() {
-        subject.title.clone()
-    } else {
-        subject.title_cn.clone()
-    };
     let subject_id = subject
         .provider_subject_id
         .parse::<i64>()
@@ -1944,8 +1979,8 @@ fn frontend_subject_from_catalog(subject: CatalogSubjectData) -> FrontendSubject
         provider_subject_id: subject.provider_subject_id,
         local: subject.local,
         aliases: subject.aliases,
-        title: display_title,
-        title_cn: subject.title,
+        title: subject.title,
+        title_cn: subject.title_cn,
         year: subject
             .air_date
             .get(0..4)
@@ -1992,17 +2027,13 @@ fn frontend_subject_from_bangumi_collection(
         .and_then(subject_json_to_summary);
     let title = summary
         .as_ref()
-        .and_then(|summary| {
-            summary
-                .name_cn
-                .clone()
-                .filter(|value| !value.trim().is_empty())
-        })
-        .or_else(|| summary.as_ref().and_then(|summary| summary.name.clone()))
+        .and_then(|summary| summary.name.clone())
+        .filter(|value| !value.trim().is_empty())
         .unwrap_or_else(|| format!("Bangumi #{}", collection.subject_id));
     let title_cn = summary
         .as_ref()
-        .and_then(|summary| summary.name.clone())
+        .and_then(|summary| summary.name_cn.clone())
+        .filter(|value| !value.trim().is_empty())
         .unwrap_or_default();
     let poster = summary
         .as_ref()
@@ -2458,15 +2489,18 @@ fn frontend_settings_from_config(config: AppConfig) -> FrontendEditableSettings 
         bangumi_auto_match: config.bangumi.auto_match,
         bangumi_cache_images: config.bangumi.cache_images,
         dandanplay_app_id: config.dandanplay.app_id,
-        dandanplay_app_secret: config.dandanplay.app_secret,
-        dandanplay_api_key: config.dandanplay.api_key,
+        dandanplay_app_secret: String::new(),
+        dandanplay_app_secret_configured: !config.dandanplay.app_secret.trim().is_empty(),
+        dandanplay_api_key: String::new(),
+        dandanplay_api_key_configured: !config.dandanplay.api_key.trim().is_empty(),
         nyaa_enabled: config.nyaa.enabled,
         nyaa_base_url: config.nyaa.base_url,
         nyaa_category: config.nyaa.category,
         qbittorrent_enabled: config.qbittorrent.enabled,
         qbittorrent_base_url: config.qbittorrent.base_url,
         qbittorrent_username: config.qbittorrent.username,
-        qbittorrent_password: config.qbittorrent.password,
+        qbittorrent_password: String::new(),
+        qbittorrent_password_configured: !config.qbittorrent.password.trim().is_empty(),
         qbittorrent_save_path: config.qbittorrent.save_path,
         qbittorrent_category: config.qbittorrent.category,
         qbittorrent_tags: config.qbittorrent.tags,
@@ -2493,8 +2527,16 @@ fn config_from_frontend_settings(input: FrontendEditableSettings, current: AppCo
             .collect(),
         dandanplay: DandanplayConfig {
             app_id: input.dandanplay_app_id,
-            app_secret: input.dandanplay_app_secret,
-            api_key: input.dandanplay_api_key,
+            app_secret: if input.dandanplay_app_secret.trim().is_empty() {
+                current.dandanplay.app_secret
+            } else {
+                input.dandanplay_app_secret
+            },
+            api_key: if input.dandanplay_api_key.trim().is_empty() {
+                current.dandanplay.api_key
+            } else {
+                input.dandanplay_api_key
+            },
         },
         bangumi: BangumiConfig {
             enabled: input.bangumi_enabled,
@@ -2526,7 +2568,11 @@ fn config_from_frontend_settings(input: FrontendEditableSettings, current: AppCo
             enabled: input.qbittorrent_enabled,
             base_url: input.qbittorrent_base_url,
             username: input.qbittorrent_username,
-            password: input.qbittorrent_password,
+            password: if input.qbittorrent_password.trim().is_empty() {
+                current.qbittorrent.password
+            } else {
+                input.qbittorrent_password
+            },
             save_path: input.qbittorrent_save_path,
             category: input.qbittorrent_category,
             tags: input.qbittorrent_tags,

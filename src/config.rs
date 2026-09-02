@@ -8,8 +8,11 @@ use crate::error::{AppError, AppResult, io_error};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
+    #[serde(default)]
     pub database: DatabaseConfig,
+    #[serde(default)]
     pub media_libraries: Vec<PathBuf>,
+    #[serde(default)]
     pub dandanplay: DandanplayConfig,
     #[serde(default)]
     pub bangumi: BangumiConfig,
@@ -19,10 +22,12 @@ pub struct AppConfig {
     pub qbittorrent: QbittorrentConfig,
     #[serde(default)]
     pub experience: ExperienceConfig,
+    #[serde(default)]
     pub logging: LoggingConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct ExperienceConfig {
     #[serde(default = "default_theme")]
     pub theme: String,
@@ -51,6 +56,24 @@ impl Default for ExperienceConfig {
     }
 }
 
+impl Default for DatabaseConfig {
+    fn default() -> Self {
+        Self {
+            path: PathBuf::from("data/nexplay.sqlite3"),
+        }
+    }
+}
+
+impl Default for DandanplayConfig {
+    fn default() -> Self {
+        Self {
+            app_id: String::new(),
+            app_secret: String::new(),
+            api_key: String::new(),
+        }
+    }
+}
+
 fn default_theme() -> String {
     "system".to_string()
 }
@@ -71,12 +94,26 @@ fn default_weekly_active_days_goal() -> u64 {
     4
 }
 
+fn default_bangumi_base_url() -> String {
+    "https://api.bgm.tv".to_string()
+}
+
+fn default_bangumi_user_agent() -> String {
+    format!("NexPlay/{}", env!("CARGO_PKG_VERSION"))
+}
+
+fn default_bangumi_timeout() -> u64 {
+    20
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct DatabaseConfig {
     pub path: PathBuf,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct DandanplayConfig {
     pub app_id: String,
     pub app_secret: String,
@@ -84,8 +121,11 @@ pub struct DandanplayConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct BangumiConfig {
+    #[serde(default = "default_true")]
     pub enabled: bool,
+    #[serde(default = "default_bangumi_base_url")]
     pub base_url: String,
     #[serde(default = "default_bangumi_oauth_base_url")]
     pub oauth_base_url: String,
@@ -95,14 +135,20 @@ pub struct BangumiConfig {
     pub client_secret: String,
     #[serde(default = "default_bangumi_redirect_uri")]
     pub redirect_uri: String,
+    #[serde(default)]
     pub access_token: String,
+    #[serde(default = "default_bangumi_user_agent")]
     pub user_agent: String,
+    #[serde(default = "default_bangumi_timeout")]
     pub request_timeout_secs: u64,
+    #[serde(default = "default_true")]
     pub auto_match: bool,
+    #[serde(default = "default_true")]
     pub cache_images: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct NyaaConfig {
     pub enabled: bool,
     pub base_url: String,
@@ -120,6 +166,7 @@ impl Default for NyaaConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct QbittorrentConfig {
     pub enabled: bool,
     pub base_url: String,
@@ -162,6 +209,14 @@ impl Default for BangumiConfig {
     }
 }
 
+impl Default for LoggingConfig {
+    fn default() -> Self {
+        Self {
+            level: "info".to_string(),
+        }
+    }
+}
+
 fn default_bangumi_oauth_base_url() -> String {
     "https://bgm.tv".to_string()
 }
@@ -171,6 +226,7 @@ fn default_bangumi_redirect_uri() -> String {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct LoggingConfig {
     pub level: String,
 }
@@ -215,6 +271,8 @@ impl ConfigStore {
     ) -> AppResult<Self> {
         let path = path.into();
         if !path.exists() {
+            let mut default_config = default_config;
+            resolve_relative_paths(&path, &mut default_config);
             write_config(&path, &default_config)?;
             return Ok(Self {
                 path,
@@ -223,9 +281,10 @@ impl ConfigStore {
         }
 
         let raw = fs::read_to_string(&path).map_err(|err| io_error(&path, err))?;
-        let config: AppConfig = toml::from_str(&raw).map_err(|err| {
+        let mut config: AppConfig = toml::from_str(&raw).map_err(|err| {
             AppError::Config(format!("failed to parse {}: {err}", path.display()))
         })?;
+        resolve_relative_paths(&path, &mut config);
 
         Ok(Self {
             path,
@@ -278,6 +337,23 @@ impl ConfigStore {
     }
 }
 
+fn resolve_relative_paths(config_path: &Path, config: &mut AppConfig) {
+    let Some(base) = config_path
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+    else {
+        return;
+    };
+    if config.database.path.is_relative() {
+        config.database.path = base.join(&config.database.path);
+    }
+    for library in &mut config.media_libraries {
+        if library.is_relative() {
+            *library = base.join(&*library);
+        }
+    }
+}
+
 fn write_config(path: &Path, config: &AppConfig) -> AppResult<()> {
     if let Some(parent) = path
         .parent()
@@ -289,4 +365,34 @@ fn write_config(path: &Path, config: &AppConfig) -> AppResult<()> {
     let raw = toml::to_string_pretty(config)
         .map_err(|err| AppError::Config(format!("failed to serialize config: {err}")))?;
     fs::write(path, raw).map_err(|err| io_error(path, err))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn partial_config_uses_safe_defaults() {
+        let config: AppConfig = toml::from_str("[bangumi]\nenabled = false\n").unwrap();
+        assert!(!config.bangumi.enabled);
+        assert_eq!(config.bangumi.base_url, "https://api.bgm.tv");
+        assert_eq!(config.bangumi.request_timeout_secs, 20);
+        assert_eq!(config.experience.theme, "system");
+        assert!(config.nyaa.enabled);
+    }
+
+    #[test]
+    fn relative_paths_follow_an_explicit_config_file() {
+        let mut config = AppConfig::default();
+        config.media_libraries.push(PathBuf::from("media"));
+        resolve_relative_paths(Path::new("/tmp/nexplay/config.toml"), &mut config);
+        assert_eq!(
+            config.database.path,
+            PathBuf::from("/tmp/nexplay/data/nexplay.sqlite3")
+        );
+        assert_eq!(
+            config.media_libraries,
+            vec![PathBuf::from("/tmp/nexplay/media")]
+        );
+    }
 }

@@ -26,8 +26,28 @@ impl ImageLoader {
         width: i32,
         height: i32,
     ) -> gtk::Widget {
+        // Keep the allocation stable when a texture arrives.  A bare
+        // GtkPicture reports the source image's natural size after loading,
+        // which can make an AdwWrapBox reflow a poster from its placeholder
+        // size to the source resolution.  AspectFrame provides the fixed
+        // poster slot and clips the paintable inside it.
+        let frame = gtk::AspectFrame::new(0.5, 0.5, width as f32 / height as f32, false);
+        frame.set_size_request(width, height);
+        frame.set_hexpand(false);
+        frame.set_vexpand(false);
+        frame.set_halign(gtk::Align::Start);
+        frame.set_valign(gtk::Align::Start);
+        frame.set_overflow(gtk::Overflow::Hidden);
+        frame.add_css_class("nx-rounded-media");
+
         let stack = gtk::Stack::new();
         stack.set_size_request(width, height);
+        stack.set_hexpand(true);
+        stack.set_vexpand(true);
+        stack.set_halign(gtk::Align::Fill);
+        stack.set_valign(gtk::Align::Fill);
+        stack.set_overflow(gtk::Overflow::Hidden);
+        frame.set_child(Some(&stack));
 
         let placeholder = gtk::Image::from_icon_name("image-x-generic-symbolic");
         placeholder.set_pixel_size(48);
@@ -41,12 +61,16 @@ impl ImageLoader {
         picture.set_can_shrink(true);
         picture.set_content_fit(gtk::ContentFit::Cover);
         picture.set_size_request(width, height);
+        picture.set_hexpand(true);
+        picture.set_vexpand(true);
+        picture.set_halign(gtk::Align::Fill);
+        picture.set_valign(gtk::Align::Fill);
         stack.add_named(&picture, Some("image"));
         stack.set_visible_child_name("placeholder");
 
         let source = source.trim().to_string();
         if source.is_empty() {
-            return stack.upcast();
+            return frame.upcast();
         }
 
         if let Some(path) = local_path(&source) {
@@ -54,11 +78,11 @@ impl ImageLoader {
                 picture.set_filename(Some(path));
                 stack.set_visible_child_name("image");
             }
-            return stack.upcast();
+            return frame.upcast();
         }
 
         if !(source.starts_with("http://") || source.starts_with("https://")) {
-            return stack.upcast();
+            return frame.upcast();
         }
 
         if let Some(bytes) = self
@@ -69,7 +93,7 @@ impl ImageLoader {
             .cloned()
         {
             set_texture(&picture, &stack, bytes);
-            return stack.upcast();
+            return frame.upcast();
         }
 
         let cache = self.cache.clone();
@@ -97,7 +121,7 @@ impl ImageLoader {
                 }
             },
         );
-        stack.upcast()
+        frame.upcast()
     }
 }
 

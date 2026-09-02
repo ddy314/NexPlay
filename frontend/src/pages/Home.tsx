@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { ArrowRight, Clock3, Compass, HardDrive, Play, Sparkles } from "lucide-react";
 import { motion } from "framer-motion";
 import { fetchHomeFeed, type HomeFeed } from "../backend";
-import type { Subject } from "../data";
+import { subjectDisplayTitle, type Subject } from "../data";
 import { Poster } from "../MediaCard";
 import { appleEase } from "../motion";
 import { resolveAssetUrl } from "../utils/assets";
@@ -201,10 +201,10 @@ function FeedSection({ section, onOpen }: { section: HomeFeed["sections"][number
         {section.items.map((item) => (
           <button key={item.subject.canonicalKey} type="button" className={cn("nx-media-tile", section.layout === "wide" && "wide")} onClick={() => onOpen(item.subject)}>
             <div className="nx-media-art">
-              <Poster src={item.subject.poster || item.subject.hero} alt={item.subject.title} className="size-full" />
+              <Poster src={item.subject.poster || item.subject.hero} alt={subjectDisplayTitle(item.subject)} className="size-full" />
               <span className="nx-reason">{item.reason}</span>
             </div>
-            <div className="nx-media-title">{item.subject.titleCn || item.subject.title}</div>
+            <div className="nx-media-title">{subjectDisplayTitle(item.subject)}</div>
             <div className="nx-media-meta">{item.subject.local ? "本地可播" : "Bangumi"}{item.subject.rating > 0 ? ` · ${item.subject.rating.toFixed(1)}` : ""}</div>
           </button>
         ))}

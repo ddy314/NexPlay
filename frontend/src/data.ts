@@ -10,6 +10,10 @@ export type Subject = FrontendSubject;
 export type LocalFile = FrontendLocalFile;
 export type EpisodeDetail = FrontendEpisode;
 
+export function subjectDisplayTitle(subject: Pick<Subject, "title" | "titleCn">): string {
+  return subject.titleCn?.trim() || subject.title?.trim() || "未命名作品";
+}
+
 export type PlaybackEpisode = {
   key: string;
   episode: number;

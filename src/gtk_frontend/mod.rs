@@ -1,10 +1,13 @@
 mod images;
 mod oauth;
+mod player;
 mod runtime;
+mod skeleton;
 
 use std::cell::{Cell, RefCell};
-use std::collections::HashSet;
-use std::path::PathBuf;
+use std::collections::{HashMap, HashSet};
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::mpsc;
 use std::thread;
@@ -17,7 +20,7 @@ use crate::backend_api::{
     BackendEvent, BackendEventType, BackendSnapshot, CatalogSearchRequest,
     ConfirmResourceDownloadRequest, DiscoveryFeedResponse, DownloadTaskActionRequest,
     DownloadTasksResponse, EpisodeResourcesRequest, EpisodeResourcesResponse,
-    FrontendEditableSettings, FrontendSubject, HomeFeedResponse, InsightRange,
+    FrontendEditableSettings, FrontendEpisode, FrontendSubject, HomeFeedResponse, InsightRange,
     InsightsDashboardRequest, InsightsDashboardResponse, PrepareResourceDownloadRequest,
     PreparedResourceDownloadResponse, RefreshSubjectRequest, ResolveSubjectRequest, ScanResponse,
     SubjectRef, complete_bangumi_oauth, confirm_resource_download, discovery_feed, download_tasks,
@@ -33,6 +36,7 @@ use crate::service::{
 };
 
 use self::images::ImageLoader;
+use self::player::open_player;
 use self::runtime::BackendRuntime;
 
 const APP_ID: &str = "dev.nexplay.NexPlay";
@@ -41,6 +45,8 @@ pub fn run() -> AppResult<()> {
     let application = adw::Application::builder().application_id(APP_ID).build();
 
     application.connect_activate(|application| {
+        skeleton::install_css();
+        apply_runtime_settings("system", false);
         let window = adw::ApplicationWindow::builder()
             .application(application)
             .default_width(1280)
@@ -103,15 +109,82 @@ pub fn run() -> AppResult<()> {
     if application_args.len() > 1 {
         application_args.remove(1);
     }
-    application.run_with_args_os(&application_args);
+    let mut filtered_args = Vec::with_capacity(application_args.len());
+    let mut skip_next = false;
+    for argument in application_args {
+        if skip_next {
+            skip_next = false;
+            continue;
+        }
+        if argument == "--config" {
+            skip_next = true;
+            continue;
+        }
+        if argument.to_string_lossy().starts_with("--config=") {
+            continue;
+        }
+        filtered_args.push(argument);
+    }
+    application.run_with_args_os(&filtered_args);
     Ok(())
 }
 
 fn native_config_path() -> PathBuf {
     if let Some(path) = std::env::var_os("NEXPLAY_CONFIG") {
-        return PathBuf::from(path);
+        if !path.is_empty() {
+            return PathBuf::from(path);
+        }
     }
-    xdg_config_home().join("nexplay").join("config.toml")
+    if let Some(path) = gtk_config_argument() {
+        return path;
+    }
+    let xdg = xdg_config_home().join("nexplay").join("config.toml");
+    let mut legacy_candidates = vec![
+        std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join("config.toml"),
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("config.toml"),
+    ];
+    legacy_candidates.dedup();
+    for legacy in legacy_candidates {
+        if legacy.is_file() && (!xdg.is_file() || legacy_config_is_more_complete(&legacy, &xdg)) {
+            return legacy;
+        }
+    }
+    xdg
+}
+
+fn gtk_config_argument() -> Option<PathBuf> {
+    let mut args = std::env::args_os().skip(2);
+    while let Some(argument) = args.next() {
+        if argument == "--config" {
+            return args.next().map(PathBuf::from);
+        }
+        if let Some(path) = argument.to_string_lossy().strip_prefix("--config=") {
+            if !path.is_empty() {
+                return Some(PathBuf::from(path));
+            }
+        }
+    }
+    None
+}
+
+fn legacy_config_is_more_complete(legacy: &Path, native: &Path) -> bool {
+    config_media_library_count(legacy) > config_media_library_count(native)
+}
+
+fn config_media_library_count(path: &Path) -> usize {
+    fs::read_to_string(path)
+        .ok()
+        .and_then(|raw| raw.parse::<toml::Table>().ok())
+        .and_then(|table| {
+            table
+                .get("media_libraries")
+                .and_then(toml::Value::as_array)
+                .cloned()
+        })
+        .map(|libraries| libraries.len())
+        .unwrap_or_default()
 }
 
 fn native_default_config() -> AppConfig {
@@ -180,19 +253,20 @@ struct UiState {
     snapshot_loading: Cell<bool>,
     scan_loading: Cell<bool>,
     settings_dirty: Cell<bool>,
-    settings_guard: Cell<bool>,
+    settings_save_generation: Cell<u64>,
+    settings_save_in_flight: Cell<bool>,
     settings_data: RefCell<Option<FrontendEditableSettings>>,
     settings_requested: Cell<bool>,
     settings_error: RefCell<Option<String>>,
     settings_form: RefCell<Option<Rc<SettingsForm>>>,
-    pending_route: RefCell<Option<String>>,
     next_page_id: Cell<u64>,
 }
 
 struct SettingsForm {
     base: FrontendEditableSettings,
     media_libraries: Rc<RefCell<Vec<String>>>,
-    controls: RefCell<std::collections::HashMap<String, gtk::Widget>>,
+    controls: RefCell<HashMap<String, gtk::Widget>>,
+    secret_values: RefCell<HashMap<String, String>>,
     media_group: adw::PreferencesGroup,
 }
 
@@ -201,36 +275,41 @@ fn build_main_ui(context: AppContext, window: &adw::ApplicationWindow) -> gtk::W
     let stack = adw::ViewStack::new();
     stack.set_vexpand(true);
     stack.set_hexpand(true);
-    let home = page_box();
-    let discover = page_box();
-    let library = page_box();
-    let search = page_box();
-    let downloads = page_box();
-    let insights = page_box();
-    let settings = page_box();
-    stack.add_titled_with_icon(&home, Some("home"), "首页", "go-home-symbolic");
-    stack.add_titled_with_icon(&discover, Some("discover"), "发现", "compass-symbolic");
+    let (home_page, home) = page_surface();
+    let (discover_page, discover) = page_surface();
+    let (library_page, library) = page_surface();
+    let (search_page, search) = page_surface();
+    let (downloads_page, downloads) = page_surface();
+    let (insights_page, insights) = page_surface();
+    let (settings_page, settings) = page_surface();
+    stack.add_titled_with_icon(&home_page, Some("home"), "首页", "go-home-symbolic");
+    stack.add_titled_with_icon(&discover_page, Some("discover"), "发现", "compass-symbolic");
     stack.add_titled_with_icon(
-        &library,
+        &library_page,
         Some("library"),
         "媒体库",
         "folder-videos-symbolic",
     );
-    stack.add_titled_with_icon(&search, Some("search"), "搜索", "system-search-symbolic");
     stack.add_titled_with_icon(
-        &downloads,
+        &search_page,
+        Some("search"),
+        "搜索",
+        "system-search-symbolic",
+    );
+    stack.add_titled_with_icon(
+        &downloads_page,
         Some("downloads"),
         "下载",
         "folder-download-symbolic",
     );
     stack.add_titled_with_icon(
-        &insights,
+        &insights_page,
         Some("insights"),
         "洞察",
         "view-statistics-symbolic",
     );
     stack.add_titled_with_icon(
-        &settings,
+        &settings_page,
         Some("settings"),
         "设置",
         "emblem-system-symbolic",
@@ -243,18 +322,23 @@ fn build_main_ui(context: AppContext, window: &adw::ApplicationWindow) -> gtk::W
     let navigation = adw::NavigationView::new();
     let main_toolbar = adw::ToolbarView::new();
     let header = adw::HeaderBar::new();
-    header.set_title_widget(Some(&adw::WindowTitle::new("NexPlay", "GTK4 + libadwaita")));
+    let page_title = adw::WindowTitle::new("首页", "");
+    header.set_title_widget(Some(&page_title));
     let search_button = gtk::Button::from_icon_name("system-search-symbolic");
     search_button.set_tooltip_text(Some("搜索条目"));
     header.pack_end(&search_button);
     main_toolbar.add_top_bar(&header);
     main_toolbar.set_content(Some(&toast));
-    let root_page = adw::NavigationPage::with_tag(&main_toolbar, "NexPlay", "root");
+    let root_page = adw::NavigationPage::with_tag(&main_toolbar, "首页", "root");
     navigation.add(&root_page);
 
     let sidebar_toolbar = adw::ToolbarView::new();
     let sidebar_header = adw::HeaderBar::new();
     sidebar_header.set_title_widget(Some(&adw::WindowTitle::new("NexPlay", "媒体中心")));
+    let primary_menu = gtk::MenuButton::new();
+    primary_menu.set_icon_name("open-menu-symbolic");
+    primary_menu.set_tooltip_text(Some("主菜单"));
+    sidebar_header.pack_start(&primary_menu);
     sidebar_toolbar.add_top_bar(&sidebar_header);
     let switcher = adw::ViewSwitcherSidebar::new();
     switcher.set_stack(Some(&stack));
@@ -265,6 +349,13 @@ fn build_main_ui(context: AppContext, window: &adw::ApplicationWindow) -> gtk::W
     split.set_sidebar(Some(&sidebar_page));
     split.set_content(Some(&content_page));
     split.set_sidebar_width_fraction(0.22);
+    split.set_show_content(true);
+    let compact = adw::Breakpoint::new(
+        adw::BreakpointCondition::parse("max-width: 860px")
+            .expect("valid compact window breakpoint"),
+    );
+    compact.add_setter(&split, "collapsed", Some(&true.to_value()));
+    window.add_breakpoint(compact);
 
     let empty = empty_snapshot();
     let state = Rc::new(UiState {
@@ -313,14 +404,16 @@ fn build_main_ui(context: AppContext, window: &adw::ApplicationWindow) -> gtk::W
         snapshot_loading: Cell::new(false),
         scan_loading: Cell::new(false),
         settings_dirty: Cell::new(false),
-        settings_guard: Cell::new(false),
+        settings_save_generation: Cell::new(0),
+        settings_save_in_flight: Cell::new(false),
         settings_form: RefCell::new(None),
         settings_data: RefCell::new(None),
         settings_requested: Cell::new(false),
         settings_error: RefCell::new(None),
-        pending_route: RefCell::new(None),
         next_page_id: Cell::new(1),
     });
+
+    setup_primary_menu(&state, &primary_menu);
 
     search_button.connect_clicked({
         let state = state.clone();
@@ -379,25 +472,21 @@ fn build_main_ui(context: AppContext, window: &adw::ApplicationWindow) -> gtk::W
     });
     state.search_entry.add_controller(key_controller);
 
-    let stack_for_guard = stack.clone();
     stack.connect_visible_child_name_notify({
-        let state = state.clone();
-        move |_| {
-            if state.settings_guard.get() || !state.settings_dirty.get() {
-                return;
-            }
-            if stack_for_guard.visible_child_name().as_deref() == Some("settings") {
-                return;
-            }
-            let target = stack_for_guard
-                .visible_child_name()
-                .map(|name| name.to_string())
-                .unwrap_or_else(|| "home".to_string());
-            state.pending_route.replace(Some(target));
-            state.settings_guard.set(true);
-            stack_for_guard.set_visible_child_name("settings");
-            state.settings_guard.set(false);
-            confirm_discard_settings(&state, stack_for_guard.clone());
+        let split = split.clone();
+        let page_title = page_title.clone();
+        move |stack| {
+            split.set_show_content(true);
+            let title = match stack.visible_child_name().as_deref() {
+                Some("discover") => "发现",
+                Some("library") => "媒体库",
+                Some("search") => "搜索",
+                Some("downloads") => "下载",
+                Some("insights") => "洞察",
+                Some("settings") => "设置",
+                _ => "首页",
+            };
+            page_title.set_title(title);
         }
     });
 
@@ -442,6 +531,79 @@ fn build_main_ui(context: AppContext, window: &adw::ApplicationWindow) -> gtk::W
     split.upcast()
 }
 
+fn setup_primary_menu(state: &Rc<UiState>, button: &gtk::MenuButton) {
+    let menu = gio::Menu::new();
+    menu.append(Some("偏好设置"), Some("app.preferences"));
+    menu.append(Some("键盘快捷键"), Some("app.shortcuts"));
+    menu.append(Some("帮助"), Some("app.help"));
+    menu.append(Some("关于 NexPlay"), Some("app.about"));
+    button.set_menu_model(Some(&menu));
+
+    let Some(application) = state.window.application() else {
+        return;
+    };
+
+    let preferences = gio::SimpleAction::new("preferences", None);
+    preferences.connect_activate({
+        let state = state.clone();
+        move |_, _| state.stack.set_visible_child_name("settings")
+    });
+    application.add_action(&preferences);
+
+    let shortcuts = gio::SimpleAction::new("shortcuts", None);
+    shortcuts.connect_activate({
+        let state = state.clone();
+        move |_, _| show_shortcuts_dialog(&state)
+    });
+    application.add_action(&shortcuts);
+
+    let help = gio::SimpleAction::new("help", None);
+    help.connect_activate({
+        let state = state.clone();
+        move |_, _| show_help_dialog(&state)
+    });
+    application.add_action(&help);
+
+    let about = gio::SimpleAction::new("about", None);
+    about.connect_activate({
+        let state = state.clone();
+        move |_, _| {
+            let dialog = adw::AboutDialog::builder()
+                .application_name("NexPlay")
+                .application_icon("video-x-generic")
+                .version(env!("CARGO_PKG_VERSION"))
+                .comments("本地媒体库、Bangumi 元数据与播放进度")
+                .license_type(gtk::License::MitX11)
+                .website("https://github.com/ddy314/NexPlay")
+                .build();
+            dialog.present(Some(&state.window));
+        }
+    });
+    application.add_action(&about);
+}
+
+fn show_help_dialog(state: &Rc<UiState>) {
+    let dialog = adw::AlertDialog::new(
+        Some("使用 NexPlay"),
+        Some(
+            "在首页继续观看；在媒体库扫描和管理本地文件；打开作品详情后，点击集数即可播放或查找资源。",
+        ),
+    );
+    dialog.add_response("close", "关闭");
+    dialog.set_close_response("close");
+    dialog.present(Some(&state.window));
+}
+
+fn show_shortcuts_dialog(state: &Rc<UiState>) {
+    let dialog = adw::AlertDialog::new(
+        Some("键盘快捷键"),
+        Some("Escape 返回上一级或关闭搜索。搜索框中按 Enter 打开当前条目，↑/↓ 移动选择。"),
+    );
+    dialog.add_response("close", "关闭");
+    dialog.set_close_response("close");
+    dialog.present(Some(&state.window));
+}
+
 fn empty_snapshot() -> BackendSnapshot {
     BackendSnapshot {
         subjects: Vec::new(),
@@ -472,14 +634,18 @@ fn empty_snapshot() -> BackendSnapshot {
     }
 }
 
-fn page_box() -> gtk::Box {
+fn page_surface() -> (gtk::ScrolledWindow, gtk::Box) {
     let page = gtk::Box::new(gtk::Orientation::Vertical, 0);
     page.set_margin_top(24);
     page.set_margin_bottom(32);
-    page.set_margin_start(28);
-    page.set_margin_end(28);
+    page.set_margin_start(24);
+    page.set_margin_end(24);
     page.set_spacing(18);
-    page
+    let clamp = adw::Clamp::new();
+    clamp.set_maximum_size(1120);
+    clamp.set_tightening_threshold(760);
+    clamp.set_child(Some(&page));
+    (scrolled(&clamp), page)
 }
 
 fn clear_box(box_widget: &gtk::Box) {
@@ -492,6 +658,7 @@ fn request_snapshot(state: &Rc<UiState>) {
     if state.snapshot_loading.replace(true) {
         return;
     }
+    render_home(state);
     let weak = Rc::downgrade(state);
     state.runtime.submit(
         |context| snapshot(context),
@@ -690,12 +857,32 @@ fn status(title: &str, description: &str, icon: &str) -> adw::StatusPage {
     page
 }
 
-fn action_button(text: &str, icon: &str) -> gtk::Button {
-    let button = gtk::Button::with_label(text);
-    if !icon.is_empty() {
-        button.set_icon_name(icon);
-    }
+fn action_button(text: &str, _icon: &str) -> gtk::Button {
+    // Ordinary content buttons stay label-only.  Icon-only actions use
+    // `icon_button`, which keeps the button hierarchy compact and follows the
+    // GNOME button guidance outside a header bar.
+    gtk::Button::with_label(text)
+}
+
+fn icon_button(icon: &str, tooltip: &str) -> gtk::Button {
+    let button = gtk::Button::from_icon_name(icon);
+    button.set_tooltip_text(Some(tooltip));
+    button.add_css_class("flat");
     button
+}
+
+fn adaptive_wrap() -> adw::WrapBox {
+    let wrap = adw::WrapBox::builder()
+        .child_spacing(18)
+        .line_spacing(18)
+        .natural_line_length(1120)
+        .wrap_policy(adw::WrapPolicy::Minimum)
+        .justify(adw::JustifyMode::None)
+        .build();
+    wrap.set_hexpand(true);
+    wrap.set_halign(gtk::Align::Fill);
+    wrap.set_justify_last_line(false);
+    wrap
 }
 
 fn append_button_row(container: &gtk::Box, title: &str, subtitle: &str, button: &gtk::Button) {
@@ -714,9 +901,9 @@ fn append_button_row(container: &gtk::Box, title: &str, subtitle: &str, button: 
 
 fn subject_title(subject: &FrontendSubject) -> String {
     if subject.title_cn.trim().is_empty() {
-        subject.title.clone()
+        subject.title.trim().to_string()
     } else {
-        subject.title_cn.clone()
+        subject.title_cn.trim().to_string()
     }
 }
 
@@ -726,35 +913,36 @@ fn subject_meta(subject: &FrontendSubject) -> String {
         values.push(subject.year.to_string());
     }
     if subject.episodes > 0 {
-        values.push(format!("{} 集", subject.episodes));
+        values.push(format!("{}集", subject.episodes));
     }
     if subject.rating > 0.0 {
-        values.push(format!("评分 {:.1}", subject.rating));
-    }
-    if subject.local {
-        values.push("本地".to_string());
-    } else if subject.provider == "bangumi" {
-        values.push("Bangumi".to_string());
+        values.push(format!("{:.1}", subject.rating));
     }
     values.join(" · ")
 }
 
-fn subject_card(state: &Rc<UiState>, subject: FrontendSubject, wide: bool) -> gtk::Button {
+fn subject_card(state: &Rc<UiState>, subject: FrontendSubject) -> gtk::Button {
     let button = gtk::Button::new();
     button.set_has_frame(false);
     button.set_hexpand(false);
+    button.set_halign(gtk::Align::Start);
+    button.add_css_class("nx-media-card");
     let body = gtk::Box::new(gtk::Orientation::Vertical, 6);
-    let image = state.images.widget(
-        if wide { &subject.hero } else { &subject.poster },
-        &state.runtime,
-        if wide { 190 } else { 136 },
-        if wide { 112 } else { 190 },
-    );
+    body.set_width_request(160);
+    let image = state
+        .images
+        .widget(&subject.poster, &state.runtime, 160, 226);
     body.append(&image);
     let title = label(subject_title(&subject), "heading");
+    title.set_wrap(false);
+    title.set_width_chars(18);
+    title.set_max_width_chars(18);
     title.set_ellipsize(gtk::pango::EllipsizeMode::End);
     body.append(&title);
     let meta = label(subject_meta(&subject), "dim-label");
+    meta.set_wrap(false);
+    meta.set_width_chars(18);
+    meta.set_max_width_chars(18);
     meta.set_ellipsize(gtk::pango::EllipsizeMode::End);
     body.append(&meta);
     button.set_child(Some(&body));
@@ -768,31 +956,30 @@ fn subject_shelf(
     title: &str,
     subtitle: &str,
     subjects: &[FrontendSubject],
-    wide: bool,
 ) -> gtk::Box {
     let section = gtk::Box::new(gtk::Orientation::Vertical, 8);
     section.append(&label(title, "title-2"));
-    section.append(&label(subtitle, "dim-label"));
-    let flow = gtk::FlowBox::new();
-    flow.set_selection_mode(gtk::SelectionMode::None);
-    flow.set_row_spacing(14);
-    flow.set_column_spacing(14);
-    flow.set_max_children_per_line(if wide { 4 } else { 6 });
-    for subject in subjects.iter().take(18).cloned() {
-        flow.insert(&subject_card(state, subject, wide), -1);
+    if !subtitle.is_empty() {
+        section.append(&label(subtitle, "dim-label"));
     }
-    section.append(&flow);
+    let wrap = adaptive_wrap();
+    for subject in subjects.iter().take(18).cloned() {
+        wrap.append(&subject_card(state, subject));
+    }
+    section.append(&wrap);
     section
 }
 
 fn render_home(state: &Rc<UiState>) {
     clear_box(&state.home);
-    let snapshot = state.snapshot.borrow().clone();
     state.home.append(&page_header(
         "主页",
-        "继续观看、最近内容和本地状态都在这里。播放器迁移完成前，播放入口会保持不可用。",
+        "在这里继续观看、回到最近打开的内容，或浏览本地片库。",
     ));
-    let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let actions = adw::WrapBox::builder()
+        .child_spacing(8)
+        .line_spacing(8)
+        .build();
     let discover_button = action_button("打开发现", "compass-symbolic");
     let library_button = action_button("打开媒体库", "folder-videos-symbolic");
     let insights_button = action_button("观看洞察", "view-statistics-symbolic");
@@ -837,49 +1024,23 @@ fn render_home(state: &Rc<UiState>) {
                 &section.title,
                 &section.subtitle,
                 &subjects,
-                section.layout == "wide",
             ));
         }
         if !has_items {
-            if snapshot.subjects.is_empty() {
-                state.home.append(&status(
-                    "从第一部番剧开始",
-                    "在设置中添加媒体目录，然后从媒体库启动扫描。",
-                    "folder-videos-symbolic",
-                ));
-            } else {
-                state.home.append(&subject_shelf(
-                    state,
-                    "你的媒体库",
-                    "本地资料库内容",
-                    &snapshot.subjects,
-                    false,
-                ));
-            }
-        }
-    } else {
-        if !snapshot.subjects.is_empty() {
-            state.home.append(&subject_shelf(
-                state,
-                "你的媒体库",
-                "本地资料库内容",
-                &snapshot.subjects,
-                false,
-            ));
-        } else {
             state.home.append(&status(
                 "从第一部番剧开始",
                 "在设置中添加媒体目录，然后从媒体库启动扫描。",
                 "folder-videos-symbolic",
             ));
         }
+    } else {
         if let Some(error) = state.home_feed_error.borrow().clone() {
             let error_page = status(
                 "首页内容暂不可用",
                 &format!("{error}。可以稍后重试。"),
                 "dialog-warning-symbolic",
             );
-            let retry = action_button("重试首页 feed", "view-refresh-symbolic");
+            let retry = action_button("重试首页内容", "view-refresh-symbolic");
             let state_for_retry = state.clone();
             retry.connect_clicked(move |_| {
                 state_for_retry.home_feed_error.replace(None);
@@ -889,7 +1050,10 @@ fn render_home(state: &Rc<UiState>) {
             error_page.set_child(Some(&retry));
             state.home.append(&error_page);
         } else {
-            request_home_feed(state);
+            state.home.append(&skeleton::home());
+            if !state.snapshot_loading.get() {
+                request_home_feed(state);
+            }
         }
     }
 }
@@ -920,10 +1084,9 @@ fn request_home_feed(state: &Rc<UiState>) {
 
 fn render_discover(state: &Rc<UiState>) {
     clear_box(&state.discover);
-    state.discover.append(&page_header(
-        "发现",
-        "今日放送和趋势内容来自 Rust 后端的 Bangumi 公共日历，结果缓存 6 小时。",
-    ));
+    state
+        .discover
+        .append(&page_header("发现", "在这里浏览今日放送和正在上升的作品。"));
     if let Some(feed) = state.discovery_feed.borrow().clone() {
         if feed.today.is_empty() && feed.trending.is_empty() {
             state.discover.append(&status(
@@ -939,7 +1102,6 @@ fn render_discover(state: &Rc<UiState>) {
                 "今日放送",
                 "Bangumi 每日放送",
                 &feed.today,
-                false,
             ));
         }
         if !feed.trending.is_empty() {
@@ -948,7 +1110,6 @@ fn render_discover(state: &Rc<UiState>) {
                 "正在上升",
                 "公开收藏数、评分与排名综合排序",
                 &feed.trending,
-                true,
             ));
         }
     } else if let Some(error) = state.discovery_feed_error.borrow().clone() {
@@ -967,11 +1128,7 @@ fn render_discover(state: &Rc<UiState>) {
         error_page.set_child(Some(&retry));
         state.discover.append(&error_page);
     } else {
-        state.discover.append(&status(
-            "正在读取 Bangumi 日历",
-            "发现内容在后台加载，不会阻塞 GTK 界面。",
-            "content-loading-symbolic",
-        ));
+        state.discover.append(&skeleton::home());
         request_discovery(state);
     }
 }
@@ -1016,13 +1173,16 @@ fn render_library(state: &Rc<UiState>) {
     state.library.append(&page_header(
         "媒体库",
         &format!(
-            "{} · {} 部条目 · {} 个本地文件 · 支持网格/列表和排序。",
+            "在这里管理{}、扫描新文件并打开作品详情。当前有 {} 部条目、{} 个本地文件。",
             source_label,
             subjects.len(),
             subjects.iter().map(|subject| subject.files).sum::<usize>()
         ),
     ));
-    let controls = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let controls = adw::WrapBox::builder()
+        .child_spacing(8)
+        .line_spacing(8)
+        .build();
     let scan_button = action_button(
         if state.scan_loading.get() {
             "扫描中…"
@@ -1032,13 +1192,21 @@ fn render_library(state: &Rc<UiState>) {
         "view-refresh-symbolic",
     );
     scan_button.set_sensitive(!state.scan_loading.get());
-    let grid_button = gtk::ToggleButton::with_label("网格");
+    let grid_button = gtk::ToggleButton::new();
+    grid_button.set_child(Some(&gtk::Image::from_icon_name("view-grid-symbolic")));
+    grid_button.set_tooltip_text(Some("网格视图"));
     grid_button.set_active(state.library_grid.get());
-    let list_button = gtk::ToggleButton::with_label("列表");
+    let list_button = gtk::ToggleButton::new();
+    list_button.set_child(Some(&gtk::Image::from_icon_name("view-list-symbolic")));
+    list_button.set_tooltip_text(Some("列表视图"));
     list_button.set_active(!state.library_grid.get());
-    let local_button = gtk::ToggleButton::with_label("本地");
+    let local_button = gtk::ToggleButton::new();
+    local_button.set_child(Some(&gtk::Image::from_icon_name("folder-videos-symbolic")));
+    local_button.set_tooltip_text(Some("本地媒体"));
     local_button.set_active(!state.library_cloud.get());
-    let cloud_button = gtk::ToggleButton::with_label("云端");
+    let cloud_button = gtk::ToggleButton::new();
+    cloud_button.set_child(Some(&gtk::Image::from_icon_name("cloud-symbolic")));
+    cloud_button.set_tooltip_text(Some("云端收藏"));
     cloud_button.set_active(state.library_cloud.get());
     local_button.set_group(Some(&cloud_button));
     let sort = gtk::DropDown::from_strings(&["按年份", "按标题", "按评分"]);
@@ -1049,7 +1217,7 @@ fn render_library(state: &Rc<UiState>) {
     controls.append(&grid_button);
     controls.append(&list_button);
     controls.append(&sort);
-    let settings_button = action_button("管理媒体目录", "emblem-system-symbolic");
+    let settings_button = icon_button("emblem-system-symbolic", "管理媒体目录");
     controls.append(&settings_button);
     state.library.append(&controls);
     {
@@ -1113,20 +1281,16 @@ fn render_library(state: &Rc<UiState>) {
             if state.library_cloud.get() {
                 "登录 Bangumi 并同步云端收藏，或切换回本地媒体。"
             } else {
-                "添加一个媒体目录并启动扫描。已有数据库和观看状态不会被迁移或重写。"
+                "添加一个媒体目录并启动扫描，视频会按作品和集数整理。"
             },
             "folder-videos-symbolic",
         ));
     } else if state.library_grid.get() {
-        let flow = gtk::FlowBox::new();
-        flow.set_selection_mode(gtk::SelectionMode::None);
-        flow.set_row_spacing(18);
-        flow.set_column_spacing(18);
-        flow.set_max_children_per_line(6);
+        let wrap = adaptive_wrap();
         for subject in sorted_subjects(subjects, state.library_sort.get()) {
-            flow.insert(&subject_card(state, subject, false), -1);
+            wrap.append(&subject_card(state, subject));
         }
-        state.library.append(&scrolled(&flow));
+        state.library.append(&wrap);
     } else {
         let list = gtk::ListBox::new();
         list.set_selection_mode(gtk::SelectionMode::None);
@@ -1139,15 +1303,12 @@ fn render_library(state: &Rc<UiState>) {
                 subject.file_summary
             ));
             row.set_activatable(true);
-            let open = gtk::Button::with_label("详情");
-            open.add_css_class("flat");
-            row.add_suffix(&open);
             let state_for_open = state.clone();
             let subject_for_open = subject.clone();
-            open.connect_clicked(move |_| open_subject(&state_for_open, subject_for_open.clone()));
+            row.connect_activated(move |_| open_subject(&state_for_open, subject_for_open.clone()));
             list.append(&row);
         }
-        state.library.append(&scrolled(&list));
+        state.library.append(&list);
     }
     append_log_panel(state, &state.library);
 }
@@ -1313,7 +1474,7 @@ fn render_search(state: &Rc<UiState>) {
         }
         list.select_row(list.row_at_index(0).as_ref());
         state.search_list.replace(Some(list.clone()));
-        state.search.append(&scrolled(&list));
+        state.search.append(&list);
     }
 }
 
@@ -1343,7 +1504,7 @@ fn render_downloads(state: &Rc<UiState>) {
     clear_box(&state.downloads);
     state.downloads.append(&page_header(
         "下载",
-        "qBittorrent 任务状态每 15 秒刷新；所有网络和控制操作都在后台 worker 中执行。",
+        "在这里查看任务进度，暂停、取消或移除下载。",
     ));
     if let Some(data) = state.downloads_data.borrow().clone() {
         if data.tasks.is_empty() {
@@ -1353,45 +1514,38 @@ fn render_downloads(state: &Rc<UiState>) {
                 "folder-download-symbolic",
             ));
         } else {
-            let list = gtk::ListBox::new();
-            list.set_selection_mode(gtk::SelectionMode::None);
+            let list = gtk::Box::new(gtk::Orientation::Vertical, 0);
+            list.add_css_class("nx-download-list");
             for task in data.tasks {
-                let row = adw::ActionRow::new();
-                row.set_title(&task.title);
-                row.set_subtitle(&format!(
-                    "{} · {} · {} / {} · 速度 {} /s",
-                    task.status,
-                    if task.stale {
-                        "状态过期"
-                    } else {
-                        "qBittorrent"
-                    },
-                    format_bytes_i64(task.downloaded),
-                    format_bytes_i64(task.size),
-                    format_bytes_i64(task.dlspeed),
-                ));
-                let progress = gtk::ProgressBar::new();
-                progress.set_fraction(task.progress.clamp(0.0, 1.0));
-                progress.set_valign(gtk::Align::Center);
-                progress.set_width_request(140);
-                row.add_suffix(&progress);
+                let body = gtk::Box::new(gtk::Orientation::Vertical, 8);
+                body.set_hexpand(true);
+                body.add_css_class("nx-download-row");
+                let heading = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+                heading.set_hexpand(true);
+                let title = label(&task.title, "heading");
+                title.set_hexpand(true);
+                title.set_wrap(true);
+                heading.append(&title);
                 let actions = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+                actions.set_valign(gtk::Align::Center);
                 if matches!(task.status.as_str(), "paused" | "queued" | "downloading") {
                     let action = if task.status == "paused" {
                         "resume"
                     } else {
                         "pause"
                     };
-                    let button = gtk::Button::from_icon_name(if action == "pause" {
-                        "media-playback-pause-symbolic"
-                    } else {
-                        "media-playback-start-symbolic"
-                    });
-                    button.set_tooltip_text(Some(if action == "pause" {
-                        "暂停"
-                    } else {
-                        "继续"
-                    }));
+                    let button = icon_button(
+                        if action == "pause" {
+                            "media-playback-pause-symbolic"
+                        } else {
+                            "media-playback-start-symbolic"
+                        },
+                        if action == "pause" {
+                            "暂停"
+                        } else {
+                            "继续"
+                        },
+                    );
                     let state_for_action = state.clone();
                     let id = task.id;
                     let action_name = action.to_string();
@@ -1399,23 +1553,49 @@ fn render_downloads(state: &Rc<UiState>) {
                         control_download(&state_for_action, id, &action_name, false)
                     });
                     actions.append(&button);
-                    let cancel = gtk::Button::from_icon_name("process-stop-symbolic");
-                    cancel.set_tooltip_text(Some("取消下载"));
+                    let cancel = icon_button("process-stop-symbolic", "取消下载");
                     let state_for_cancel = state.clone();
                     let id = task.id;
                     cancel.connect_clicked(move |_| confirm_cancel_download(&state_for_cancel, id));
                     actions.append(&cancel);
                 }
-                let remove = gtk::Button::from_icon_name("user-trash-symbolic");
-                remove.set_tooltip_text(Some("删除任务"));
+                let remove = icon_button("user-trash-symbolic", "删除任务");
                 let state_for_remove = state.clone();
                 let id = task.id;
                 remove.connect_clicked(move |_| confirm_remove_download(&state_for_remove, id));
                 actions.append(&remove);
-                row.add_suffix(&actions);
-                list.append(&row);
+                heading.append(&actions);
+                body.append(&heading);
+                body.append(&label(
+                    &format!(
+                        "{} · {} · {} / {} · 速度 {} /s",
+                        task.status,
+                        if task.stale {
+                            "状态过期"
+                        } else {
+                            "qBittorrent"
+                        },
+                        format_bytes_i64(task.downloaded),
+                        format_bytes_i64(task.size),
+                        format_bytes_i64(task.dlspeed),
+                    ),
+                    "dim-label",
+                ));
+                let progress_line = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+                let progress = gtk::ProgressBar::new();
+                progress.set_fraction(task.progress.clamp(0.0, 1.0));
+                progress.set_hexpand(true);
+                progress.set_show_text(false);
+                progress.set_valign(gtk::Align::Center);
+                let percent = label(format!("{:.0}%", task.progress * 100.0), "dim-label");
+                percent.set_width_chars(5);
+                percent.set_xalign(1.0);
+                progress_line.append(&progress);
+                progress_line.append(&percent);
+                body.append(&progress_line);
+                list.append(&body);
             }
-            state.downloads.append(&scrolled(&list));
+            state.downloads.append(&list);
         }
     } else if let Some(error) = state.downloads_error.borrow().clone() {
         let error_page = status(
@@ -1433,11 +1613,7 @@ fn render_downloads(state: &Rc<UiState>) {
         error_page.set_child(Some(&retry));
         state.downloads.append(&error_page);
     } else {
-        state.downloads.append(&status(
-            "正在读取下载状态",
-            "首次读取和 qBittorrent 登录都在后台进行。",
-            "content-loading-symbolic",
-        ));
+        state.downloads.append(&skeleton::downloads());
         request_downloads(state);
     }
 }
@@ -1559,7 +1735,11 @@ fn render_insights(state: &Rc<UiState>) {
         }
     });
     if let Some(data) = state.insights_data.borrow().clone() {
-        let metrics = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+        let metrics = adw::WrapBox::builder()
+            .child_spacing(12)
+            .line_spacing(12)
+            .line_homogeneous(true)
+            .build();
         for (title, value) in [
             ("观看分钟", format!("{:.0}", data.total_minutes)),
             ("完成集数", data.completed_episodes.to_string()),
@@ -1742,16 +1922,38 @@ fn open_subject(state: &Rc<UiState>, subject: FrontendSubject) {
     let detail = gtk::Box::new(gtk::Orientation::Vertical, 0);
     detail.set_vexpand(true);
     detail.set_hexpand(true);
-    detail.append(&status(
-        "正在读取条目详情",
-        "本地、云端和公共 Bangumi 信息正在合并。",
-        "content-loading-symbolic",
-    ));
+    detail.append(&skeleton::detail());
     let tag = format!("subject-{}", state.next_page_id.get());
     state
         .next_page_id
         .set(state.next_page_id.get().saturating_add(1));
-    let page = adw::NavigationPage::with_tag(&detail, &subject_title(&subject), &tag);
+    let detail_view = adw::ToolbarView::new();
+    let header = adw::HeaderBar::new();
+    let current_subject = Rc::new(RefCell::new(subject.clone()));
+    if subject.local && subject.subject_id > 0 {
+        let refresh = icon_button("view-refresh-symbolic", "刷新本地详情");
+        let state_for_refresh = state.clone();
+        let current_for_refresh = current_subject.clone();
+        let detail_for_refresh = detail.clone();
+        refresh.connect_clicked(move |_| {
+            refresh_detail(
+                &state_for_refresh,
+                current_for_refresh.borrow().clone(),
+                detail_for_refresh.clone(),
+            )
+        });
+        header.pack_end(&refresh);
+    }
+    if subject.provider == "bangumi" && subject.subject_id > 0 {
+        let sync = icon_button("emblem-synchronizing-symbolic", "同步 Bangumi 状态");
+        let state_for_sync = state.clone();
+        let subject_id = subject.subject_id;
+        sync.connect_clicked(move |_| sync_subject(&state_for_sync, subject_id));
+        header.pack_end(&sync);
+    }
+    detail_view.add_top_bar(&header);
+    detail_view.set_content(Some(&detail));
+    let page = adw::NavigationPage::with_tag(&detail_view, &subject_title(&subject), &tag);
     state.navigation.push(&page);
     let subject_ref = SubjectRef {
         canonical_key: subject.canonical_key.clone(),
@@ -1760,13 +1962,19 @@ fn open_subject(state: &Rc<UiState>, subject: FrontendSubject) {
         media_id: subject.local_files.first().map(|file| file.media_id),
     };
     let weak = Rc::downgrade(state);
+    let page_for_result = page.clone();
+    let current_for_result = current_subject.clone();
     state.runtime.submit(
         move |context| resolve_subject(context, ResolveSubjectRequest { subject_ref }),
         move |result: Result<FrontendSubject, String>| {
             let Some(state) = weak.upgrade() else { return };
             clear_box(&detail);
             match result {
-                Ok(subject) => render_detail(&state, &detail, subject),
+                Ok(subject) => {
+                    page_for_result.set_title(&subject_title(&subject));
+                    current_for_result.replace(subject.clone());
+                    render_detail(&state, &detail, subject);
+                }
                 Err(error) => {
                     detail.append(&status("无法读取详情", &error, "dialog-error-symbolic"));
                 }
@@ -1776,60 +1984,74 @@ fn open_subject(state: &Rc<UiState>, subject: FrontendSubject) {
 }
 
 fn render_detail(state: &Rc<UiState>, container: &gtk::Box, subject: FrontendSubject) {
-    let toolbar = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    let play = action_button("播放器尚未迁移", "media-playback-start-symbolic");
-    play.set_sensitive(false);
-    toolbar.append(&play);
-    let refresh = action_button("刷新详情", "view-refresh-symbolic");
-    toolbar.append(&refresh);
-    if subject.provider == "bangumi" && subject.subject_id > 0 {
-        let sync = action_button("同步 Bangumi", "emblem-synchronizing-symbolic");
-        toolbar.append(&sync);
-        let state_for_sync = state.clone();
-        let subject_id = subject.subject_id;
-        sync.connect_clicked(move |_| sync_subject(&state_for_sync, subject_id));
-    }
-    container.append(&toolbar);
     let scroll_content = gtk::Box::new(gtk::Orientation::Vertical, 18);
     scroll_content.set_margin_top(18);
     scroll_content.set_margin_bottom(28);
     scroll_content.set_margin_start(28);
     scroll_content.set_margin_end(28);
-    let overview = gtk::Box::new(gtk::Orientation::Horizontal, 20);
-    let poster = state
-        .images
-        .widget(&subject.poster, &state.runtime, 220, 300);
-    overview.append(&poster);
+    let overview = adw::WrapBox::builder()
+        .child_spacing(28)
+        .line_spacing(24)
+        .natural_line_length(920)
+        .wrap_policy(adw::WrapPolicy::Minimum)
+        .justify(adw::JustifyMode::None)
+        .build();
+    overview.set_hexpand(true);
+    overview.set_halign(gtk::Align::Fill);
+    overview.set_justify_last_line(false);
+    overview.append(&detail_cover(state, &subject));
     let copy = gtk::Box::new(gtk::Orientation::Vertical, 8);
     copy.set_hexpand(true);
+    copy.set_width_request(360);
     copy.append(&label(subject_title(&subject), "title-1"));
-    if subject.title_cn != subject.title && !subject.title_cn.is_empty() {
+    if !subject.title.trim().is_empty() && subject.title.trim() != subject_title(&subject) {
         copy.append(&label(&subject.title, "title-3"));
     }
     copy.append(&label(&subject_meta(&subject), "dim-label"));
     let status_text = if subject.local {
         "本地可用"
     } else {
-        "在线条目，播放功能尚未迁移"
+        "在线条目，尚无本地媒体"
     };
     copy.append(&label(status_text, "body"));
-    if !subject.summary.trim().is_empty() {
-        let summary = label(&subject.summary, "body");
-        summary.set_max_width_chars(80);
-        summary.set_margin_start(12);
-        summary.set_margin_end(12);
-        summary.set_margin_top(8);
-        summary.set_margin_bottom(8);
-        let summary_expander = gtk::Expander::new(Some("简介"));
-        summary_expander.set_hexpand(true);
-        summary_expander.set_child(Some(&summary));
-        copy.append(&summary_expander);
+    let summary = localized_summary(&subject.summary);
+    if !summary.is_empty() {
+        copy.append(&label("简介", "heading"));
+        let summary_preview = label(summary, "body");
+        summary_preview.set_lines(3);
+        summary_preview.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        summary_preview.set_halign(gtk::Align::Start);
+        copy.append(&summary_preview);
+        let full_summary = gtk::Button::with_label("查看完整简介");
+        full_summary.add_css_class("flat");
+        full_summary.set_halign(gtk::Align::Start);
+        let state_for_summary = state.clone();
+        let title_for_summary = subject_title(&subject);
+        let summary_text = summary.to_string();
+        full_summary.connect_clicked(move |_| {
+            show_summary_dialog(&state_for_summary, &title_for_summary, &summary_text)
+        });
+        copy.append(&full_summary);
     }
     if !subject.tags.is_empty() {
-        copy.append(&label(
-            &format!("标签：{}", subject.tags.join("、")),
-            "dim-label",
-        ));
+        copy.append(&label("标签", "heading"));
+        let tags = adw::WrapBox::builder()
+            .child_spacing(6)
+            .line_spacing(6)
+            .wrap_policy(adw::WrapPolicy::Minimum)
+            .build();
+        tags.set_halign(gtk::Align::Start);
+        for tag in subject.tags.iter().take(10) {
+            let tag_label = label(format!("#{tag}"), "dim-label");
+            tag_label.set_wrap(false);
+            tag_label.add_css_class("nx-tag");
+            tags.append(&tag_label);
+        }
+        let remaining = subject.tags.len().saturating_sub(10);
+        if remaining > 0 {
+            tags.append(&label(format!("+{remaining}"), "dim-label"));
+        }
+        copy.append(&tags);
     }
     copy.append(&label(
         &format!(
@@ -1843,90 +2065,277 @@ fn render_detail(state: &Rc<UiState>, container: &gtk::Box, subject: FrontendSub
     let progress = gtk::ProgressBar::new();
     progress.set_fraction(subject.progress.clamp(0.0, 1.0));
     copy.append(&progress);
-    overview.append(&copy);
+    let copy_width = adw::Clamp::new();
+    copy_width.set_maximum_size(680);
+    copy_width.set_tightening_threshold(400);
+    copy_width.set_child(Some(&copy));
+    overview.append(&copy_width);
     scroll_content.append(&overview);
-    let episodes_group = adw::PreferencesGroup::new();
-    episodes_group.set_title(&format!("集数（{}）", subject.episodes_detail.len()));
-    for episode in subject.episodes_detail.iter().cloned() {
-        let row = adw::ActionRow::new();
-        let episode_title = if episode.title_cn.is_empty() {
-            episode.title.clone()
-        } else {
-            episode.title_cn.clone()
-        };
-        row.set_title(&format!("第 {} 集 · {}", episode.episode, episode_title));
-        let collection = if episode.bgm_collection_label.is_empty() {
-            String::new()
-        } else {
-            format!(" · {}", episode.bgm_collection_label)
-        };
-        row.set_subtitle(&format!(
-            "{}{}{}",
-            if episode.cached {
-                "已缓存"
-            } else {
-                "未缓存"
-            },
-            if episode.watched {
-                " · 已观看"
-            } else {
-                " · 未观看"
-            },
-            collection,
-        ));
-        if episode.bgm_episode_id.is_some() {
-            let watched = gtk::Button::with_label(if episode.watched {
-                "已看"
-            } else {
-                "标记看过"
-            });
-            watched.set_sensitive(!episode.watched);
-            let state_for_watch = state.clone();
-            let subject_id = subject.subject_id;
-            let episode_id = episode.bgm_episode_id.unwrap_or_default();
-            watched.connect_clicked(move |_| {
-                mark_episode_watched(&state_for_watch, subject_id, episode_id)
-            });
-            row.add_suffix(&watched);
-        }
-        let resource = gtk::Button::with_label("查找资源");
-        resource.add_css_class("suggested-action");
-        let state_for_resource = state.clone();
-        let subject_for_resource = subject.clone();
-        resource.connect_clicked(move |_| {
-            open_resources(
-                &state_for_resource,
-                subject_for_resource.clone(),
-                episode.episode as f64,
-            )
-        });
-        row.add_suffix(&resource);
-        episodes_group.add(&row);
-    }
-    scroll_content.append(&episodes_group);
-    if !subject.local_files.is_empty() {
-        let files = adw::PreferencesGroup::new();
-        files.set_title("本地缓存文件");
-        for file in &subject.local_files {
-            let row = adw::ActionRow::new();
-            row.set_title(&file.file_name);
-            row.set_subtitle(&file.file_size);
-            files.add(&row);
-        }
-        scroll_content.append(&files);
-    }
-    container.append(&scrolled(&scroll_content));
+    let episodes = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    episodes.append(&label(
+        format!("集数（{}）", subject.episodes_detail.len()),
+        "title-2",
+    ));
+    episodes.append(&label(
+        "点击集数即可播放；没有本地文件的集数会打开资源搜索。",
+        "dim-label",
+    ));
+    let episode_list = build_episode_list(state, &subject);
+    episodes.append(&episode_list);
+    scroll_content.append(&episodes);
+    let content_clamp = adw::Clamp::new();
+    content_clamp.set_maximum_size(1200);
+    content_clamp.set_tightening_threshold(760);
+    content_clamp.set_child(Some(&scroll_content));
+    container.append(&scrolled(&content_clamp));
+}
 
-    let state_for_refresh = state.clone();
-    let subject_for_refresh = subject.clone();
-    let container_for_refresh = container.clone();
-    refresh.connect_clicked(move |_| {
-        refresh_detail(
-            &state_for_refresh,
-            subject_for_refresh.clone(),
-            container_for_refresh.clone(),
-        )
+fn detail_cover(state: &Rc<UiState>, subject: &FrontendSubject) -> gtk::Widget {
+    let poster = state
+        .images
+        .widget(&subject.poster, &state.runtime, 220, 308);
+    let Some(episode) = preferred_playback_episode(subject) else {
+        return poster;
+    };
+
+    let cover = gtk::Button::new();
+    cover.set_has_frame(false);
+    cover.set_size_request(220, 308);
+    cover.set_hexpand(false);
+    cover.set_vexpand(false);
+    cover.set_halign(gtk::Align::Start);
+    cover.set_valign(gtk::Align::Start);
+    cover.set_tooltip_text(Some("播放当前集"));
+    let overlay = gtk::Overlay::new();
+    overlay.set_child(Some(&poster));
+    let play_icon = gtk::Image::from_icon_name("media-playback-start-symbolic");
+    play_icon.set_pixel_size(48);
+    play_icon.set_opacity(0.0);
+    play_icon.set_halign(gtk::Align::Center);
+    play_icon.set_valign(gtk::Align::Center);
+    overlay.add_overlay(&play_icon);
+    cover.set_child(Some(&overlay));
+    let motion = gtk::EventControllerMotion::new();
+    let icon_for_enter = play_icon.clone();
+    motion.connect_enter(move |_, _, _| icon_for_enter.set_opacity(1.0));
+    let icon_for_leave = play_icon.clone();
+    motion.connect_leave(move |_| icon_for_leave.set_opacity(0.0));
+    cover.add_controller(motion);
+    let state_for_play = state.clone();
+    let subject_for_play = subject.clone();
+    cover.connect_clicked(move |_| {
+        open_player(&state_for_play, subject_for_play.clone(), episode.clone())
     });
+    cover.upcast()
+}
+
+fn show_summary_dialog(state: &Rc<UiState>, title: &str, summary: &str) {
+    let dialog = adw::Dialog::builder()
+        .title("完整简介")
+        .content_width(680)
+        .content_height(520)
+        .build();
+    let toolbar = adw::ToolbarView::new();
+    let header = adw::HeaderBar::new();
+    header.set_title_widget(Some(&adw::WindowTitle::new(title, "完整简介")));
+    let close = icon_button("window-close-symbolic", "关闭");
+    let dialog_for_close = dialog.clone();
+    close.connect_clicked(move |_| {
+        dialog_for_close.close();
+    });
+    header.pack_end(&close);
+    toolbar.add_top_bar(&header);
+    let text = label(summary, "body");
+    text.set_selectable(true);
+    text.set_margin_top(24);
+    text.set_margin_bottom(28);
+    text.set_margin_start(28);
+    text.set_margin_end(28);
+    toolbar.set_content(Some(&scrolled(&text)));
+    dialog.set_child(Some(&toolbar));
+    dialog.present(Some(&state.window));
+}
+
+fn localized_summary(summary: &str) -> &str {
+    summary
+        .split_once("[简介原文]")
+        .map(|(localized, _)| localized)
+        .unwrap_or(summary)
+        .trim()
+}
+
+fn episode_title(episode: &crate::backend_api::FrontendEpisode) -> String {
+    if episode.title_cn.trim().is_empty() {
+        episode.title.trim().to_string()
+    } else {
+        episode.title_cn.trim().to_string()
+    }
+}
+
+fn episode_subtitle(episode: &crate::backend_api::FrontendEpisode) -> String {
+    let mut states = Vec::new();
+    if episode.cached {
+        states.push("本地可播放");
+    } else {
+        states.push("在线");
+    }
+    states.push(if episode.watched {
+        "已观看"
+    } else {
+        "未观看"
+    });
+    if !episode.bgm_collection_label.trim().is_empty() {
+        states.push(episode.bgm_collection_label.as_str());
+    }
+    states.join(" · ")
+}
+
+fn build_episode_list(state: &Rc<UiState>, subject: &FrontendSubject) -> gtk::ListView {
+    let model = gio::ListStore::new::<glib::BoxedAnyObject>();
+    for episode in subject.episodes_detail.iter().cloned() {
+        model.append(&glib::BoxedAnyObject::new(episode));
+    }
+    let selection = gtk::NoSelection::new(Some(model));
+    let factory = gtk::SignalListItemFactory::new();
+    let state_for_setup = state.clone();
+    let subject_for_setup = subject.clone();
+    factory.connect_setup(move |_, object| {
+        let Some(list_item) = object.downcast_ref::<gtk::ListItem>() else {
+            return;
+        };
+        let root = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        root.set_hexpand(true);
+        root.add_css_class("nx-episode-row");
+        let content = gtk::Button::new();
+        content.set_has_frame(false);
+        content.set_hexpand(true);
+        content.set_halign(gtk::Align::Fill);
+        let text = gtk::Box::new(gtk::Orientation::Vertical, 3);
+        text.set_hexpand(true);
+        text.append(&label("", "heading"));
+        text.append(&label("", "dim-label"));
+        content.set_child(Some(&text));
+        root.append(&content);
+        let watched = icon_button("emblem-ok-symbolic", "标记为已观看");
+        watched.set_valign(gtk::Align::Center);
+        root.append(&watched);
+        list_item.set_child(Some(&root));
+
+        let item_for_content = list_item.clone();
+        let state_for_content = state_for_setup.clone();
+        let subject_for_content = subject_for_setup.clone();
+        content.connect_clicked(move |_| {
+            if let Some(episode) = episode_from_list_item(&item_for_content) {
+                activate_episode(&state_for_content, subject_for_content.clone(), episode);
+            }
+        });
+
+        let item_for_watch = list_item.clone();
+        let state_for_watch = state_for_setup.clone();
+        let subject_id = subject_for_setup.subject_id;
+        watched.connect_clicked(move |_| {
+            let Some(episode) = episode_from_list_item(&item_for_watch) else {
+                return;
+            };
+            if let Some(episode_id) = episode.bgm_episode_id
+                && !episode.watched
+                && subject_id > 0
+            {
+                mark_episode_watched(&state_for_watch, subject_id, episode_id);
+            }
+        });
+    });
+    factory.connect_bind(move |_, object| {
+        let Some(list_item) = object.downcast_ref::<gtk::ListItem>() else {
+            return;
+        };
+        let Some(episode) = episode_from_list_item(list_item) else {
+            return;
+        };
+        let Some(root) = list_item.child().and_downcast::<gtk::Box>() else {
+            return;
+        };
+        let Some(content) = root.first_child().and_downcast::<gtk::Button>() else {
+            return;
+        };
+        let Some(text) = content.child().and_downcast::<gtk::Box>() else {
+            return;
+        };
+        let Some(title) = text.first_child().and_downcast::<gtk::Label>() else {
+            return;
+        };
+        let Some(subtitle) = title.next_sibling().and_downcast::<gtk::Label>() else {
+            return;
+        };
+        title.set_text(&format!(
+            "第 {} 集 · {}",
+            episode.episode,
+            episode_title(&episode)
+        ));
+        subtitle.set_text(&episode_subtitle(&episode));
+        if let Some(watched) = root.last_child().and_downcast::<gtk::Button>() {
+            watched.set_visible(episode.bgm_episode_id.is_some());
+            watched.set_sensitive(episode.bgm_episode_id.is_some() && !episode.watched);
+            watched.set_tooltip_text(Some(if episode.watched {
+                "已观看"
+            } else {
+                "标记为已观看"
+            }));
+        }
+    });
+    let list = gtk::ListView::new(Some(selection), Some(factory));
+    list.set_show_separators(true);
+    list.set_vexpand(false);
+    list.set_hexpand(true);
+    list.add_css_class("nx-episode-list");
+    list
+}
+
+fn episode_from_list_item(
+    list_item: &gtk::ListItem,
+) -> Option<crate::backend_api::FrontendEpisode> {
+    list_item
+        .item()
+        .and_downcast::<glib::BoxedAnyObject>()
+        .map(|object| {
+            object
+                .borrow::<crate::backend_api::FrontendEpisode>()
+                .clone()
+        })
+}
+
+fn activate_episode(state: &Rc<UiState>, subject: FrontendSubject, episode: FrontendEpisode) {
+    if episode.media_id.is_some() {
+        open_player(state, subject, episode);
+    } else {
+        open_resources(state, subject, episode.episode as f64);
+    }
+}
+
+fn preferred_playback_episode(
+    subject: &FrontendSubject,
+) -> Option<crate::backend_api::FrontendEpisode> {
+    subject
+        .current_episode
+        .and_then(|number| {
+            subject
+                .episodes_detail
+                .iter()
+                .find(|episode| episode.episode == number && episode.media_id.is_some())
+        })
+        .or_else(|| {
+            subject
+                .episodes_detail
+                .iter()
+                .find(|episode| !episode.watched && episode.media_id.is_some())
+        })
+        .or_else(|| {
+            subject
+                .episodes_detail
+                .iter()
+                .find(|episode| episode.media_id.is_some())
+        })
+        .cloned()
 }
 
 fn refresh_detail(state: &Rc<UiState>, subject: FrontendSubject, container: gtk::Box) {
@@ -1935,6 +2344,8 @@ fn refresh_detail(state: &Rc<UiState>, subject: FrontendSubject, container: gtk:
         show_error(state, "在线条目无需刷新本地元数据".to_string());
         return;
     };
+    clear_box(&container);
+    container.append(&skeleton::detail());
     let weak = Rc::downgrade(state);
     state.runtime.submit(
         move |context| {
@@ -2010,7 +2421,7 @@ fn render_settings(state: &Rc<UiState>) {
     clear_box(&state.settings);
     state.settings.append(&page_header(
         "设置",
-        "使用 GNOME 偏好设置组件管理路径、账户、下载和隐私选项。空白的 secret 字段会保留已保存的值。",
+        "在这里管理媒体来源、服务连接和观看体验；修改会立即生效并自动保存。",
     ));
     let Some(settings) = state.settings_data.borrow().clone() else {
         if let Some(error) = state.settings_error.borrow().clone() {
@@ -2030,11 +2441,7 @@ fn render_settings(state: &Rc<UiState>) {
             state.settings.append(&error_page);
             return;
         }
-        state.settings.append(&status(
-            "正在读取设置",
-            "配置文件读取在后台进行。",
-            "content-loading-symbolic",
-        ));
+        state.settings.append(&skeleton::settings());
         request_settings(state);
         return;
     };
@@ -2075,28 +2482,10 @@ fn build_settings_page(state: &Rc<UiState>, settings: FrontendEditableSettings) 
         base: settings.clone(),
         media_libraries,
         controls,
+        secret_values: RefCell::new(HashMap::new()),
         media_group: media_group.clone(),
     });
     state.settings_form.replace(Some(form.clone()));
-
-    let save = action_button("保存设置", "document-save-symbolic");
-    save.add_css_class("suggested-action");
-    save.set_sensitive(true);
-    let save_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    let save_hint = label(
-        "修改后保存；离开设置页会要求确认是否放弃未保存更改。",
-        "dim-label",
-    );
-    save_hint.set_hexpand(true);
-    save_row.append(&save_hint);
-    save_row.append(&save);
-    state.settings.append(&save_row);
-    {
-        let state = state.clone();
-        let form = form.clone();
-        save.clone()
-            .connect_clicked(move |_| save_settings(&state, &form, &save));
-    }
 
     let preferences = adw::PreferencesPage::new();
     preferences.set_vexpand(true);
@@ -2104,8 +2493,7 @@ fn build_settings_page(state: &Rc<UiState>, settings: FrontendEditableSettings) 
     let media_row = adw::ActionRow::new();
     media_row.set_title("媒体目录");
     media_row.set_subtitle("扫描这些文件夹中的视频文件");
-    let add_folder = gtk::Button::with_label("添加文件夹");
-    add_folder.add_css_class("flat");
+    let add_folder = icon_button("folder-new-symbolic", "添加媒体目录");
     media_row.add_suffix(&add_folder);
     media_group.add(&media_row);
     {
@@ -2129,7 +2517,7 @@ fn build_settings_page(state: &Rc<UiState>, settings: FrontendEditableSettings) 
                         .any(|item| item == &value)
                     {
                         form.media_libraries.borrow_mut().push(value);
-                        state.settings_dirty.set(true);
+                        settings_changed(&state);
                         render_media_group(&state, &form);
                     }
                 }
@@ -2138,15 +2526,6 @@ fn build_settings_page(state: &Rc<UiState>, settings: FrontendEditableSettings) 
     }
     render_media_group(state, &form);
     preferences.add(&media_group);
-
-    let database = adw::PreferencesGroup::new();
-    database.set_title("数据库");
-    let database_row = adw::ActionRow::new();
-    database_row.set_title("SQLite 数据库");
-    database_row.set_subtitle(&settings.database_path);
-    database_row.set_subtitle_selectable(true);
-    database.add(&database_row);
-    preferences.add(&database);
 
     let bangumi = adw::PreferencesGroup::new();
     bangumi.set_title("Bangumi 账户与元数据");
@@ -2186,14 +2565,13 @@ fn build_settings_page(state: &Rc<UiState>, settings: FrontendEditableSettings) 
         &settings.bangumi_client_id,
         false,
     );
-    add_entry_control(
+    add_secret_control(
         state,
         &form,
         &bangumi,
         "bangumi_client_secret",
         "OAuth Client Secret",
-        "",
-        true,
+        settings.bangumi_client_secret_configured,
     );
     add_entry_control(
         state,
@@ -2239,31 +2617,35 @@ fn build_settings_page(state: &Rc<UiState>, settings: FrontendEditableSettings) 
         &bangumi,
         "bangumi_cache_images",
         "缓存图片",
-        "在本地数据库旁保留图片缓存",
+        "保存封面，减少重复加载",
         settings.bangumi_cache_images,
     );
-    let auth_row = adw::ActionRow::new();
-    auth_row.set_title(if settings.bangumi_access_token_configured {
-        "已登录 Bangumi"
-    } else {
-        "未登录 Bangumi"
-    });
-    auth_row.set_subtitle(
-        &settings
-            .bangumi_access_token_configured
-            .then_some("GTK 会启动 loopback 回调并校验 state")
-            .unwrap_or("不会在日志中记录授权码或 token"),
+    add_secret_control(
+        state,
+        &form,
+        &bangumi,
+        "bangumi_access_token",
+        "Bangumi Access Token",
+        settings.bangumi_access_token_configured,
     );
-    let login = gtk::Button::with_label(if settings.bangumi_access_token_configured {
-        "重新登录"
+    let auth_row = adw::ActionRow::new();
+    auth_row.set_title("Bangumi 账户");
+    auth_row.set_subtitle(if settings.bangumi_access_token_configured {
+        "已连接，可同步收藏和观看状态"
     } else {
-        "登录"
+        "未连接，发现和同步功能不可用"
     });
-    login.add_css_class("suggested-action");
+    let login = icon_button(
+        "contact-new-symbolic",
+        if settings.bangumi_access_token_configured {
+            "重新连接 Bangumi"
+        } else {
+            "连接 Bangumi"
+        },
+    );
     auth_row.add_suffix(&login);
     if settings.bangumi_access_token_configured {
-        let logout = gtk::Button::with_label("退出");
-        logout.add_css_class("flat");
+        let logout = icon_button("system-log-out-symbolic", "断开 Bangumi");
         auth_row.add_suffix(&logout);
         let state_for_logout = state.clone();
         logout.connect_clicked(move |_| logout_bangumi_account(&state_for_logout));
@@ -2274,9 +2656,9 @@ fn build_settings_page(state: &Rc<UiState>, settings: FrontendEditableSettings) 
         login.connect_clicked(move |_| start_bangumi_oauth(&state));
     }
     let sync_row = adw::ActionRow::new();
-    sync_row.set_title("立即同步云端状态");
-    sync_row.set_subtitle("拉取收藏、集数状态和待处理同步队列");
-    let sync = gtk::Button::with_label("同步");
+    sync_row.set_title("同步 Bangumi");
+    sync_row.set_subtitle("更新收藏和观看状态");
+    let sync = icon_button("emblem-synchronizing-symbolic", "立即同步");
     sync_row.add_suffix(&sync);
     sync.connect_clicked({
         let state = state.clone();
@@ -2296,23 +2678,21 @@ fn build_settings_page(state: &Rc<UiState>, settings: FrontendEditableSettings) 
         &settings.dandanplay_app_id,
         false,
     );
-    add_entry_control(
+    add_secret_control(
         state,
         &form,
         &dandan,
         "dandanplay_app_secret",
         "App Secret",
-        &settings.dandanplay_app_secret,
-        true,
+        settings.dandanplay_app_secret_configured,
     );
-    add_entry_control(
+    add_secret_control(
         state,
         &form,
         &dandan,
         "dandanplay_api_key",
         "API Key",
-        &settings.dandanplay_api_key,
-        true,
+        settings.dandanplay_api_key_configured,
     );
     preferences.add(&dandan);
 
@@ -2355,7 +2735,7 @@ fn build_settings_page(state: &Rc<UiState>, settings: FrontendEditableSettings) 
         &qbit,
         "qbittorrent_enabled",
         "启用 qBittorrent",
-        "资源确认和下载控制使用 qBittorrent Web API",
+        "连接下载服务以管理资源",
         settings.qbittorrent_enabled,
     );
     add_entry_control(
@@ -2376,14 +2756,13 @@ fn build_settings_page(state: &Rc<UiState>, settings: FrontendEditableSettings) 
         &settings.qbittorrent_username,
         false,
     );
-    add_entry_control(
+    add_secret_control(
         state,
         &form,
         &qbit,
         "qbittorrent_password",
         "密码",
-        &settings.qbittorrent_password,
-        true,
+        settings.qbittorrent_password_configured,
     );
     add_entry_control(
         state,
@@ -2412,8 +2791,7 @@ fn build_settings_page(state: &Rc<UiState>, settings: FrontendEditableSettings) 
         &settings.qbittorrent_tags,
         false,
     );
-    let test = gtk::Button::with_label("测试 qBittorrent 连接");
-    test.add_css_class("flat");
+    let test = icon_button("network-wired-symbolic", "测试 qBittorrent 连接");
     let test_row = adw::ActionRow::new();
     test_row.set_title("连接测试");
     test_row.add_suffix(&test);
@@ -2441,7 +2819,7 @@ fn build_settings_page(state: &Rc<UiState>, settings: FrontendEditableSettings) 
         &experience,
         "reduced_motion",
         "减少动态效果",
-        "GTK 页面本身不使用 Framer Motion",
+        "减少界面动效",
         settings.reduced_motion,
     );
     preferences.add(&experience);
@@ -2454,7 +2832,7 @@ fn build_settings_page(state: &Rc<UiState>, settings: FrontendEditableSettings) 
         &privacy,
         "analytics_enabled",
         "记录观看洞察",
-        "只写入本地数据库，不会在 GTK 中产生新播放会话",
+        "记录观看时长和完成情况，只保存在本机",
         settings.analytics_enabled,
     );
     add_spin_control(
@@ -2503,13 +2881,10 @@ fn build_settings_page(state: &Rc<UiState>, settings: FrontendEditableSettings) 
         &["error", "warn", "info", "debug"],
         &settings.logging_level,
     );
-    let note = adw::ActionRow::new();
-    note.set_title("视频播放迁移状态");
-    note.set_subtitle("GTK 前端暂不调用 mpv、字幕、弹幕和播放控制；Electron 仍保留为临时回退。");
-    advanced.add(&note);
     preferences.add(&advanced);
 
-    state.settings.append(&scrolled(&preferences));
+    install_settings_focus_behavior(&preferences);
+    state.settings.append(&preferences);
 }
 
 fn render_media_group(state: &Rc<UiState>, form: &Rc<SettingsForm>) {
@@ -2524,28 +2899,155 @@ fn render_media_group(state: &Rc<UiState>, form: &Rc<SettingsForm>) {
     if paths.is_empty() {
         let row = adw::ActionRow::new();
         row.set_title("尚未配置媒体目录");
-        row.set_subtitle("点击上方按钮添加一个目录");
+        row.set_subtitle("添加一个目录后，媒体库就可以开始扫描");
         form.media_group.add(&row);
     } else {
         for (index, path) in paths.into_iter().enumerate() {
             let row = adw::ActionRow::new();
             row.set_title(&path);
-            row.set_subtitle("扫描时会验证目录存在");
-            let remove = gtk::Button::from_icon_name("list-remove-symbolic");
-            remove.set_tooltip_text(Some("移除此目录"));
+            row.set_subtitle("本地媒体来源");
+            let remove = icon_button("list-remove-symbolic", "移除此目录");
             row.add_suffix(&remove);
             let state = state.clone();
             let form_for_callback = form.clone();
             remove.connect_clicked(move |_| {
                 if index < form_for_callback.media_libraries.borrow().len() {
                     form_for_callback.media_libraries.borrow_mut().remove(index);
-                    state.settings_dirty.set(true);
+                    settings_changed(&state);
                     render_media_group(&state, &form_for_callback);
                 }
             });
             form.media_group.add(&row);
         }
     }
+}
+
+fn settings_changed(state: &Rc<UiState>) {
+    state.settings_dirty.set(true);
+    let generation = state.settings_save_generation.get().saturating_add(1);
+    state.settings_save_generation.set(generation);
+    schedule_settings_save(state, generation);
+}
+
+fn schedule_settings_save(state: &Rc<UiState>, generation: u64) {
+    let weak = Rc::downgrade(state);
+    glib::timeout_add_local(Duration::from_millis(450), move || {
+        let Some(state) = weak.upgrade() else {
+            return glib::ControlFlow::Break;
+        };
+        if state.settings_save_generation.get() != generation || !state.settings_dirty.get() {
+            return glib::ControlFlow::Break;
+        }
+        if state.settings_save_in_flight.get() {
+            return glib::ControlFlow::Break;
+        }
+        let Some(form) = state.settings_form.borrow().as_ref().cloned() else {
+            return glib::ControlFlow::Break;
+        };
+        state.settings_save_in_flight.set(true);
+        save_settings(&state, &form, generation);
+        glib::ControlFlow::Break
+    });
+}
+
+fn add_secret_control(
+    state: &Rc<UiState>,
+    form: &Rc<SettingsForm>,
+    group: &adw::PreferencesGroup,
+    key: &str,
+    title: &str,
+    configured: bool,
+) {
+    let row = adw::ActionRow::new();
+    row.set_title(title);
+    row.set_subtitle(if configured { "已配置" } else { "未配置" });
+    let edit = icon_button("document-edit-symbolic", "修改");
+    row.add_suffix(&edit);
+    group.add(&row);
+
+    let key = key.to_string();
+    let title = title.to_string();
+    let state_for_edit = state.clone();
+    let form_for_edit = form.clone();
+    let row_for_edit = row.clone();
+    edit.connect_clicked(move |_| {
+        let dialog = adw::Dialog::builder()
+            .title(&title)
+            .content_width(560)
+            .content_height(220)
+            .build();
+        let toolbar = adw::ToolbarView::new();
+        let header = adw::HeaderBar::new();
+        header.set_title_widget(Some(&adw::WindowTitle::new(&title, "")));
+        let cancel = icon_button("window-close-symbolic", "取消");
+        let dialog_for_cancel = dialog.clone();
+        cancel.connect_clicked(move |_| {
+            dialog_for_cancel.close();
+        });
+        header.pack_start(&cancel);
+        let apply = icon_button("object-select-symbolic", "应用");
+        header.pack_end(&apply);
+        toolbar.add_top_bar(&header);
+
+        let entry = adw::PasswordEntryRow::builder()
+            .title("输入新的值")
+            .text(
+                form_for_edit
+                    .secret_values
+                    .borrow()
+                    .get(&key)
+                    .cloned()
+                    .unwrap_or_default(),
+            )
+            .build();
+        let page = adw::PreferencesPage::new();
+        let entry_group = adw::PreferencesGroup::new();
+        entry_group.add(&entry);
+        page.add(&entry_group);
+        toolbar.set_content(Some(&page));
+        dialog.set_child(Some(&toolbar));
+
+        let state_for_apply = state_for_edit.clone();
+        let form_for_apply = form_for_edit.clone();
+        let row_for_apply = row_for_edit.clone();
+        let key_for_apply = key.clone();
+        let dialog_for_apply = dialog.clone();
+        apply.connect_clicked(move |_| {
+            let value = entry.text().to_string();
+            let is_configured = !value.trim().is_empty() || configured;
+            form_for_apply
+                .secret_values
+                .borrow_mut()
+                .insert(key_for_apply.clone(), value);
+            row_for_apply.set_subtitle(if is_configured {
+                "已配置"
+            } else {
+                "未配置"
+            });
+            settings_changed(&state_for_apply);
+            dialog_for_apply.close();
+        });
+        dialog.present(Some(&state_for_edit.window));
+    });
+}
+
+fn install_settings_focus_behavior(preferences: &adw::PreferencesPage) {
+    preferences.set_focusable(true);
+    let click = gtk::GestureClick::new();
+    click.set_propagation_phase(gtk::PropagationPhase::Capture);
+    let preferences_for_click = preferences.clone();
+    click.connect_pressed(move |_, _, x, y| {
+        let is_entry = preferences_for_click
+            .pick(x, y, gtk::PickFlags::DEFAULT)
+            .is_some_and(|widget| {
+                widget.is::<adw::EntryRow>()
+                    || widget.ancestor(adw::EntryRow::static_type()).is_some()
+            });
+        if !is_entry {
+            preferences_for_click.grab_focus();
+        }
+    });
+    preferences.add_controller(click);
 }
 
 fn add_entry_control(
@@ -2565,7 +3067,7 @@ fn add_entry_control(
             .build();
         row.connect_changed(move |_| {
             if let Some(state) = weak.upgrade() {
-                state.settings_dirty.set(true);
+                settings_changed(&state);
             }
         });
         group.add(&row);
@@ -2576,7 +3078,7 @@ fn add_entry_control(
         let row = adw::EntryRow::builder().title(title).text(value).build();
         row.connect_changed(move |_| {
             if let Some(state) = weak.upgrade() {
-                state.settings_dirty.set(true);
+                settings_changed(&state);
             }
         });
         group.add(&row);
@@ -2602,7 +3104,7 @@ fn add_switch_control(
     let weak = Rc::downgrade(state);
     row.connect_active_notify(move |_| {
         if let Some(state) = weak.upgrade() {
-            state.settings_dirty.set(true);
+            settings_changed(&state);
         }
     });
     group.add(&row);
@@ -2628,7 +3130,7 @@ fn add_spin_control(
     let weak = Rc::downgrade(state);
     row.connect_value_notify(move |_| {
         if let Some(state) = weak.upgrade() {
-            state.settings_dirty.set(true);
+            settings_changed(&state);
         }
     });
     group.add(&row);
@@ -2656,7 +3158,7 @@ fn add_combo_control(
     let weak = Rc::downgrade(state);
     row.connect_selected_notify(move |_| {
         if let Some(state) = weak.upgrade() {
-            state.settings_dirty.set(true);
+            settings_changed(&state);
             apply_theme_from_form(&state);
         }
     });
@@ -2714,6 +3216,14 @@ fn control_combo(form: &SettingsForm, key: &str) -> String {
         .unwrap_or_default()
 }
 
+fn secret_value(form: &SettingsForm, key: &str) -> String {
+    form.secret_values
+        .borrow()
+        .get(key)
+        .cloned()
+        .unwrap_or_default()
+}
+
 fn settings_input(form: &SettingsForm) -> FrontendEditableSettings {
     let mut input = form.base.clone();
     input.media_libraries = form.media_libraries.borrow().clone();
@@ -2721,22 +3231,23 @@ fn settings_input(form: &SettingsForm) -> FrontendEditableSettings {
     input.bangumi_base_url = control_text(form, "bangumi_base_url");
     input.bangumi_oauth_base_url = control_text(form, "bangumi_oauth_base_url");
     input.bangumi_client_id = control_text(form, "bangumi_client_id");
-    input.bangumi_client_secret = control_text(form, "bangumi_client_secret");
+    input.bangumi_client_secret = secret_value(form, "bangumi_client_secret");
     input.bangumi_redirect_uri = control_text(form, "bangumi_redirect_uri");
+    input.bangumi_access_token = secret_value(form, "bangumi_access_token");
     input.bangumi_user_agent = control_text(form, "bangumi_user_agent");
     input.bangumi_request_timeout_secs = control_spin(form, "bangumi_timeout");
     input.bangumi_auto_match = control_switch(form, "bangumi_auto_match");
     input.bangumi_cache_images = control_switch(form, "bangumi_cache_images");
     input.dandanplay_app_id = control_text(form, "dandanplay_app_id");
-    input.dandanplay_app_secret = control_text(form, "dandanplay_app_secret");
-    input.dandanplay_api_key = control_text(form, "dandanplay_api_key");
+    input.dandanplay_app_secret = secret_value(form, "dandanplay_app_secret");
+    input.dandanplay_api_key = secret_value(form, "dandanplay_api_key");
     input.nyaa_enabled = control_switch(form, "nyaa_enabled");
     input.nyaa_base_url = control_text(form, "nyaa_base_url");
     input.nyaa_category = control_text(form, "nyaa_category");
     input.qbittorrent_enabled = control_switch(form, "qbittorrent_enabled");
     input.qbittorrent_base_url = control_text(form, "qbittorrent_base_url");
     input.qbittorrent_username = control_text(form, "qbittorrent_username");
-    input.qbittorrent_password = control_text(form, "qbittorrent_password");
+    input.qbittorrent_password = secret_value(form, "qbittorrent_password");
     input.qbittorrent_save_path = control_text(form, "qbittorrent_save_path");
     input.qbittorrent_category = control_text(form, "qbittorrent_category");
     input.qbittorrent_tags = control_text(form, "qbittorrent_tags");
@@ -2750,27 +3261,29 @@ fn settings_input(form: &SettingsForm) -> FrontendEditableSettings {
     input
 }
 
-fn save_settings(state: &Rc<UiState>, form: &Rc<SettingsForm>, save: &gtk::Button) {
+fn save_settings(state: &Rc<UiState>, form: &Rc<SettingsForm>, generation: u64) {
     let input = settings_input(form);
-    let save_button = save.clone();
-    save_button.set_sensitive(false);
     let weak = Rc::downgrade(state);
     state.runtime.submit(
         move |context| save_settings_config(context, input),
         move |result: Result<FrontendEditableSettings, String>| {
             let Some(state) = weak.upgrade() else { return };
+            state.settings_save_in_flight.set(false);
             match result {
                 Ok(settings) => {
-                    state.settings_dirty.set(false);
                     state.settings_data.replace(Some(settings));
-                    state.settings_form.replace(None);
-                    apply_theme_from_settings(&state);
-                    show_success(&state, "设置已保存");
+                    if state.settings_save_generation.get() == generation {
+                        apply_theme_from_settings(&state);
+                    }
                     request_snapshot(&state);
-                    render_settings(&state);
+                    if state.settings_save_generation.get() == generation {
+                        state.settings_dirty.set(false);
+                    } else if state.settings_dirty.get() {
+                        let next_generation = state.settings_save_generation.get();
+                        schedule_settings_save(&state, next_generation);
+                    }
                 }
                 Err(error) => {
-                    save_button.set_sensitive(true);
                     show_error(&state, format!("保存设置失败：{error}"));
                 }
             }
@@ -2807,38 +3320,6 @@ fn apply_theme(theme: &str) {
         _ => adw::ColorScheme::Default,
     };
     adw::StyleManager::default().set_color_scheme(scheme);
-}
-
-fn confirm_discard_settings(state: &Rc<UiState>, stack: adw::ViewStack) {
-    let dialog = adw::AlertDialog::new(
-        Some("放弃未保存的设置？"),
-        Some("你对设置页的修改还没有保存。"),
-    );
-    dialog.add_response("keep", "继续编辑");
-    dialog.add_response("discard", "放弃修改");
-    dialog.set_default_response(Some("keep"));
-    dialog.set_close_response("keep");
-    dialog.set_response_appearance("discard", adw::ResponseAppearance::Destructive);
-    let state_for_callback = state.clone();
-    dialog.connect_response(None, move |_, response| {
-        if response == "discard" {
-            state_for_callback.settings_dirty.set(false);
-            state_for_callback.settings_form.replace(None);
-            state_for_callback.settings_data.replace(None);
-            let target = state_for_callback
-                .pending_route
-                .borrow_mut()
-                .take()
-                .unwrap_or_else(|| "home".to_string());
-            state_for_callback.settings_guard.set(true);
-            stack.set_visible_child_name(&target);
-            state_for_callback.settings_guard.set(false);
-            render_settings(&state_for_callback);
-        } else {
-            state_for_callback.pending_route.borrow_mut().take();
-        }
-    });
-    dialog.present(Some(&state.window));
 }
 
 fn start_bangumi_oauth(state: &Rc<UiState>) {
@@ -2980,16 +3461,15 @@ fn open_resources(state: &Rc<UiState>, subject: FrontendSubject, episode_number:
     container.set_margin_bottom(28);
     container.set_margin_start(28);
     container.set_margin_end(28);
-    container.append(&status(
-        "正在搜索资源",
-        "Nyaa RSS 和 qBittorrent 操作都在后台运行。",
-        "content-loading-symbolic",
-    ));
+    container.append(&skeleton::detail());
     let tag = format!("resources-{}", state.next_page_id.get());
     state
         .next_page_id
         .set(state.next_page_id.get().saturating_add(1));
-    let page = adw::NavigationPage::with_tag(&container, "资源", &tag);
+    let resource_view = adw::ToolbarView::new();
+    resource_view.add_top_bar(&adw::HeaderBar::new());
+    resource_view.set_content(Some(&container));
+    let page = adw::NavigationPage::with_tag(&resource_view, "资源", &tag);
     state.navigation.push(&page);
     let request = EpisodeResourcesRequest {
         subject_provider: subject.provider.clone(),
@@ -3034,7 +3514,10 @@ fn render_resources(
         &title,
         "可按关键词、清晰度和合集过滤；下载前会打开种子文件选择对话框。",
     ));
-    let filters = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let filters = adw::WrapBox::builder()
+        .child_spacing(8)
+        .line_spacing(8)
+        .build();
     let search = gtk::SearchEntry::new();
     search.set_placeholder_text(Some("过滤标题或字幕组"));
     search.set_hexpand(true);
@@ -3221,8 +3704,7 @@ fn render_resource_rows(
             resource.downloads,
             resource.size,
         ));
-        let download = gtk::Button::with_label("下载");
-        download.add_css_class("suggested-action");
+        let download = icon_button("folder-download-symbolic", "下载");
         let state_for_download = state.clone();
         let subject_for_download = subject.clone();
         let resource_for_download = resource.clone();
@@ -3320,7 +3802,10 @@ fn show_torrent_file_dialog(state: &Rc<UiState>, prepared: PreparedResourceDownl
         list.append(&row);
     }
     content.append(&scrolled(&list));
-    let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let actions = adw::WrapBox::builder()
+        .child_spacing(8)
+        .line_spacing(8)
+        .build();
     actions.set_halign(gtk::Align::End);
     let cancel = gtk::Button::with_label("取消");
     let confirm = action_button("确认下载", "folder-download-symbolic");

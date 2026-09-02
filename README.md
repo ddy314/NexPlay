@@ -38,7 +38,7 @@ GTK Linux entrypoint and will be removed separately.
 | Library and scan | Available | Local folders, scan progress, logs, grid/list, cloud/local switch, and sorting. |
 | Bangumi | Available | Public discovery, detail fallback, search, OAuth, sync, and episode status. |
 | Resources/downloads | Available | Nyaa filters, torrent file selection, qBittorrent controls, and confirmation dialogs. |
-| Insights/settings | Available | Existing history/settings are preserved; edits require an explicit save. |
+| Insights/settings | Available | Existing history/settings are preserved; settings apply and persist automatically. |
 | Video playback | Not migrated | Electron/mpv remains a temporary fallback. |
 
 ## Requirements
@@ -76,8 +76,8 @@ Or use the npm convenience command:
 npm run dev:gtk
 ```
 
-Open Settings, add one or more media-library directories, save, and start a
-scan from the Library page.
+Open Settings, add one or more media-library directories, and start a scan
+from the Library page. Settings apply and persist automatically.
 
 The release binary and desktop entry are built/located with:
 
@@ -95,8 +95,14 @@ configuration, XDG paths, and the GTK playback boundary.
 The repository includes [config.example.toml](config.example.toml). For GTK,
 `NEXPLAY_CONFIG` has the highest priority. Without it, configuration is stored
 under `$XDG_CONFIG_HOME/nexplay/config.toml` or `~/.config/nexplay/config.toml`.
+When that file is absent or still has no media sources, an existing repository
+`config.toml` is used as a compatibility fallback. An explicit path can also
+be supplied with `cargo run -- gtk --config /path/to/config.toml`.
 When creating a new GTK configuration, the default database is under
 `$XDG_DATA_HOME/nexplay/nexplay.sqlite3` or `~/.local/share/nexplay/nexplay.sqlite3`.
+
+Relative database and media paths in an explicitly located configuration are
+resolved relative to that configuration file.
 
 Existing configurations, databases, media paths, and watch states are read
 without schema migration or path rewriting.

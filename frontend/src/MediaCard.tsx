@@ -2,7 +2,7 @@ import { memo, useCallback, useState, type CSSProperties } from "react";
 import { Play } from "lucide-react";
 import { cn } from "./utils/cn";
 import { Badge } from "./ui";
-import { STATUS_COLOR, STATUS_LABEL, type Subject } from "./data";
+import { STATUS_COLOR, STATUS_LABEL, subjectDisplayTitle, type Subject } from "./data";
 import { resolveAssetUrl } from "./utils/assets";
 
 type ImageLoading = "eager" | "lazy";
@@ -79,6 +79,8 @@ export const MediaCard = memo(function MediaCard({
   imageLoading?: ImageLoading;
   imageFetchPriority?: ImageFetchPriority;
 }) {
+  const displayTitle = subjectDisplayTitle(subject);
+  const originalTitle = subject.title?.trim();
   const progressText = `${subject.watchedEpisodes} / ${subject.episodes || subject.files || "?"} 话`;
   const resolvedPoster = resolveAssetUrl(subject.poster);
   const handleClick = useCallback(() => {
@@ -112,7 +114,7 @@ export const MediaCard = memo(function MediaCard({
         <div className="media-card-poster relative aspect-[3/4] overflow-hidden rounded-[var(--radius-card)] bg-[var(--color-surface-elevated)]">
           <Poster
             src={subject.poster}
-            alt={subject.title}
+            alt={displayTitle}
             className="absolute inset-0"
             loading={imageLoading}
             fetchPriority={imageFetchPriority}
@@ -167,10 +169,10 @@ export const MediaCard = memo(function MediaCard({
 
       <div className="px-0.5">
         <h3 className="truncate text-[15px] font-semibold leading-tight text-[var(--color-text-primary)] transition-colors duration-200 group-hover:text-[var(--color-accent)]">
-          {subject.title}
+          {displayTitle}
         </h3>
         <p className="mt-1.5 truncate text-[13px] font-medium text-[var(--color-text-tertiary)]">
-          {subject.titleCn} · {subject.year}
+          {originalTitle && originalTitle !== displayTitle ? `${originalTitle} · ${subject.year}` : subject.year}
         </p>
         {subject.progress > 0 && subject.progress < 1 && (
           <p className="mt-1.5 text-[13px] font-medium tabular-nums text-[var(--color-accent)]/80">

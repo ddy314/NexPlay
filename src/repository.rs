@@ -1533,6 +1533,22 @@ impl Repository {
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
 
+    pub fn recent_played_subject_ids(&self, limit: usize) -> AppResult<Vec<i64>> {
+        let conn = self.connect()?;
+        let mut stmt = conn.prepare(
+            r#"
+            SELECT subject_id
+            FROM playback_sessions
+            WHERE active_ms > 0
+            GROUP BY subject_id
+            ORDER BY MAX(started_at) DESC
+            LIMIT ?1
+            "#,
+        )?;
+        let rows = stmt.query_map(params![limit as i64], |row| row.get(0))?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
     pub fn local_day_key(&self, timestamp_ms: i64) -> AppResult<i64> {
         let conn = self.connect()?;
         conn.query_row(

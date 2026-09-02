@@ -2,7 +2,7 @@ import { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useSta
 import { AnimatePresence, motion } from "framer-motion";
 import { Calendar, Cloud, HardDrive, LayoutGrid, List, RefreshCw, Search, Sparkles, Star } from "lucide-react";
 import { searchCatalog, type BackendLogEntry, type ScanStatus } from "../backend";
-import type { Subject } from "../data";
+import { subjectDisplayTitle, type Subject } from "../data";
 import { MediaCard } from "../MediaCard";
 import { useIncrementalItems } from "../hooks/useIncrementalItems";
 import { appleSpringBouncy, appleSpringSoft } from "../motion";
@@ -503,23 +503,27 @@ function SearchResultRow({
   subject: Subject;
   onOpen: () => void;
 }) {
+  const displayTitle = subjectDisplayTitle(subject);
+  const originalTitle = subject.title?.trim();
   return (
     <button type="button" className="search-result-row" onClick={onOpen} data-timeline-year={subject.year > 0 ? subject.year : undefined}>
       <div className="search-result-poster">
         {subject.poster ? (
-          <img src={resolveAssetUrl(subject.poster)} alt={subject.title} loading="lazy" />
+          <img src={resolveAssetUrl(subject.poster)} alt={displayTitle} loading="lazy" />
         ) : (
-          <span>{(subject.titleCn || subject.title || "?").slice(0, 1)}</span>
+          <span>{displayTitle.slice(0, 1)}</span>
         )}
       </div>
       <div className="min-w-0 flex-1 text-left">
         <div className="flex min-w-0 items-center gap-2">
           <div className="truncate text-[14px] font-semibold text-[var(--color-text-primary)]">
-            {subject.title}
+            {displayTitle}
           </div>
         </div>
         <div className="mt-1 truncate text-[12px] text-[var(--color-text-tertiary)]">
-          {subject.titleCn || subject.fileSummary || subject.summary || subject.aliases.slice(0, 2).join(" / ")}
+          {originalTitle && originalTitle !== displayTitle
+            ? originalTitle
+            : subject.fileSummary || subject.summary || subject.aliases.slice(0, 2).join(" / ")}
         </div>
         <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-[var(--color-text-tertiary)]">
           {subject.year > 0 && <span className="inline-flex items-center gap-1"><Calendar size={11} />{subject.year}</span>}
@@ -600,6 +604,8 @@ function HeroBanner({
 }) {
   const heroAsset = subject.hero || subject.poster;
   const heroSrc = resolveAssetUrl(heroAsset);
+  const displayTitle = subjectDisplayTitle(subject);
+  const originalTitle = subject.title?.trim();
 
   return (
     <motion.button
@@ -616,7 +622,7 @@ function HeroBanner({
       {heroSrc ? (
         <motion.img
           src={heroSrc}
-          alt={subject.title}
+          alt={displayTitle}
           className="absolute inset-0 size-full object-cover"
           initial={{ scale: 1.025, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
@@ -636,10 +642,10 @@ function HeroBanner({
           transition={appleSpringSoft}
         >
           <h2 className="text-[28px] font-bold leading-tight tracking-tight text-white">
-            {subject.title}
+            {displayTitle}
           </h2>
           <p className="mt-2 line-clamp-2 max-w-lg text-[14px] font-medium leading-relaxed text-white/68">
-            {subject.summary || subject.titleCn || subject.fileSummary}
+            {subject.summary || (originalTitle && originalTitle !== displayTitle ? originalTitle : subject.fileSummary)}
           </p>
         </motion.div>
       </div>

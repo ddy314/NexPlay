@@ -2,7 +2,7 @@ import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { ArrowLeft, Calendar, Check, CirclePlay, CloudOff, Download, Film, HardDrive, Loader2, RefreshCw, Search, Star, Tv } from "lucide-react";
 import { batchUpdateBangumiEpisodes, syncBangumiSubject, updateBangumiCollection, updateBangumiEpisode } from "../backend";
-import { makePlaybackEpisodes, type PlaybackEpisode, type Subject } from "../data";
+import { makePlaybackEpisodes, subjectDisplayTitle, type PlaybackEpisode, type Subject } from "../data";
 import { Poster } from "../MediaCard";
 import { useIncrementalItems } from "../hooks/useIncrementalItems";
 import { usePosterPalette } from "../hooks/usePosterPalette";
@@ -48,6 +48,8 @@ export function DetailPage({
   });
   const heroAsset = subject.hero || subject.poster;
   const heroSrc = resolveAssetUrl(heroAsset);
+  const displayTitle = subjectDisplayTitle(subject);
+  const originalTitle = subject.title?.trim();
   const palette = usePosterPalette(heroSrc);
   const visibleTags = subject.tags.slice(0, 5);
   const progressPercent = Math.min(100, Math.max(0, subject.progress * 100));
@@ -234,7 +236,7 @@ export function DetailPage({
               <div className="shadow-glass-elevated relative h-[238px] w-[170px] overflow-hidden rounded-2xl sm:h-[266px] sm:w-[190px]">
                 <Poster
                   src={subject.poster}
-                  alt={subject.title}
+                  alt={displayTitle}
                   className="size-full"
                   loading="eager"
                   fetchPriority="high"
@@ -262,10 +264,10 @@ export function DetailPage({
               </div>
 
               <h1 className="max-w-full break-words text-[30px] font-bold leading-[1.08] tracking-tight text-[var(--color-text-primary)] sm:text-[34px] lg:text-[38px]">
-                {subject.title}
+                {displayTitle}
               </h1>
               <p className="mt-1 max-w-full truncate text-[14px] font-light tracking-wide text-[var(--color-text-tertiary)]">
-                {subject.titleCn || subject.fileSummary}
+                {originalTitle && originalTitle !== displayTitle ? originalTitle : subject.fileSummary}
               </p>
 
               <div className="mt-3.5 flex max-w-full flex-wrap items-center gap-x-3 gap-y-2 text-[13px] text-[var(--color-text-secondary)]">

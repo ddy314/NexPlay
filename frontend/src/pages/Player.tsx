@@ -18,7 +18,7 @@ import {
   Volume2,
   VolumeX,
 } from "lucide-react";
-import { makePlaybackEpisodes, type PlaybackEpisode, type Subject } from "../data";
+import { makePlaybackEpisodes, subjectDisplayTitle, type PlaybackEpisode, type Subject } from "../data";
 import { DanmakuOverlay } from "../DanmakuOverlay";
 import { Poster } from "../MediaCard";
 import { appleSpringSoft } from "../motion";
@@ -1693,11 +1693,11 @@ export function PlayerPage({
             >
               <div className="flex min-w-0 items-center gap-4">
                 <div className="relative size-16 shrink-0 overflow-hidden rounded-2xl shadow-[0_16px_36px_rgba(0,0,0,0.16)]">
-                  <Poster src={subject.poster} alt={subject.title} className="size-full" />
+                  <Poster src={subject.poster} alt={subjectDisplayTitle(subject)} className="size-full" />
                 </div>
                 <div className="min-w-0">
                   <h1 className="truncate text-[28px] font-bold leading-tight tracking-tight text-[var(--color-text-primary)]">
-                    {subject.title}
+                    {subjectDisplayTitle(subject)}
                   </h1>
                   <p className="mt-1 truncate text-[13px] text-[var(--color-text-secondary)]">
                     第 {currentEpisode.episode} 集 · {source?.fileName || currentEpisode.fileName || displayEpisodeTitle}

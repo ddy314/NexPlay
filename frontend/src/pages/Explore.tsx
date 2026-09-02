@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { CalendarDays, Compass, Flame, Map as MapIcon, Sparkles } from "lucide-react";
 import { motion } from "framer-motion";
-import type { Subject } from "../data";
+import { subjectDisplayTitle, type Subject } from "../data";
 import { fetchBangumiDiscovery, type DiscoveryFeed } from "../discover";
 import { Poster } from "../MediaCard";
 import { appleEase } from "../motion";
@@ -73,8 +73,8 @@ function ExploreShelf({ title, copy, items, icon, wide, onOpen }: { title: strin
       <div className="nx-scroll-row">
         {items.slice(0, 18).map((subject) => (
           <button key={`${subject.provider}-${subject.providerSubjectId}`} type="button" className={`nx-media-tile${wide ? " wide" : ""}`} onClick={() => onOpen(subject)}>
-            <div className="nx-media-art"><Poster src={wide ? subject.hero || subject.poster : subject.poster} alt={subject.title} className="size-full" /></div>
-            <div className="nx-media-title">{subject.titleCn || subject.title}</div>
+            <div className="nx-media-art"><Poster src={wide ? subject.hero || subject.poster : subject.poster} alt={subjectDisplayTitle(subject)} className="size-full" /></div>
+            <div className="nx-media-title">{subjectDisplayTitle(subject)}</div>
             <div className="nx-media-meta">{subject.rating > 0 ? `${subject.rating.toFixed(1)} · ` : ""}Bangumi</div>
           </button>
         ))}
