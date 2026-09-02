@@ -1,13 +1,13 @@
 import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { ArrowLeft, Calendar, Check, CirclePlay, CloudOff, Download, Film, HardDrive, Loader2, RefreshCw, Search, Star, Tv } from "lucide-react";
-import { batchUpdateBangumiEpisodes, syncBangumiSubject, updateBangumiCollection, updateBangumiEpisode } from "../backend";
+import { batchUpdateBangumiEpisodes, updateBangumiCollection, updateBangumiEpisode } from "../backend";
 import { makePlaybackEpisodes, subjectDisplayTitle, type PlaybackEpisode, type Subject } from "../data";
 import { Poster } from "../MediaCard";
 import { useIncrementalItems } from "../hooks/useIncrementalItems";
 import { usePosterPalette } from "../hooks/usePosterPalette";
 import { appleSpring, appleSpringBouncy, appleSpringSoft } from "../motion";
-import { loadSubjectDetailWithFallback, mergeMissingDisplayMetadata, shouldHydrateSubject } from "../subjectHydration";
+import { loadSubjectDetailWithFallback, mergeSubjectDetail, refreshCachedSubjectDynamics, shouldHydrateSubject } from "../subjectHydration";
 import { Badge, Dropdown } from "../ui";
 import { resolveAssetUrl } from "../utils/assets";
 import { cn } from "../utils/cn";
@@ -75,7 +75,7 @@ export function DetailPage({
       .then((detail) => {
         if (!cancelled) {
           setSubject((current) => current.id === subject.id
-            ? mergeMissingDisplayMetadata(current, detail)
+            ? mergeSubjectDetail(current, detail)
             : current);
         }
       })
@@ -96,19 +96,27 @@ export function DetailPage({
   ]);
 
   useEffect(() => {
-    if (!canUseBangumi) return;
+    if (shouldHydrateSubject(subject)) return;
+    if (!subject.local || subject.provider !== "bangumi" || subject.subjectId <= 0) return;
     let cancelled = false;
-    syncBangumiSubject(bgmSubjectId)
-      .then(() => {
-        if (!cancelled) void onSubjectUpdated?.();
+    refreshCachedSubjectDynamics(subject)
+      .then((updated) => {
+        if (!cancelled && updated) {
+          setSubject((current) => current.id === subject.id
+            ? { ...current, rating: updated.rating, rank: updated.rank }
+            : current);
+          // Refresh only the local snapshot so cards behind this page also
+          // see the new score; this does not perform another Bangumi request.
+          void onSubjectUpdated?.();
+        }
       })
       .catch(() => {
-        // Detail sync is opportunistic; explicit controls surface actionable errors.
+        // Dynamic refresh is opportunistic; the cached detail remains usable.
       });
     return () => {
       cancelled = true;
     };
-  }, [bgmSubjectId, canUseBangumi]);
+  }, [subject.id, subject.local, subject.provider, subject.subjectId, subject.metadataReady, subject.summary, subject.poster, subject.hero, subject.tags.length, onSubjectUpdated]);
 
   const openEpisode = useCallback((row: PlaybackEpisode | undefined) => {
     if (!row?.mediaId) {

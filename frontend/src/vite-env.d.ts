@@ -10,6 +10,7 @@ interface Window {
     searchCatalog: (payload: import("./generated/backend").CatalogSearchRequest) => Promise<import("./backend").CatalogSearch>;
     onlineSubject: (payload: import("./generated/backend").OnlineSubjectRequest) => Promise<import("./data").Subject>;
     resolveSubject: (payload: import("./generated/backend").ResolveSubjectRequest) => Promise<import("./data").Subject>;
+    hydrateSubject: (payload: import("./generated/backend").RefreshSubjectRequest) => Promise<import("./data").Subject>;
     refreshSubjectMetadata: (payload: import("./generated/backend").RefreshSubjectRequest) => Promise<import("./data").Subject>;
     episodeResources: (payload: import("./generated/backend").EpisodeResourcesRequest) => Promise<import("./backend").EpisodeResources>;
     startResourceDownload: (payload: import("./generated/backend").StartResourceDownloadRequest) => Promise<import("./backend").DownloadTask>;

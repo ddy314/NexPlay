@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::mpsc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use adw::prelude::*;
 
@@ -20,13 +20,14 @@ use crate::backend_api::{
     BackendEvent, BackendEventType, BackendSnapshot, CatalogSearchRequest,
     ConfirmResourceDownloadRequest, DiscoveryFeedResponse, DownloadTaskActionRequest,
     DownloadTasksResponse, EpisodeResourcesRequest, EpisodeResourcesResponse,
-    FrontendEditableSettings, FrontendEpisode, FrontendSubject, HomeFeedResponse, InsightRange,
-    InsightsDashboardRequest, InsightsDashboardResponse, PrepareResourceDownloadRequest,
-    PreparedResourceDownloadResponse, RefreshSubjectRequest, ResolveSubjectRequest, ScanResponse,
-    SubjectRef, complete_bangumi_oauth, confirm_resource_download, discovery_feed, download_tasks,
-    home_feed, insights_dashboard, logout_bangumi, resolve_subject, save_settings_config, scan,
-    search_catalog, settings_config, snapshot, start_bangumi_login, sync_bangumi_now,
-    test_qbittorrent_connection,
+    FrontendEditableSettings, FrontendEpisode, FrontendSubject, FrontendSubjectDynamic,
+    HomeFeedResponse, InsightRange, InsightsDashboardRequest, InsightsDashboardResponse,
+    OnlineSubjectRequest, PrepareResourceDownloadRequest, PreparedResourceDownloadResponse,
+    RefreshSubjectRequest, ResolveSubjectRequest, ScanResponse, SubjectRef, complete_bangumi_oauth,
+    confirm_resource_download, discovery_feed, download_tasks, home_feed, hydrate_subject,
+    insights_dashboard, logout_bangumi, online_subject_dynamic, resolve_subject,
+    save_settings_config, scan, search_catalog, settings_config, snapshot, start_bangumi_login,
+    subject_detail_cache_ready, sync_bangumi_now, test_qbittorrent_connection,
 };
 use crate::config::{AppConfig, ConfigStore};
 use crate::error::AppResult;
@@ -40,6 +41,7 @@ use self::player::open_player;
 use self::runtime::BackendRuntime;
 
 const APP_ID: &str = "dev.nexplay.NexPlay";
+const DETAIL_DYNAMIC_REFRESH_TTL: Duration = Duration::from_secs(6 * 60 * 60);
 
 pub fn run() -> AppResult<()> {
     let application = adw::Application::builder().application_id(APP_ID).build();
@@ -258,6 +260,8 @@ struct UiState {
     settings_data: RefCell<Option<FrontendEditableSettings>>,
     settings_requested: Cell<bool>,
     settings_error: RefCell<Option<String>>,
+    detail_dynamic_refreshes: RefCell<HashMap<String, Instant>>,
+    detail_dynamic_in_flight: RefCell<HashSet<String>>,
     settings_form: RefCell<Option<Rc<SettingsForm>>>,
     next_page_id: Cell<u64>,
 }
@@ -410,6 +414,8 @@ fn build_main_ui(context: AppContext, window: &adw::ApplicationWindow) -> gtk::W
         settings_data: RefCell::new(None),
         settings_requested: Cell::new(false),
         settings_error: RefCell::new(None),
+        detail_dynamic_refreshes: RefCell::new(HashMap::new()),
+        detail_dynamic_in_flight: RefCell::new(HashSet::new()),
         next_page_id: Cell::new(1),
     });
 
@@ -879,8 +885,13 @@ fn adaptive_wrap() -> adw::WrapBox {
         .wrap_policy(adw::WrapPolicy::Minimum)
         .justify(adw::JustifyMode::None)
         .build();
-    wrap.set_hexpand(true);
-    wrap.set_halign(gtk::Align::Fill);
+    // The shelf itself should request the width its cards actually need.
+    // Giving the wrap box a fill allocation lets its layout distribute the
+    // remaining page width, which is especially visible with only two or
+    // three items on the home page.
+    wrap.set_hexpand(false);
+    wrap.set_halign(gtk::Align::Start);
+    wrap.set_align(0.0);
     wrap.set_justify_last_line(false);
     wrap
 }
@@ -921,34 +932,76 @@ fn subject_meta(subject: &FrontendSubject) -> String {
     values.join(" · ")
 }
 
-fn subject_card(state: &Rc<UiState>, subject: FrontendSubject) -> gtk::Button {
-    let button = gtk::Button::new();
-    button.set_has_frame(false);
-    button.set_hexpand(false);
-    button.set_halign(gtk::Align::Start);
-    button.add_css_class("nx-media-card");
-    let body = gtk::Box::new(gtk::Orientation::Vertical, 6);
-    body.set_width_request(160);
+fn subject_card(state: &Rc<UiState>, subject: FrontendSubject) -> gtk::Box {
+    // The poster is the action surface.  Keep the title and metadata outside
+    // the button so a hover never turns unrelated copy into a large card.
+    let item = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    item.set_width_request(160);
+    item.set_hexpand(false);
+    item.set_halign(gtk::Align::Start);
+
     let image = state
         .images
         .widget(&subject.poster, &state.runtime, 160, 226);
-    body.append(&image);
-    let title = label(subject_title(&subject), "heading");
+    let poster_button = gtk::Button::new();
+    poster_button.set_width_request(160);
+    poster_button.set_height_request(226);
+    poster_button.set_hexpand(false);
+    poster_button.set_vexpand(false);
+    poster_button.set_halign(gtk::Align::Start);
+    poster_button.set_valign(gtk::Align::Start);
+    poster_button.set_has_frame(false);
+    poster_button.add_css_class("nx-poster-button");
+
+    let poster = gtk::Overlay::new();
+    poster.set_width_request(160);
+    poster.set_height_request(226);
+    poster.set_hexpand(false);
+    poster.set_vexpand(false);
+    poster.set_halign(gtk::Align::Start);
+    poster.set_valign(gtk::Align::Start);
+    poster.set_child(Some(&image));
+
+    let hover = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    hover.set_hexpand(true);
+    hover.set_vexpand(true);
+    hover.set_halign(gtk::Align::Fill);
+    hover.set_valign(gtk::Align::Fill);
+    hover.set_can_target(false);
+    hover.add_css_class("nx-poster-hover");
+    poster.add_overlay(&hover);
+
+    let play = gtk::Image::from_icon_name("media-playback-start-symbolic");
+    play.set_pixel_size(34);
+    play.set_halign(gtk::Align::Center);
+    play.set_valign(gtk::Align::Center);
+    play.set_can_target(false);
+    play.add_css_class("nx-poster-play");
+    poster.add_overlay(&play);
+    poster_button.set_child(Some(&poster));
+
+    let title_text = subject_title(&subject);
+    let accessible_name = format!("打开 {title_text}");
+    poster_button.update_property(&[gtk::accessible::Property::Label(&accessible_name)]);
+    poster_button.set_tooltip_text(Some(&accessible_name));
+    item.append(&poster_button);
+
+    let title = label(&title_text, "heading");
     title.set_wrap(false);
     title.set_width_chars(18);
     title.set_max_width_chars(18);
     title.set_ellipsize(gtk::pango::EllipsizeMode::End);
-    body.append(&title);
+    item.append(&title);
     let meta = label(subject_meta(&subject), "dim-label");
     meta.set_wrap(false);
     meta.set_width_chars(18);
     meta.set_max_width_chars(18);
     meta.set_ellipsize(gtk::pango::EllipsizeMode::End);
-    body.append(&meta);
-    button.set_child(Some(&body));
+    item.append(&meta);
+
     let state_for_click = state.clone();
-    button.connect_clicked(move |_| open_subject(&state_for_click, subject.clone()));
-    button
+    poster_button.connect_clicked(move |_| open_subject(&state_for_click, subject.clone()));
+    item
 }
 
 fn subject_shelf(
@@ -1922,7 +1975,6 @@ fn open_subject(state: &Rc<UiState>, subject: FrontendSubject) {
     let detail = gtk::Box::new(gtk::Orientation::Vertical, 0);
     detail.set_vexpand(true);
     detail.set_hexpand(true);
-    detail.append(&skeleton::detail());
     let tag = format!("subject-{}", state.next_page_id.get());
     state
         .next_page_id
@@ -1931,7 +1983,7 @@ fn open_subject(state: &Rc<UiState>, subject: FrontendSubject) {
     let header = adw::HeaderBar::new();
     let current_subject = Rc::new(RefCell::new(subject.clone()));
     if subject.local && subject.subject_id > 0 {
-        let refresh = icon_button("view-refresh-symbolic", "刷新本地详情");
+        let refresh = icon_button("view-refresh-symbolic", "刷新 Bangumi 评分");
         let state_for_refresh = state.clone();
         let current_for_refresh = current_subject.clone();
         let detail_for_refresh = detail.clone();
@@ -1939,6 +1991,7 @@ fn open_subject(state: &Rc<UiState>, subject: FrontendSubject) {
             refresh_detail(
                 &state_for_refresh,
                 current_for_refresh.borrow().clone(),
+                current_for_refresh.clone(),
                 detail_for_refresh.clone(),
             )
         });
@@ -1955,6 +2008,139 @@ fn open_subject(state: &Rc<UiState>, subject: FrontendSubject) {
     detail_view.set_content(Some(&detail));
     let page = adw::NavigationPage::with_tag(&detail_view, &subject_title(&subject), &tag);
     state.navigation.push(&page);
+
+    // The detail shell is useful even when the remote source is slow or
+    // unavailable.  Render the persisted subject first and let the network
+    // work below update this same page when it is actually needed.
+    render_detail(state, &detail, subject.clone());
+
+    if subject.provider != "bangumi" || subject.provider_subject_id.trim().is_empty() {
+        return;
+    }
+
+    if subject_detail_cache_ready(&subject) {
+        start_detail_dynamic_refresh(state, subject, current_subject, detail, false, false);
+    } else {
+        start_detail_hydration(state, subject, current_subject, detail, page);
+    }
+}
+
+enum DetailDynamicRefreshResult {
+    Local(FrontendSubject),
+    Online(FrontendSubjectDynamic),
+}
+
+fn detail_refresh_key(subject: &FrontendSubject) -> String {
+    format!("{}:{}", subject.provider, subject.provider_subject_id)
+}
+
+fn start_detail_dynamic_refresh(
+    state: &Rc<UiState>,
+    subject: FrontendSubject,
+    current_subject: Rc<RefCell<FrontendSubject>>,
+    container: gtk::Box,
+    force: bool,
+    show_failure: bool,
+) -> bool {
+    let key = detail_refresh_key(&subject);
+    {
+        let mut in_flight = state.detail_dynamic_in_flight.borrow_mut();
+        if in_flight.contains(&key) {
+            return false;
+        }
+        if !force
+            && state
+                .detail_dynamic_refreshes
+                .borrow()
+                .get(&key)
+                .is_some_and(|started| started.elapsed() < DETAIL_DYNAMIC_REFRESH_TTL)
+        {
+            return false;
+        }
+        in_flight.insert(key.clone());
+        state
+            .detail_dynamic_refreshes
+            .borrow_mut()
+            .insert(key.clone(), Instant::now());
+    }
+
+    let weak = Rc::downgrade(state);
+    let subject_for_request = subject.clone();
+    let current_for_result = current_subject.clone();
+    let key_for_result = key.clone();
+    state.runtime.submit(
+        move |context| {
+            if subject_for_request.local && subject_for_request.subject_id > 0 {
+                crate::backend_api::refresh_subject_metadata(
+                    context,
+                    RefreshSubjectRequest {
+                        subject_id: subject_for_request.subject_id,
+                    },
+                )
+                .map(DetailDynamicRefreshResult::Local)
+            } else {
+                online_subject_dynamic(
+                    context,
+                    OnlineSubjectRequest {
+                        provider: subject_for_request.provider,
+                        provider_subject_id: subject_for_request.provider_subject_id,
+                    },
+                )
+                .map(DetailDynamicRefreshResult::Online)
+            }
+        },
+        move |result: Result<DetailDynamicRefreshResult, String>| {
+            let Some(state) = weak.upgrade() else { return };
+            state
+                .detail_dynamic_in_flight
+                .borrow_mut()
+                .remove(&key_for_result);
+            match result {
+                Ok(DetailDynamicRefreshResult::Local(updated)) => {
+                    current_for_result.replace(updated.clone());
+                    clear_box(&container);
+                    render_detail(&state, &container, updated);
+                }
+                Ok(DetailDynamicRefreshResult::Online(dynamic)) => {
+                    let mut updated = current_for_result.borrow().clone();
+                    apply_subject_dynamic(&mut updated, dynamic);
+                    current_for_result.replace(updated.clone());
+                    clear_box(&container);
+                    render_detail(&state, &container, updated);
+                }
+                Err(error) if show_failure => {
+                    show_error(&state, format!("刷新 Bangumi 评分失败：{error}"));
+                }
+                Err(_) => {
+                    // Cached content remains the source of truth when an
+                    // opportunistic refresh cannot reach Bangumi.
+                }
+            }
+        },
+    );
+    true
+}
+
+fn apply_subject_dynamic(subject: &mut FrontendSubject, dynamic: FrontendSubjectDynamic) {
+    if subject.provider == dynamic.provider
+        && subject.provider_subject_id == dynamic.provider_subject_id
+    {
+        if let Some(rating) = dynamic.rating {
+            subject.rating = rating;
+        }
+        if let Some(rank) = dynamic.rank {
+            subject.rank = rank;
+        }
+    }
+}
+
+fn start_detail_hydration(
+    state: &Rc<UiState>,
+    subject: FrontendSubject,
+    current_subject: Rc<RefCell<FrontendSubject>>,
+    container: gtk::Box,
+    page: adw::NavigationPage,
+) {
     let subject_ref = SubjectRef {
         canonical_key: subject.canonical_key.clone(),
         provider: subject.provider.clone(),
@@ -1962,21 +2148,33 @@ fn open_subject(state: &Rc<UiState>, subject: FrontendSubject) {
         media_id: subject.local_files.first().map(|file| file.media_id),
     };
     let weak = Rc::downgrade(state);
-    let page_for_result = page.clone();
-    let current_for_result = current_subject.clone();
+    let page_for_result = page;
+    let current_for_result = current_subject;
+    let subject_for_request = subject.clone();
     state.runtime.submit(
-        move |context| resolve_subject(context, ResolveSubjectRequest { subject_ref }),
+        move |context| {
+            if subject_for_request.local && subject_for_request.subject_id > 0 {
+                hydrate_subject(
+                    context,
+                    RefreshSubjectRequest {
+                        subject_id: subject_for_request.subject_id,
+                    },
+                )
+            } else {
+                resolve_subject(context, ResolveSubjectRequest { subject_ref })
+            }
+        },
         move |result: Result<FrontendSubject, String>| {
             let Some(state) = weak.upgrade() else { return };
-            clear_box(&detail);
             match result {
                 Ok(subject) => {
                     page_for_result.set_title(&subject_title(&subject));
                     current_for_result.replace(subject.clone());
-                    render_detail(&state, &detail, subject);
+                    clear_box(&container);
+                    render_detail(&state, &container, subject);
                 }
                 Err(error) => {
-                    detail.append(&status("无法读取详情", &error, "dialog-error-symbolic"));
+                    show_error(&state, format!("详情补全失败，已保留当前缓存：{error}"));
                 }
             }
         },
@@ -2338,33 +2536,19 @@ fn preferred_playback_episode(
         .cloned()
 }
 
-fn refresh_detail(state: &Rc<UiState>, subject: FrontendSubject, container: gtk::Box) {
-    let Some(subject_id) = (subject.local && subject.subject_id > 0).then_some(subject.subject_id)
-    else {
+fn refresh_detail(
+    state: &Rc<UiState>,
+    subject: FrontendSubject,
+    current_subject: Rc<RefCell<FrontendSubject>>,
+    container: gtk::Box,
+) {
+    if !subject.local || subject.subject_id <= 0 {
         show_error(state, "在线条目无需刷新本地元数据".to_string());
         return;
-    };
-    clear_box(&container);
-    container.append(&skeleton::detail());
-    let weak = Rc::downgrade(state);
-    state.runtime.submit(
-        move |context| {
-            crate::backend_api::refresh_subject_metadata(
-                context,
-                RefreshSubjectRequest { subject_id },
-            )
-        },
-        move |result: Result<FrontendSubject, String>| {
-            let Some(state) = weak.upgrade() else { return };
-            clear_box(&container);
-            match result {
-                Ok(subject) => render_detail(&state, &container, subject),
-                Err(error) => {
-                    container.append(&status("刷新失败", &error, "dialog-error-symbolic"))
-                }
-            }
-        },
-    );
+    }
+    if start_detail_dynamic_refresh(state, subject, current_subject, container, true, true) {
+        show_success(state, "已在后台刷新 Bangumi 评分和排名");
+    }
 }
 
 fn sync_subject(state: &Rc<UiState>, subject_id: i64) {

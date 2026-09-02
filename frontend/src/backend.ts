@@ -558,6 +558,13 @@ export async function loadOnlineSubject(provider: string, providerSubjectId: str
   return window.nexplay.onlineSubject({ provider, providerSubjectId });
 }
 
+export async function hydrateSubject(subjectId: number) {
+  if (!window.nexplay) {
+    throw new Error("当前页面没有连接到 NexPlay 后端。");
+  }
+  return window.nexplay.hydrateSubject({ subjectId });
+}
+
 export async function resolveSubject(subject: import("./data").Subject) {
   if (!window.nexplay) return subject;
   return window.nexplay.resolveSubject({

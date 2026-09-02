@@ -7,7 +7,6 @@ import { MediaCard } from "../MediaCard";
 import { useIncrementalItems } from "../hooks/useIncrementalItems";
 import { appleSpringBouncy, appleSpringSoft } from "../motion";
 import { Button, Dropdown } from "../ui";
-import { loadSubjectDetailWithFallback, mergeCloudSubjectDetail, mergeLocalSubjectDetail, shouldHydrateSubject } from "../subjectHydration";
 import { resolveAssetUrl } from "../utils/assets";
 import { cn } from "../utils/cn";
 
@@ -161,36 +160,12 @@ export function LibraryPage({
   const remainingCount = Math.max(0, displayItems.length - visibleCount);
   const copy = pageCopy[route];
   const visibleSubjects = useMemo(() => visibleItems.map((item) => item.subject), [visibleItems]);
-  const openSubject = useCallback(async (subject: Subject) => {
-    if (subject.local) {
-      if (shouldHydrateSubject(subject)) {
-        try {
-          const detail = await loadSubjectDetailWithFallback(subject);
-          onOpen(mergeLocalSubjectDetail(subject, detail));
-          return;
-        } catch (caught) {
-          const message = caught instanceof Error ? caught.message : String(caught);
-          onOpen(subject);
-          onSnack(`读取完整简介失败，先打开本地缓存：${message}`, "neutral");
-          return;
-        }
-      }
-      onOpen(subject);
-      return;
-    }
-    try {
-      const detail = await loadSubjectDetailWithFallback(subject);
-      onOpen(subject.source === "bangumiCollection" ? mergeCloudSubjectDetail(subject, detail) : detail);
-    } catch (caught) {
-      const message = caught instanceof Error ? caught.message : String(caught);
-      if (subject.source === "bangumiCollection") {
-        onOpen(subject);
-        onSnack(`读取完整简介失败，先打开云端缓存：${message}`, "neutral");
-        return;
-      }
-      onSnack(`读取在线详情失败：${message}`, "danger");
-    }
-  }, [onOpen, onSnack]);
+  const openSubject = useCallback((subject: Subject) => {
+    // Navigation must never wait for Bangumi.  DetailPage renders this
+    // object immediately and performs best-effort hydration in the
+    // background only when the cache is incomplete.
+    onOpen(subject);
+  }, [onOpen]);
 
   return (
     <div className="h-full overflow-y-auto overflow-x-hidden">

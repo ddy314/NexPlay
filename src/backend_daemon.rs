@@ -17,13 +17,13 @@ use crate::backend_api::{
     clear_playback_analytics, complete_bangumi_oauth, confirm_resource_download,
     control_download_task, danmaku_binding, danmaku_track, discovery_feed, download_tasks,
     episode_resources, finish_playback_session, frontend_event_from_app,
-    heartbeat_playback_session, home_feed, insights_dashboard, logout_bangumi, media_source,
-    online_subject, open_media, prepare_resource_download, record_playback_session_event,
-    refresh_subject_metadata, rematch_danmaku, report_playback_progress, resolve_subject,
-    save_settings_config, scan, search_catalog, set_danmaku_offset, settings_config, snapshot,
-    start_bangumi_login, start_playback_session, start_resource_download, sync_bangumi_now,
-    sync_bangumi_subject, test_qbittorrent_connection, update_bangumi_collection,
-    update_bangumi_episode,
+    heartbeat_playback_session, home_feed, hydrate_subject, insights_dashboard, logout_bangumi,
+    media_source, online_subject, open_media, prepare_resource_download,
+    record_playback_session_event, refresh_subject_metadata, rematch_danmaku,
+    report_playback_progress, resolve_subject, save_settings_config, scan, search_catalog,
+    set_danmaku_offset, settings_config, snapshot, start_bangumi_login, start_playback_session,
+    start_resource_download, sync_bangumi_now, sync_bangumi_subject, test_qbittorrent_connection,
+    update_bangumi_collection, update_bangumi_episode,
 };
 use crate::error::{AppError, AppResult, io_error};
 use crate::service::{
@@ -202,6 +202,10 @@ fn dispatch(context: &AppContext, method: &str, params: Option<Value>) -> AppRes
         "resolveSubject" => {
             let input: ResolveSubjectRequest = from_params(params)?;
             to_value(resolve_subject(context, input)?)
+        }
+        "hydrateSubject" => {
+            let input: RefreshSubjectRequest = from_params(params)?;
+            to_value(hydrate_subject(context, input)?)
         }
         "refreshSubjectMetadata" => {
             let input: RefreshSubjectRequest = from_params(params)?;

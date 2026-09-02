@@ -1,30 +1,45 @@
-import { loadOnlineSubject, searchCatalog } from "./backend";
+import { hydrateSubject, loadOnlineSubject, refreshSubjectMetadata, searchCatalog } from "./backend";
 import type { Subject } from "./data";
 
+const DYNAMIC_REFRESH_TTL_MS = 6 * 60 * 60 * 1000;
+const dynamicRefreshAt = new Map<string, number>();
+const dynamicRefreshInFlight = new Map<string, Promise<Subject>>();
+
 export function shouldHydrateSubject(subject: Subject) {
-  return subject.provider !== "manual"
-    && subject.providerSubjectId.trim().length > 0
-    && (
-      !hasUsableSummary(subject.summary)
-      || !subject.poster.trim()
-      || !subject.hero.trim()
-      || subject.tags.length === 0
-    );
+  if (subject.provider === "manual" || !subject.providerSubjectId.trim()) return false;
+  // Search/discovery entries only carry a summary/count and are not a
+  // persisted detail cache.  They can be displayed first, then hydrated.
+  if (
+    !subject.local
+    && subject.source !== "bangumiCollection"
+    && subject.source !== "online"
+    && subject.source !== "public"
+  ) return true;
+  return !hasCachedDetail(subject);
 }
 
 export async function loadSubjectDetailWithFallback(subject: Subject) {
   let detail: Subject | null = null;
   let detailError: unknown = null;
   try {
-    detail = await loadOnlineSubject(subject.provider, subject.providerSubjectId);
+    detail = subject.local && subject.provider === "bangumi" && subject.subjectId > 0
+      ? await hydrateSubject(subject.subjectId)
+      : await loadOnlineSubject(subject.provider, subject.providerSubjectId);
   } catch (caught) {
     detailError = caught;
   }
 
-  let base = detail ?? subject;
+  // A successful configured request is sufficient.  Do not immediately hit
+  // the public endpoint as a second request; the public path is only a
+  // fallback for an unavailable configured request.
+  if (detail) {
+    return mergeSubjectDetail(subject, detail);
+  }
+
+  let base = subject;
   const publicFallback = await loadBangumiPublicSubject(base);
   if (publicFallback) {
-    base = mergeMissingDisplayMetadata(base, publicFallback);
+    base = mergeSubjectDetail(base, publicFallback);
   }
 
   if (hasCompleteDisplayMetadata(base)) {
@@ -40,6 +55,28 @@ export async function loadSubjectDetailWithFallback(subject: Subject) {
     return detail;
   }
   throw detailError instanceof Error ? detailError : new Error(String(detailError || "读取在线详情失败"));
+}
+
+export function refreshCachedSubjectDynamics(subject: Subject): Promise<Subject | null> {
+  if (!subject.local || subject.provider !== "bangumi" || subject.subjectId <= 0) {
+    return Promise.resolve(null);
+  }
+
+  const key = `${subject.provider}:${subject.providerSubjectId || subject.subjectId}`;
+  const inFlight = dynamicRefreshInFlight.get(key);
+  if (inFlight) return inFlight;
+
+  const lastAttempt = dynamicRefreshAt.get(key);
+  if (lastAttempt !== undefined && Date.now() - lastAttempt < DYNAMIC_REFRESH_TTL_MS) {
+    return Promise.resolve(null);
+  }
+
+  dynamicRefreshAt.set(key, Date.now());
+  const request = refreshSubjectMetadata(subject.subjectId).finally(() => {
+    dynamicRefreshInFlight.delete(key);
+  });
+  dynamicRefreshInFlight.set(key, request);
+  return request;
 }
 
 export function hasUsableSummary(summary: string) {
@@ -68,6 +105,12 @@ export function mergeMissingDisplayMetadata(base: Subject, fallback: Subject): S
     episodes: base.episodes || fallback.episodes,
     metadataReady: base.metadataReady || fallback.metadataReady,
   };
+}
+
+export function mergeSubjectDetail(base: Subject, detail: Subject): Subject {
+  if (base.local) return mergeLocalSubjectDetail(base, detail);
+  if (base.source === "bangumiCollection") return mergeCloudSubjectDetail(base, detail);
+  return detail;
 }
 
 export function mergeLocalSubjectDetail(local: Subject, detail: Subject): Subject {
@@ -158,6 +201,7 @@ async function loadBangumiPublicSubject(subject: Subject) {
     const airDate = typeof data.date === "string" ? data.date : "";
     return {
       ...subject,
+      source: "public",
       title: nonEmpty(data.name) || subject.title,
       titleCn: nonEmpty(data.name_cn) || subject.titleCn,
       summary: nonEmpty(data.summary) || subject.summary,
@@ -183,6 +227,21 @@ function hasCompleteDisplayMetadata(subject: Subject) {
   return hasUsableSummary(subject.summary)
     && subject.poster.trim().length > 0
     && subject.hero.trim().length > 0
+    && subject.tags.length > 0;
+}
+
+function hasCachedDetail(subject: Subject) {
+  if (!subject.metadataReady) return false;
+  if (subject.source === "online" || subject.source === "public") {
+    return Boolean(subject.title.trim() || subject.episodesDetail.length);
+  }
+  if (subject.source === "bangumiCollection") {
+    return Boolean(subject.title.trim() && (subject.poster.trim() || subject.hero.trim()));
+  }
+  if (!subject.local) return false;
+  return hasUsableSummary(subject.summary)
+    && Boolean(subject.poster.trim() || subject.hero.trim())
+    && (subject.episodes === 0 || subject.episodesDetail.length > 0)
     && subject.tags.length > 0;
 }
 

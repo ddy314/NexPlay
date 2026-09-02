@@ -27,6 +27,63 @@ impl BangumiProvider {
         Ok(Self { client, config })
     }
 
+    /// Fetch the two pieces needed to build an uncached detail page together.
+    ///
+    /// Bangumi exposes subject metadata and episode metadata as separate
+    /// endpoints.  They do not depend on each other, so keeping them in one
+    /// blocking worker would otherwise add both network latencies to the
+    /// first render.  Each request gets its own cloned client/provider and is
+    /// allowed to complete independently; episode failures remain
+    /// best-effort, matching the previous behavior.
+    pub fn get_subject_with_episodes(
+        &self,
+        provider_subject_id: &str,
+    ) -> AppResult<(SubjectDetail, Vec<SubjectEpisode>)> {
+        let subject_provider = self.clone();
+        let episode_provider = self.clone();
+        let subject_id = provider_subject_id.to_string();
+        let episode_id = provider_subject_id.to_string();
+
+        std::thread::scope(|scope| {
+            let subject = scope.spawn(move || subject_provider.get_subject(&subject_id));
+            let episodes = scope.spawn(move || episode_provider.get_episodes(&episode_id));
+
+            let subject = subject
+                .join()
+                .map_err(|_| AppError::Api("bangumi subject worker panicked".to_string()))?;
+            let episodes = episodes
+                .join()
+                .map_err(|_| AppError::Api("bangumi episode worker panicked".to_string()))?;
+            Ok((subject?, episodes.unwrap_or_default()))
+        })
+    }
+
+    /// Same parallel fetch as [`Self::get_subject_with_episodes`], using the
+    /// public endpoint for fallback when the configured Bangumi endpoint is
+    /// unavailable or disabled.
+    pub fn get_subject_public_with_episodes(
+        &self,
+        provider_subject_id: &str,
+    ) -> AppResult<(SubjectDetail, Vec<SubjectEpisode>)> {
+        let subject_provider = self.clone();
+        let episode_provider = self.clone();
+        let subject_id = provider_subject_id.to_string();
+        let episode_id = provider_subject_id.to_string();
+
+        std::thread::scope(|scope| {
+            let subject = scope.spawn(move || subject_provider.get_subject_public(&subject_id));
+            let episodes = scope.spawn(move || episode_provider.get_episodes_public(&episode_id));
+
+            let subject = subject
+                .join()
+                .map_err(|_| AppError::Api("public bangumi subject worker panicked".to_string()))?;
+            let episodes = episodes
+                .join()
+                .map_err(|_| AppError::Api("public bangumi episode worker panicked".to_string()))?;
+            Ok((subject?, episodes.unwrap_or_default()))
+        })
+    }
+
     /// Fetch public subject metadata without requiring the configured Bangumi
     /// source or an access token.  Native clients use this as the final detail
     /// hydration fallback, so a disabled/private API configuration does not

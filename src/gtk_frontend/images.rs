@@ -68,9 +68,23 @@ impl ImageLoader {
         stack.add_named(&picture, Some("image"));
         stack.set_visible_child_name("placeholder");
 
+        // A picture can report the source texture's natural width even when
+        // it is allocated into the fixed poster slot above.  Clamp the
+        // outer widget as well, otherwise wrapping layouts reserve that
+        // larger natural width and leave artificial gaps between cards.
+        let clamp = adw::Clamp::new();
+        clamp.set_maximum_size(width);
+        clamp.set_tightening_threshold(width);
+        clamp.set_size_request(width, height);
+        clamp.set_hexpand(false);
+        clamp.set_vexpand(false);
+        clamp.set_halign(gtk::Align::Start);
+        clamp.set_valign(gtk::Align::Start);
+        clamp.set_child(Some(&frame));
+
         let source = source.trim().to_string();
         if source.is_empty() {
-            return frame.upcast();
+            return clamp.upcast();
         }
 
         if let Some(path) = local_path(&source) {
@@ -78,11 +92,11 @@ impl ImageLoader {
                 picture.set_filename(Some(path));
                 stack.set_visible_child_name("image");
             }
-            return frame.upcast();
+            return clamp.upcast();
         }
 
         if !(source.starts_with("http://") || source.starts_with("https://")) {
-            return frame.upcast();
+            return clamp.upcast();
         }
 
         if let Some(bytes) = self
@@ -93,7 +107,7 @@ impl ImageLoader {
             .cloned()
         {
             set_texture(&picture, &stack, bytes);
-            return frame.upcast();
+            return clamp.upcast();
         }
 
         let cache = self.cache.clone();
@@ -121,7 +135,7 @@ impl ImageLoader {
                 }
             },
         );
-        frame.upcast()
+        clamp.upcast()
     }
 }
 

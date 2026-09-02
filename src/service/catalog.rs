@@ -48,6 +48,17 @@ pub struct CatalogSubjectData {
     pub episode_list: Vec<SubjectEpisode>,
 }
 
+/// The small, time-varying part of a subject. Detail refreshes deliberately
+/// use this value instead of rebuilding the full subject/episode/image
+/// payload.
+#[derive(Debug, Clone)]
+pub struct CatalogSubjectDynamicData {
+    pub provider: String,
+    pub provider_subject_id: String,
+    pub rating: Option<f64>,
+    pub rank: Option<i64>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct EpisodeResourceData {
@@ -186,10 +197,7 @@ impl CatalogService {
         match provider {
             "bangumi" => {
                 let provider = self.bangumi_provider()?;
-                let detail = provider.get_subject(provider_subject_id)?;
-                let episodes = provider
-                    .get_episodes(provider_subject_id)
-                    .unwrap_or_default();
+                let (detail, episodes) = provider.get_subject_with_episodes(provider_subject_id)?;
                 Ok(catalog_from_bangumi_detail(detail, episodes, "online"))
             }
             "dandanplay" => self.dandanplay_subject(provider_subject_id).or_else(|_| {
@@ -221,15 +229,34 @@ impl CatalogService {
         }
     }
 
+    pub fn online_subject_dynamic(
+        &self,
+        provider: &str,
+        provider_subject_id: &str,
+    ) -> AppResult<CatalogSubjectDynamicData> {
+        match provider {
+            "bangumi" => {
+                let provider = self.bangumi_provider()?;
+                let detail = provider.get_subject(provider_subject_id)?;
+                Ok(CatalogSubjectDynamicData {
+                    provider: detail.provider,
+                    provider_subject_id: detail.provider_subject_id,
+                    rating: detail.rating,
+                    rank: detail.rank,
+                })
+            }
+            other => Err(AppError::Api(format!(
+                "unsupported dynamic online provider: {other}"
+            ))),
+        }
+    }
+
     pub fn public_bangumi_subject(
         &self,
         provider_subject_id: &str,
     ) -> AppResult<CatalogSubjectData> {
         let provider = self.bangumi_provider()?;
-        let detail = provider.get_subject_public(provider_subject_id)?;
-        let episodes = provider
-            .get_episodes_public(provider_subject_id)
-            .unwrap_or_default();
+        let (detail, episodes) = provider.get_subject_public_with_episodes(provider_subject_id)?;
         Ok(catalog_from_bangumi_detail(detail, episodes, "public"))
     }
 

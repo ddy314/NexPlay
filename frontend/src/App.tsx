@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
+import { useCallback, useEffect, useMemo, useState, type MouseEvent } from "react";
 import { AnimatePresence, MotionConfig, motion } from "framer-motion";
 import { GlobalSearch } from "./GlobalSearch";
 import { NavRail, type Route } from "./NavRail";
-import { resolveSubject, useBackendSnapshot } from "./backend";
+import { useBackendSnapshot } from "./backend";
 import type { PlaybackEpisode, Subject } from "./data";
 import { appleEase } from "./motion";
 import { DetailPage } from "./pages/Detail";
@@ -36,7 +36,6 @@ export default function App() {
   const [minElapsed, setMinElapsed] = useState(false);
   const backend = useBackendSnapshot();
   const snack = useSnackbar();
-  const navigationRequestRef = useRef(0);
 
   const collectionSubjects = useMemo(() => {
     const localBgm = backend.subjects.filter((subject) => subject.bgmCollectionType);
@@ -104,13 +103,7 @@ export default function App() {
     setViewStack([{ kind: "route", route: next }]);
   }, [route, settingsDirty]);
   const openDetail = useCallback((subject: Subject) => {
-    const requestId = ++navigationRequestRef.current;
-    void resolveSubject(subject)
-      .catch(() => subject)
-      .then((resolved) => {
-        if (navigationRequestRef.current !== requestId) return;
-        setViewStack((current) => [...current, { kind: "detail", subject: resolved }]);
-      });
+    setViewStack((current) => [...current, { kind: "detail", subject }]);
   }, []);
   const goBack = useCallback(() => setViewStack((current) => current.length > 1 ? current.slice(0, -1) : current), []);
   const openResourceSearch = useCallback((subject: Subject) => setViewStack((current) => [...current, { kind: "resources", prefill: { subject } }]), []);

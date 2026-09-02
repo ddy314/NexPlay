@@ -26,7 +26,8 @@ pub use bangumi::{
     subject_collection_label, subject_json_to_summary,
 };
 pub use catalog::{
-    CatalogService, CatalogSubjectData, DownloadTaskData, EpisodeResourceData, TorrentFileData,
+    CatalogService, CatalogSubjectData, CatalogSubjectDynamicData, DownloadTaskData,
+    EpisodeResourceData, TorrentFileData,
 };
 pub use danmaku::DanmakuService;
 pub use watch_history::WatchHistoryService;
@@ -500,8 +501,55 @@ impl MetadataService {
         }
         let provider = self.provider()?;
         let detail = provider.get_subject(&subject.provider_subject_id)?;
-        self.upsert_subject_detail_with_children(&provider, &detail)?;
+        // Ratings and ranks are the only fields this path refreshes.  The
+        // poster, hero, tags, summary, and episode rows are already local
+        // cache and must not become a second full-detail request.
+        self.repository.update_subject_dynamic(
+            subject_id,
+            detail.rating,
+            detail.rank,
+            task::unix_timestamp_ms(),
+        )?;
         let _ = self.events.send(AppEvent::SubjectUpdated { subject_id });
+        Ok(())
+    }
+
+    pub fn hydrate_subject_blocking(&self, subject_id: i64) -> AppResult<()> {
+        let subject = self
+            .repository
+            .get_subject(subject_id)?
+            .ok_or_else(|| AppError::Api(format!("subject #{subject_id} not found")))?;
+        if subject.provider != "bangumi" {
+            return Err(AppError::Api(format!(
+                "metadata hydration is only supported for Bangumi subjects, got {}",
+                subject.provider
+            )));
+        }
+
+        let provider = self.provider()?;
+        let fetched = provider
+            .get_subject_with_episodes(&subject.provider_subject_id)
+            .or_else(|_| provider.get_subject_public_with_episodes(&subject.provider_subject_id))?;
+        let (detail, episodes) = fetched;
+        let resolved_subject_id = self
+            .repository
+            .upsert_subject_detail(&detail, task::unix_timestamp_ms())?;
+        self.repository
+            .upsert_subject_episodes(resolved_subject_id, &episodes)?;
+        cache_subject_images_once(
+            &self.repository,
+            &self.image_cache,
+            resolved_subject_id,
+            &detail.provider,
+            [
+                ("poster", detail.images.common.clone()),
+                ("thumb", detail.images.common.clone()),
+                ("hero", detail.images.large.clone()),
+            ],
+        )?;
+        let _ = self.events.send(AppEvent::SubjectUpdated {
+            subject_id: resolved_subject_id,
+        });
         Ok(())
     }
 

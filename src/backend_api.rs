@@ -16,8 +16,9 @@ use crate::error::AppResult;
 use crate::service::{
     BangumiAuthStatusData, BangumiBatchUpdateEpisodesInput, BangumiCompleteOAuthInput,
     BangumiLoginStartData, BangumiSyncSummaryData, BangumiUpdateCollectionInput,
-    BangumiUpdateEpisodeInput, CatalogSubjectData, DownloadTaskData, EpisodeResourceData,
-    TorrentFileData, episode_collection_label, subject_collection_label, subject_json_to_summary,
+    BangumiUpdateEpisodeInput, CatalogSubjectData, CatalogSubjectDynamicData, DownloadTaskData,
+    EpisodeResourceData, TorrentFileData, episode_collection_label, subject_collection_label,
+    subject_json_to_summary,
 };
 use crate::task::AppEvent;
 
@@ -101,6 +102,15 @@ pub struct FrontendSubject {
     pub file_summary: String,
     pub local_files: Vec<FrontendLocalFile>,
     pub episodes_detail: Vec<FrontendEpisode>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FrontendSubjectDynamic {
+    pub provider: String,
+    pub provider_subject_id: String,
+    pub rating: Option<f64>,
+    pub rank: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, TS)]
@@ -852,7 +862,17 @@ pub fn resolve_subject(
                 })
         })
     {
-        if subject.provider == "bangumi" {
+        if subject.provider == "bangumi" && !subject_detail_cache_ready(&subject) {
+            if subject.local && subject.subject_id > 0 {
+                if let Ok(hydrated) = hydrate_subject(
+                    context,
+                    RefreshSubjectRequest {
+                        subject_id: subject.subject_id,
+                    },
+                ) {
+                    return Ok(hydrated);
+                }
+            }
             if let Ok(enriched) = resolve_online_subject(context, &subject_ref) {
                 return Ok(merge_frontend_subject(subject, enriched));
             }
@@ -861,6 +881,40 @@ pub fn resolve_subject(
     }
 
     resolve_online_subject(context, &subject_ref)
+}
+
+/// Whether a detail can be rendered entirely from persisted local data.
+///
+/// Online search/discovery records are intentionally not considered a detail
+/// cache even when they contain a poster and summary: their episode list is
+/// usually only a count or placeholder rows.  A local subject or a persisted
+/// Bangumi collection, on the other hand, can be opened immediately and
+/// refreshed opportunistically later.
+pub fn subject_detail_cache_ready(subject: &FrontendSubject) -> bool {
+    if subject.provider != "bangumi" {
+        return true;
+    }
+    if subject.source == "bangumiCollection" {
+        return subject.metadata_ready
+            && !subject.title.trim().is_empty()
+            && (!subject.poster.trim().is_empty() || !subject.hero.trim().is_empty());
+    }
+    if !subject.local || !subject.metadata_ready {
+        return false;
+    }
+    let episodes_ready = subject.episodes == 0 || !subject.episodes_detail.is_empty();
+    episodes_ready
+        && usable_subject_summary(&subject.summary)
+        && (!subject.poster.trim().is_empty() || !subject.hero.trim().is_empty())
+}
+
+fn usable_subject_summary(summary: &str) -> bool {
+    let summary = summary.trim();
+    !summary.is_empty()
+        && summary != "No summary cached yet."
+        && summary != "No summary in candidate."
+        && summary != "No summary cached yet"
+        && summary != "No summary in candidate"
 }
 
 fn resolve_online_subject(
@@ -940,6 +994,26 @@ pub fn online_subject(
         .map(frontend_subject_from_catalog)
 }
 
+pub fn online_subject_dynamic(
+    context: &AppContext,
+    input: OnlineSubjectRequest,
+) -> AppResult<FrontendSubjectDynamic> {
+    let dynamic = context
+        .catalog
+        .online_subject_dynamic(&input.provider, &input.provider_subject_id)?;
+    Ok(frontend_subject_dynamic_from_catalog(dynamic))
+}
+
+pub fn hydrate_subject(
+    context: &AppContext,
+    input: RefreshSubjectRequest,
+) -> AppResult<FrontendSubject> {
+    context
+        .metadata
+        .hydrate_subject_blocking(input.subject_id)?;
+    frontend_local_subject(context, input.subject_id)
+}
+
 pub fn refresh_subject_metadata(
     context: &AppContext,
     input: RefreshSubjectRequest,
@@ -947,15 +1021,19 @@ pub fn refresh_subject_metadata(
     context
         .metadata
         .refresh_subject_blocking(input.subject_id)?;
+    frontend_local_subject(context, input.subject_id)
+}
+
+fn frontend_local_subject(context: &AppContext, subject_id: i64) -> AppResult<FrontendSubject> {
     let card = context
         .media
         .list_series_cards()?
         .into_iter()
-        .find(|card| card.subject_id == input.subject_id)
+        .find(|card| card.subject_id == subject_id)
         .ok_or_else(|| {
             crate::error::AppError::Api(format!(
-                "refreshed subject #{} is not in the local library",
-                input.subject_id
+                "subject #{} is not in the local library",
+                subject_id
             ))
         })?;
     let bgm_subject_id = (card.provider == "bangumi")
@@ -2017,6 +2095,17 @@ fn frontend_subject_from_catalog(subject: CatalogSubjectData) -> FrontendSubject
     }
 }
 
+fn frontend_subject_dynamic_from_catalog(
+    dynamic: CatalogSubjectDynamicData,
+) -> FrontendSubjectDynamic {
+    FrontendSubjectDynamic {
+        provider: dynamic.provider,
+        provider_subject_id: dynamic.provider_subject_id,
+        rating: dynamic.rating,
+        rank: dynamic.rank,
+    }
+}
+
 fn frontend_subject_from_bangumi_collection(
     collection: &BangumiSubjectCollection,
     bangumi_episodes: &[BangumiEpisodeCollection],
@@ -2436,7 +2525,70 @@ pub fn export_types(output_path: impl AsRef<Path>) -> AppResult<()> {
 
 #[cfg(test)]
 mod identity_tests {
-    use super::{canonical_subject_key, merged_episode_watched};
+    use super::{
+        FrontendEpisode, FrontendMatchStatus, FrontendSubject, canonical_subject_key,
+        merged_episode_watched, subject_detail_cache_ready,
+    };
+
+    fn detail_fixture(source: &str, local: bool) -> FrontendSubject {
+        FrontendSubject {
+            id: "subject-1".to_string(),
+            canonical_key: "bangumi:1".to_string(),
+            availability: if local {
+                "localPlayable".to_string()
+            } else {
+                "onlineOnly".to_string()
+            },
+            media_id: 0,
+            subject_id: 1,
+            source: source.to_string(),
+            provider: "bangumi".to_string(),
+            provider_subject_id: "1".to_string(),
+            local,
+            aliases: Vec::new(),
+            title: "Example".to_string(),
+            title_cn: "示例".to_string(),
+            year: 2026,
+            air_date: "2026-01-01".to_string(),
+            rating: 8.0,
+            rank: 1,
+            tags: vec!["tag".to_string()],
+            summary: "A cached summary".to_string(),
+            poster: "file:///tmp/poster.jpg".to_string(),
+            hero: "file:///tmp/hero.jpg".to_string(),
+            status: FrontendMatchStatus::Matched,
+            episodes: 1,
+            watched_episodes: 0,
+            current_episode: None,
+            progress: 0.0,
+            bgm_collection_type: None,
+            bgm_collection_label: "未标记".to_string(),
+            bgm_rate: 0,
+            bgm_pending: false,
+            files: 1,
+            total_size: "1 B".to_string(),
+            last_played: None,
+            new_episode: false,
+            metadata_ready: true,
+            file_summary: "episode01.mkv".to_string(),
+            local_files: Vec::new(),
+            episodes_detail: vec![FrontendEpisode {
+                episode: 1,
+                bgm_episode_id: Some(1),
+                title: "Episode 1".to_string(),
+                title_cn: String::new(),
+                air_date: String::new(),
+                cached: false,
+                watched: false,
+                bgm_collection_type: None,
+                bgm_collection_label: "未标记".to_string(),
+                bgm_pending: false,
+                media_id: None,
+                file_name: None,
+                file_size: None,
+            }],
+        }
+    }
 
     #[test]
     fn bangumi_identity_is_stable_across_local_cloud_and_online_entries() {
@@ -2464,6 +2616,22 @@ mod identity_tests {
         assert!(merged_episode_watched(true, Some(0)));
         assert!(merged_episode_watched(false, Some(2)));
         assert!(!merged_episode_watched(false, Some(0)));
+    }
+
+    #[test]
+    fn only_persisted_detail_records_are_cache_ready() {
+        assert!(subject_detail_cache_ready(&detail_fixture("local", true)));
+        assert!(subject_detail_cache_ready(&detail_fixture(
+            "bangumiCollection",
+            false,
+        )));
+        assert!(!subject_detail_cache_ready(&detail_fixture(
+            "bangumi", false
+        )));
+
+        let mut incomplete = detail_fixture("local", true);
+        incomplete.summary.clear();
+        assert!(!subject_detail_cache_ready(&incomplete));
     }
 }
 

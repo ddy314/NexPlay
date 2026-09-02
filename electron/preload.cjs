@@ -199,6 +199,7 @@ contextBridge.exposeInMainWorld("nexplay", {
   searchCatalog: (payload) => ipcRenderer.invoke("backend:search-catalog", payload),
   onlineSubject: (payload) => ipcRenderer.invoke("backend:online-subject", payload),
   resolveSubject: (payload) => ipcRenderer.invoke("backend:resolve-subject", payload),
+  hydrateSubject: (payload) => ipcRenderer.invoke("backend:hydrate-subject", payload),
   refreshSubjectMetadata: (payload) => ipcRenderer.invoke("backend:refresh-subject-metadata", payload),
   episodeResources: (payload) => ipcRenderer.invoke("backend:episode-resources", payload),
   startResourceDownload: (payload) => ipcRenderer.invoke("backend:start-resource-download", payload),

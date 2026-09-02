@@ -158,6 +158,9 @@ function registerBackendIpc(backendClient, options = {}) {
   ipcMain.handle("backend:resolve-subject", (_event, payload) => (
     backendClient.request("resolveSubject", payload)
   ));
+  ipcMain.handle("backend:hydrate-subject", (_event, payload) => (
+    backendClient.request("hydrateSubject", payload)
+  ));
   ipcMain.handle("backend:refresh-subject-metadata", (_event, payload) => (
     backendClient.request("refreshSubjectMetadata", payload)
   ));

@@ -639,6 +639,21 @@ impl Repository {
         self.find_subject_id(&detail.provider, &detail.provider_subject_id)
     }
 
+    pub fn update_subject_dynamic(
+        &self,
+        subject_id: i64,
+        rating: Option<f64>,
+        rank: Option<i64>,
+        now: i64,
+    ) -> AppResult<()> {
+        let conn = self.connect()?;
+        conn.execute(
+            "UPDATE subjects SET rating = COALESCE(?2, rating), rank = COALESCE(?3, rank), updated_at = ?4 WHERE id = ?1",
+            params![subject_id, rating, rank, now],
+        )?;
+        Ok(())
+    }
+
     pub fn upsert_subject_episodes(
         &self,
         subject_id: i64,
@@ -2936,6 +2951,72 @@ mod tests {
                 .expect("cleared rows")
                 .is_empty()
         );
+        let _ = fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn dynamic_subject_update_keeps_full_metadata_untouched() {
+        let db_path = std::env::temp_dir().join(format!(
+            "nexplay-subject-dynamic-test-{}.sqlite3",
+            std::process::id()
+        ));
+        let _ = fs::remove_file(&db_path);
+        let repository = Repository::new(db_path.clone());
+        repository.init().expect("init database");
+
+        let subject_id = repository
+            .upsert_subject_detail(
+                &crate::metadata::provider::SubjectDetail {
+                    provider: "bangumi".to_string(),
+                    provider_subject_id: "123".to_string(),
+                    title: "Cached title".to_string(),
+                    title_cn: Some("缓存标题".to_string()),
+                    summary: Some("Cached summary".to_string()),
+                    air_date: Some("2026-01-01".to_string()),
+                    rating: Some(6.5),
+                    rank: Some(20),
+                    tags: vec!["keep".to_string()],
+                    aliases: vec!["alias".to_string()],
+                    episode_count: Some(1),
+                    images: crate::metadata::provider::SubjectImages {
+                        large: Some("https://image.test/large.jpg".to_string()),
+                        common: Some("https://image.test/common.jpg".to_string()),
+                    },
+                },
+                100,
+            )
+            .expect("insert subject");
+
+        repository
+            .update_subject_dynamic(subject_id, Some(8.8), Some(2), 200)
+            .expect("update dynamic fields");
+        let updated = repository
+            .get_subject(subject_id)
+            .expect("read subject")
+            .expect("subject exists");
+        assert_eq!(updated.title, "Cached title");
+        assert_eq!(updated.summary.as_deref(), Some("Cached summary"));
+        assert_eq!(
+            updated.image_large.as_deref(),
+            Some("https://image.test/large.jpg")
+        );
+        assert_eq!(
+            updated.image_common.as_deref(),
+            Some("https://image.test/common.jpg")
+        );
+        assert_eq!(updated.rating, Some(8.8));
+        assert_eq!(updated.rank, Some(2));
+
+        repository
+            .update_subject_dynamic(subject_id, None, None, 300)
+            .expect("keep missing dynamic values");
+        let unchanged_dynamic = repository
+            .get_subject(subject_id)
+            .expect("read subject again")
+            .expect("subject exists again");
+        assert_eq!(unchanged_dynamic.rating, Some(8.8));
+        assert_eq!(unchanged_dynamic.rank, Some(2));
+
         let _ = fs::remove_file(db_path);
     }
 }

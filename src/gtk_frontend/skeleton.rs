@@ -44,12 +44,58 @@ const SKELETON_CSS: &str = r#"
 
 .nx-rounded-media {
   border-radius: 14px;
-  overflow: hidden;
 }
 
-.nx-media-card {
-  border-radius: 14px;
+/*
+ * The poster is the interactive surface.  Keep the title and metadata as
+ * ordinary content below it instead of turning the whole media item into a
+ * large button/card.  The hover treatment is an image overlay and play
+ * affordance; it deliberately has no border or shadow.
+ */
+.nx-poster-button {
+  min-width: 0;
+  min-height: 0;
   padding: 0;
+  border-radius: 14px;
+  background-color: transparent;
+  background-image: none;
+  box-shadow: none;
+}
+
+.nx-poster-button:hover,
+.nx-poster-button:active {
+  background-color: transparent;
+  background-image: none;
+  box-shadow: none;
+}
+
+.nx-poster-hover {
+  border-radius: 14px;
+  background-color: transparent;
+  transition: background-color 180ms ease;
+}
+
+.nx-poster-play {
+  opacity: 0;
+  transition: opacity 180ms ease;
+}
+
+.nx-poster-button:hover .nx-poster-hover {
+  background-color: alpha(@window_fg_color, 0.10);
+}
+
+.nx-poster-button:active .nx-poster-hover {
+  background-color: alpha(@window_fg_color, 0.18);
+}
+
+.nx-poster-button:hover .nx-poster-play,
+.nx-poster-button:active .nx-poster-play {
+  opacity: 1;
+}
+
+.nx-poster-play {
+  color: @window_fg_color;
+  -gtk-icon-shadow: 0 1px 8px alpha(@window_bg_color, 0.70);
 }
 
 .nx-tag {
@@ -114,7 +160,27 @@ pub fn home() -> gtk::Box {
 }
 
 pub fn detail() -> gtk::Box {
-    let root = vertical(26);
+    let root = vertical(0);
+    root.set_vexpand(true);
+
+    let content = vertical(26);
+    content.set_margin_top(18);
+    content.set_margin_bottom(28);
+    content.set_margin_start(28);
+    content.set_margin_end(28);
+    let content_clamp = adw::Clamp::new();
+    content_clamp.set_maximum_size(1200);
+    content_clamp.set_tightening_threshold(760);
+    content_clamp.set_hexpand(true);
+    content_clamp.set_vexpand(true);
+    content_clamp.set_child(Some(&content));
+    let scroll = gtk::ScrolledWindow::new();
+    scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+    scroll.set_hexpand(true);
+    scroll.set_vexpand(true);
+    scroll.set_child(Some(&content_clamp));
+    root.append(&scroll);
+
     let hero = adw::WrapBox::builder()
         .child_spacing(24)
         .line_spacing(24)
@@ -156,13 +222,13 @@ pub fn detail() -> gtk::Box {
     copy_width.set_hexpand(false);
     copy_width.set_child(Some(&copy));
     hero.append(&copy_width);
-    root.append(&hero);
+    content.append(&hero);
 
-    root.append(&section_heading(180, 14));
+    content.append(&section_heading(180, 14));
     for (title_width, subtitle_width) in
         [(260, 180), (320, 210), (230, 160), (290, 190), (250, 175)]
     {
-        root.append(&episode_row(title_width, subtitle_width));
+        content.append(&episode_row(title_width, subtitle_width));
     }
     root
 }
@@ -247,6 +313,7 @@ fn shelf(count: usize) -> adw::WrapBox {
         .wrap_policy(adw::WrapPolicy::Minimum)
         .justify(adw::JustifyMode::None)
         .build();
+    shelf.set_align(0.0);
     for _ in 0..count {
         let card = vertical(8);
         card.set_width_request(160);
@@ -262,12 +329,15 @@ fn shelf(count: usize) -> adw::WrapBox {
 
 fn poster(width: i32, height: i32) -> gtk::Box {
     let block = block(width, height);
+    block.set_halign(gtk::Align::Start);
     block.add_css_class("nx-skeleton-poster");
     block
 }
 
 fn line(width: i32, height: i32) -> gtk::Box {
-    block(width, height)
+    let line = block(width, height);
+    line.set_halign(gtk::Align::Start);
+    line
 }
 
 fn section_heading(title_width: i32, subtitle_width: i32) -> gtk::Box {
@@ -293,18 +363,21 @@ fn episode_row(title_width: i32, subtitle_width: i32) -> gtk::Box {
 
 fn pill(width: i32, height: i32) -> gtk::Box {
     let pill = block(width, height);
+    pill.set_halign(gtk::Align::Start);
     pill.add_css_class("nx-skeleton-pill");
     pill
 }
 
 fn action(width: i32, height: i32) -> gtk::Box {
     let action = block(width, height);
+    action.set_halign(gtk::Align::Start);
     action.add_css_class("nx-skeleton-action");
     action
 }
 
 fn control(width: i32, height: i32) -> gtk::Box {
     let control = block(width, height);
+    control.set_halign(gtk::Align::Start);
     control.add_css_class("nx-skeleton-control");
     control
 }
@@ -315,6 +388,8 @@ fn progress(width: i32) -> gtk::Box {
     if width == 0 {
         progress.set_hexpand(true);
         progress.set_halign(gtk::Align::Fill);
+    } else {
+        progress.set_halign(gtk::Align::Start);
     }
     progress
 }
@@ -322,11 +397,10 @@ fn progress(width: i32) -> gtk::Box {
 fn block(width: i32, height: i32) -> gtk::Box {
     let block = gtk::Box::new(gtk::Orientation::Vertical, 0);
     block.add_css_class("nx-skeleton");
-    // A size request is only a minimum.  Aligning the placeholder to the
-    // start keeps a short text-shaped block from filling its parent column.
+    // A size request is only a minimum.  Each shape chooses its own
+    // horizontal alignment so a full-width track is not treated like text.
     block.set_width_request(width);
     block.set_height_request(height);
-    block.set_halign(gtk::Align::Start);
     block.set_valign(gtk::Align::Start);
     block
 }
