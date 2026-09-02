@@ -1,0 +1,17 @@
+pub(crate) mod detail;
+pub(crate) mod discover;
+pub(crate) mod downloads;
+pub(crate) mod episodes;
+pub(crate) mod home;
+pub(crate) mod insights;
+pub(crate) mod library;
+pub(crate) mod resource_download;
+pub(crate) mod resources;
+pub(crate) mod search;
+pub(crate) mod settings;
+pub(crate) mod settings_actions;
+pub(crate) mod settings_bangumi;
+pub(crate) mod settings_form;
+pub(crate) mod settings_integrations;
+pub(crate) mod settings_media;
+pub(crate) mod settings_preferences;

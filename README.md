@@ -160,6 +160,12 @@ Main directories:
 
 - `src/gtk_frontend/`: GTK shell, native pages, worker runtime, image loader,
   and OAuth callback handling.
+  - `bootstrap.rs` and `shell.rs`: application startup and navigation shell.
+  - `pages/`: one module per route, with detail episodes, resources, and
+    settings sections split into focused modules.
+  - `components/`, `state.rs`, and `events.rs`: shared widgets, UI state, and
+    backend-event refresh handling.
+  - `player/` and `skeleton/`: playback/session helpers and loading-state UI.
 - `src/`: shared Rust backend, domain model, repository, services, metadata
   providers, and JSON-RPC daemon.
 - `frontend/` and `electron/`: retained temporary React/Electron reference and
