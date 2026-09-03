@@ -9,7 +9,7 @@ pub(crate) fn append_media_group(
     preferences: &adw::PreferencesPage,
     media_group: &adw::PreferencesGroup,
 ) {
-    let media_row = adw::ActionRow::new();
+    let media_row = action_row();
     media_row.set_title("媒体目录");
     media_row.set_subtitle("扫描这些文件夹中的视频文件");
     let add_folder = icon_button("folder-new-symbolic", "添加媒体目录");

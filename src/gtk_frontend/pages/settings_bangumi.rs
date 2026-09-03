@@ -110,7 +110,7 @@ pub(crate) fn append_bangumi_group(
         "Bangumi Access Token",
         settings.bangumi_access_token_configured,
     );
-    let auth_row = adw::ActionRow::new();
+    let auth_row = action_row();
     auth_row.set_title("Bangumi 账户");
     auth_row.set_subtitle(if settings.bangumi_access_token_configured {
         "已连接，可同步收藏和观看状态"
@@ -138,7 +138,7 @@ pub(crate) fn append_bangumi_group(
         let state = state.clone();
         login.connect_clicked(move |_| settings_actions::start_bangumi_oauth(&state));
     }
-    let sync_row = adw::ActionRow::new();
+    let sync_row = action_row();
     sync_row.set_title("同步 Bangumi");
     sync_row.set_subtitle("更新收藏和观看状态");
     let sync = icon_button("emblem-synchronizing-symbolic", "立即同步");

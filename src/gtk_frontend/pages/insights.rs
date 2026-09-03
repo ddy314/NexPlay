@@ -41,7 +41,7 @@ pub(crate) fn render_insights(state: &Rc<UiState>) {
             ("活跃天数", data.active_days.to_string()),
             ("连续天数", data.streak_days.to_string()),
         ] {
-            let group = adw::ActionRow::new();
+            let group = action_row();
             group.set_title(title);
             group.set_subtitle(&value);
             group.set_hexpand(true);
@@ -49,7 +49,7 @@ pub(crate) fn render_insights(state: &Rc<UiState>) {
         }
         state.insights.append(&metrics);
         for ring in data.rings {
-            let row = adw::ActionRow::new();
+            let row = action_row();
             row.set_title(&ring.label);
             row.set_subtitle(&format!(
                 "{:.1} / {:.1} {}",
@@ -69,7 +69,7 @@ pub(crate) fn render_insights(state: &Rc<UiState>) {
             let group = adw::PreferencesGroup::new();
             group.set_title("每日节奏");
             for point in data.daily.iter().take(14) {
-                let row = adw::ActionRow::new();
+                let row = action_row();
                 row.set_title(&point.label);
                 row.set_subtitle(&format!("{:.1}", point.value));
                 group.add(&row);
@@ -80,7 +80,7 @@ pub(crate) fn render_insights(state: &Rc<UiState>) {
             let group = adw::PreferencesGroup::new();
             group.set_title("时间分布");
             for point in data.dayparts.iter().take(8) {
-                let row = adw::ActionRow::new();
+                let row = action_row();
                 row.set_title(&point.label);
                 row.set_subtitle(&format!("{:.1} 分钟", point.value));
                 group.add(&row);
@@ -91,7 +91,7 @@ pub(crate) fn render_insights(state: &Rc<UiState>) {
             let group = adw::PreferencesGroup::new();
             group.set_title("标签分布");
             for tag in data.tags.iter().take(12) {
-                let row = adw::ActionRow::new();
+                let row = action_row();
                 row.set_title(&tag.label);
                 row.set_subtitle(&format!("{:.1}", tag.value));
                 group.add(&row);
@@ -102,7 +102,7 @@ pub(crate) fn render_insights(state: &Rc<UiState>) {
             let group = adw::PreferencesGroup::new();
             group.set_title("亮点");
             for highlight in data.highlights.iter().take(8) {
-                let row = adw::ActionRow::new();
+                let row = action_row();
                 row.set_title(&highlight.title);
                 row.set_subtitle(&highlight.detail);
                 group.add(&row);

@@ -13,13 +13,13 @@ pub(crate) fn render_media_group(state: &Rc<UiState>, form: &Rc<SettingsForm>) {
     }
     let paths = form.media_libraries.borrow().clone();
     if paths.is_empty() {
-        let row = adw::ActionRow::new();
+        let row = action_row();
         row.set_title("尚未配置媒体目录");
         row.set_subtitle("添加一个目录后，媒体库就可以开始扫描");
         form.media_group.add(&row);
     } else {
         for (index, path) in paths.into_iter().enumerate() {
-            let row = adw::ActionRow::new();
+            let row = action_row();
             row.set_title(&path);
             row.set_subtitle("本地媒体来源");
             let remove = icon_button("list-remove-symbolic", "移除此目录");
@@ -74,7 +74,7 @@ pub(crate) fn add_secret_control(
     title: &str,
     configured: bool,
 ) {
-    let row = adw::ActionRow::new();
+    let row = action_row();
     row.set_title(title);
     row.set_subtitle(if configured { "已配置" } else { "未配置" });
     let edit = icon_button("document-edit-symbolic", "修改");

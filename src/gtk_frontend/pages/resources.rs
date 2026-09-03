@@ -234,7 +234,7 @@ pub(crate) fn render_resource_rows(
     }
     let count = filtered.len();
     for resource in filtered {
-        let row = adw::ActionRow::new();
+        let row = action_row();
         row.set_title(&resource.title);
         row.set_subtitle(&format!(
             "{} · {} · 做种 {} · 下载 {} · {}",
@@ -268,7 +268,7 @@ pub(crate) fn render_resource_rows(
         list.append(&row);
     }
     if count == 0 {
-        let row = adw::ActionRow::new();
+        let row = action_row();
         row.set_title("没有匹配的资源");
         row.set_subtitle("可以清除过滤条件或稍后重试。");
         list.append(&row);

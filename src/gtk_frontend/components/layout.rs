@@ -30,6 +30,20 @@ pub(crate) fn label(text: impl AsRef<str>, style: &str) -> gtk::Label {
     label
 }
 
+pub(crate) fn action_row() -> adw::ActionRow {
+    let row = adw::ActionRow::new();
+    // Titles and subtitles come from media metadata, paths, logs, and remote
+    // providers.  They are ordinary text, not Pango markup.
+    row.set_use_markup(false);
+    row
+}
+
+pub(crate) fn expander_row() -> adw::ExpanderRow {
+    let row = adw::ExpanderRow::new();
+    row.set_use_markup(false);
+    row
+}
+
 pub(crate) fn page_header(title: &str, subtitle: &str) -> gtk::Box {
     let header = gtk::Box::new(gtk::Orientation::Vertical, 4);
     header.append(&label(title, "title-1"));

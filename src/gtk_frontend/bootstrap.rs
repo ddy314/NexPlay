@@ -4,6 +4,9 @@ use super::{pages::settings_actions, shell, skeleton};
 const APP_ID: &str = "dev.nexplay.NexPlay";
 
 pub fn run() -> AppResult<()> {
+    gtk::init()
+        .map_err(|error| crate::error::AppError::Config(format!("GTK 初始化失败：{error}")))?;
+    clear_legacy_dark_theme_preference();
     let application = adw::Application::builder().application_id(APP_ID).build();
 
     application.connect_activate(|application| {
@@ -89,6 +92,16 @@ pub fn run() -> AppResult<()> {
     }
     application.run_with_args_os(&filtered_args);
     Ok(())
+}
+
+fn clear_legacy_dark_theme_preference() {
+    let Some(settings) = gtk::Settings::default() else {
+        return;
+    };
+    // GTK 4.20 deprecated this compatibility property.  libadwaita owns
+    // color selection through AdwStyleManager, so keep the old setting from
+    // being interpreted or warned about while preserving the desktop scheme.
+    settings.set_property("gtk-application-prefer-dark-theme", false);
 }
 
 pub(crate) fn native_config_path() -> PathBuf {

@@ -134,7 +134,7 @@ pub(crate) fn append_integrations(
         false,
     );
     let test = icon_button("network-wired-symbolic", "测试 qBittorrent 连接");
-    let test_row = adw::ActionRow::new();
+    let test_row = action_row();
     test_row.set_title("连接测试");
     test_row.add_suffix(&test);
     qbit.add(&test_row);

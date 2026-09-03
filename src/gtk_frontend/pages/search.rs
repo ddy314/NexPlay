@@ -86,7 +86,7 @@ pub(crate) fn render_search(state: &Rc<UiState>) {
         let list = gtk::ListBox::new();
         list.set_selection_mode(gtk::SelectionMode::Single);
         for subject in results {
-            let row = adw::ActionRow::new();
+            let row = action_row();
             row.set_title(&subject_title(&subject));
             row.set_subtitle(&subject_meta(&subject));
             row.set_activatable(true);

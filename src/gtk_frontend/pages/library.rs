@@ -141,7 +141,7 @@ pub(crate) fn render_library(state: &Rc<UiState>) {
         let list = gtk::ListBox::new();
         list.set_selection_mode(gtk::SelectionMode::None);
         for subject in sorted_subjects(subjects, state.library_sort.get()) {
-            let row = adw::ActionRow::new();
+            let row = action_row();
             row.set_title(&subject_title(&subject));
             row.set_subtitle(&format!(
                 "{} · {}",
@@ -212,11 +212,11 @@ pub(crate) fn append_log_panel(state: &Rc<UiState>, container: &gtk::Box) {
     if state.logs.borrow().is_empty() {
         return;
     }
-    let expander = adw::ExpanderRow::new();
+    let expander = expander_row();
     expander.set_title("后台日志");
     expander.set_subtitle(&format!("{} 条", state.logs.borrow().len()));
     for message in state.logs.borrow().iter().rev().take(30) {
-        let row = adw::ActionRow::new();
+        let row = action_row();
         row.set_title(message);
         expander.add_row(&row);
     }
