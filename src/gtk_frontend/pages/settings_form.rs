@@ -4,7 +4,12 @@ use super::super::state::{SettingsForm, UiState};
 use super::settings_actions;
 
 pub(crate) fn render_media_group(state: &Rc<UiState>, form: &Rc<SettingsForm>) {
-    if let Some(anchor) = form.media_group.first_child() {
+    let anchor = form
+        .media_group
+        .first_child()
+        .and_then(|child| child.next_sibling())
+        .or_else(|| form.media_group.first_child());
+    if let Some(anchor) = anchor {
         let mut next = anchor.next_sibling();
         while let Some(child) = next {
             next = child.next_sibling();

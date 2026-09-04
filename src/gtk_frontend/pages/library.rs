@@ -1,6 +1,6 @@
 use super::super::components::*;
 use super::super::prelude::*;
-use super::super::{events, state::UiState};
+use super::super::state::UiState;
 use super::detail::open_subject;
 
 const LIBRARY_CARD_BATCH_SIZE: usize = 12;
@@ -15,33 +15,11 @@ pub(crate) fn render_library(state: &Rc<UiState>) {
     } else {
         snapshot.subjects.clone()
     };
-    let source_label = if state.library_cloud.get() {
-        "云端收藏"
-    } else {
-        "本地媒体"
-    };
-    state.library.append(&page_header(
-        "媒体库",
-        &format!(
-            "在这里管理{}、扫描新文件并打开作品详情。当前有 {} 部条目、{} 个本地文件。",
-            source_label,
-            subjects.len(),
-            subjects.iter().map(|subject| subject.files).sum::<usize>()
-        ),
-    ));
+    state.library.append(&page_header("媒体库", ""));
     let controls = adw::WrapBox::builder()
         .child_spacing(8)
         .line_spacing(8)
         .build();
-    let scan_button = action_button(
-        if state.scan_loading.get() {
-            "扫描中…"
-        } else {
-            "扫描媒体库"
-        },
-        "view-refresh-symbolic",
-    );
-    scan_button.set_sensitive(!state.scan_loading.get());
     let grid_button = gtk::ToggleButton::new();
     grid_button.set_child(Some(&gtk::Image::from_icon_name("view-grid-symbolic")));
     grid_button.set_tooltip_text(Some("网格视图"));
@@ -53,18 +31,11 @@ pub(crate) fn render_library(state: &Rc<UiState>) {
     let source_switch = library_source_switch(state);
     let sort = gtk::DropDown::from_strings(&["按年份", "按标题", "按评分"]);
     sort.set_selected(state.library_sort.get());
-    controls.append(&scan_button);
     controls.append(&source_switch);
     controls.append(&grid_button);
     controls.append(&list_button);
     controls.append(&sort);
-    let settings_button = icon_button("emblem-system-symbolic", "管理媒体目录");
-    controls.append(&settings_button);
     state.library.append(&controls);
-    {
-        let state = state.clone();
-        scan_button.connect_clicked(move |_| start_scan(&state));
-    }
     {
         let state = state.clone();
         grid_button.connect_clicked(move |_| {
@@ -85,10 +56,6 @@ pub(crate) fn render_library(state: &Rc<UiState>) {
             state.library_sort.set(dropdown.selected());
             render_library(&state);
         });
-    }
-    {
-        let state = state.clone();
-        settings_button.connect_clicked(move |_| state.stack.set_visible_child_name("settings"));
     }
     if state.scan_loading.get() || !state.scan_message.borrow().is_empty() {
         let progress = gtk::ProgressBar::new();
@@ -222,38 +189,6 @@ pub(crate) fn sorted_subjects(
         }),
     }
     subjects
-}
-
-pub(crate) fn start_scan(state: &Rc<UiState>) {
-    if state.scan_loading.replace(true) {
-        return;
-    }
-    state.scan_fraction.set(0.0);
-    state.scan_message.replace("扫描已排队…".to_string());
-    render_library(state);
-    let weak = Rc::downgrade(state);
-    state.runtime.submit(
-        |context| scan(context),
-        move |result: Result<ScanResponse, String>| {
-            let Some(state) = weak.upgrade() else { return };
-            state.scan_loading.set(false);
-            match result {
-                Ok(response) => {
-                    state.snapshot.replace(response.snapshot);
-                    state.scan_message.replace(format!(
-                        "扫描完成：新增 {}，修改 {}，删除 {}",
-                        response.summary.added, response.summary.modified, response.summary.deleted
-                    ));
-                    events::show_success(&state, "媒体库扫描完成");
-                    events::render_all(&state);
-                }
-                Err(error) => {
-                    events::show_error(&state, format!("扫描失败：{error}"));
-                    render_library(&state);
-                }
-            }
-        },
-    );
 }
 
 pub(crate) fn append_log_panel(state: &Rc<UiState>, container: &gtk::Box) {
