@@ -3,7 +3,11 @@ use super::super::prelude::*;
 use super::super::{events, state::UiState};
 use super::detail::open_subject;
 
+const LIBRARY_CARD_BATCH_SIZE: usize = 12;
+
 pub(crate) fn render_library(state: &Rc<UiState>) {
+    let render_generation = state.library_render_generation.get().wrapping_add(1);
+    state.library_render_generation.set(render_generation);
     clear_box(&state.library);
     let snapshot = state.snapshot.borrow().clone();
     let subjects = if state.library_cloud.get() {
@@ -46,20 +50,11 @@ pub(crate) fn render_library(state: &Rc<UiState>) {
     list_button.set_child(Some(&gtk::Image::from_icon_name("view-list-symbolic")));
     list_button.set_tooltip_text(Some("列表视图"));
     list_button.set_active(!state.library_grid.get());
-    let local_button = gtk::ToggleButton::new();
-    local_button.set_child(Some(&gtk::Image::from_icon_name("folder-videos-symbolic")));
-    local_button.set_tooltip_text(Some("本地媒体"));
-    local_button.set_active(!state.library_cloud.get());
-    let cloud_button = gtk::ToggleButton::new();
-    cloud_button.set_child(Some(&gtk::Image::from_icon_name("cloud-symbolic")));
-    cloud_button.set_tooltip_text(Some("云端收藏"));
-    cloud_button.set_active(state.library_cloud.get());
-    local_button.set_group(Some(&cloud_button));
+    let source_switch = library_source_switch(state);
     let sort = gtk::DropDown::from_strings(&["按年份", "按标题", "按评分"]);
     sort.set_selected(state.library_sort.get());
     controls.append(&scan_button);
-    controls.append(&local_button);
-    controls.append(&cloud_button);
+    controls.append(&source_switch);
     controls.append(&grid_button);
     controls.append(&list_button);
     controls.append(&sort);
@@ -81,20 +76,6 @@ pub(crate) fn render_library(state: &Rc<UiState>) {
         let state = state.clone();
         list_button.connect_clicked(move |_| {
             state.library_grid.set(false);
-            render_library(&state);
-        });
-    }
-    {
-        let state = state.clone();
-        local_button.connect_clicked(move |_| {
-            state.library_cloud.set(false);
-            render_library(&state);
-        });
-    }
-    {
-        let state = state.clone();
-        cloud_button.connect_clicked(move |_| {
-            state.library_cloud.set(true);
             render_library(&state);
         });
     }
@@ -133,10 +114,15 @@ pub(crate) fn render_library(state: &Rc<UiState>) {
         ));
     } else if state.library_grid.get() {
         let wrap = adaptive_wrap();
-        for subject in sorted_subjects(subjects, state.library_sort.get()) {
-            wrap.append(&subject_card(state, subject));
-        }
         state.library.append(&wrap);
+        append_log_panel(state, &state.library);
+        schedule_subject_cards(
+            state,
+            &wrap,
+            Rc::new(sorted_subjects(subjects, state.library_sort.get())),
+            render_generation,
+        );
+        return;
     } else {
         let list = gtk::ListBox::new();
         list.set_selection_mode(gtk::SelectionMode::None);
@@ -157,6 +143,68 @@ pub(crate) fn render_library(state: &Rc<UiState>) {
         state.library.append(&list);
     }
     append_log_panel(state, &state.library);
+}
+
+fn schedule_subject_cards(
+    state: &Rc<UiState>,
+    wrap: &adw::WrapBox,
+    subjects: Rc<Vec<FrontendSubject>>,
+    render_generation: u64,
+) {
+    let weak_state = Rc::downgrade(state);
+    let wrap = wrap.clone();
+    let next_index = Rc::new(Cell::new(0usize));
+    glib::idle_add_local(move || {
+        let Some(state) = weak_state.upgrade() else {
+            return glib::ControlFlow::Break;
+        };
+        if state.library_render_generation.get() != render_generation {
+            return glib::ControlFlow::Break;
+        }
+
+        let start = next_index.get();
+        let end = start
+            .saturating_add(LIBRARY_CARD_BATCH_SIZE)
+            .min(subjects.len());
+        for subject in subjects[start..end].iter().cloned() {
+            wrap.append(&subject_card(&state, subject));
+        }
+        next_index.set(end);
+        if end == subjects.len() {
+            glib::ControlFlow::Break
+        } else {
+            glib::ControlFlow::Continue
+        }
+    });
+}
+
+fn library_source_switch(state: &Rc<UiState>) -> adw::ToggleGroup {
+    let source = adw::ToggleGroup::new();
+    source.set_homogeneous(true);
+    source.set_can_shrink(false);
+    source.set_size_request(96, 36);
+    source.add_css_class("nx-source-switch");
+
+    let local = adw::Toggle::new();
+    local.set_name(Some("local"));
+    local.set_icon_name(Some("drive-harddisk-solidstate-symbolic"));
+    local.set_tooltip("本地媒体");
+    source.add(local);
+
+    let cloud = adw::Toggle::new();
+    cloud.set_name(Some("cloud"));
+    cloud.set_icon_name(Some("weather-clouds-symbolic"));
+    cloud.set_tooltip("云端收藏");
+    source.add(cloud);
+    source.set_active(if state.library_cloud.get() { 1 } else { 0 });
+
+    let state = state.clone();
+    source.connect_active_notify(move |source| {
+        state.library_cloud.set(source.active() == 1);
+        render_library(&state);
+    });
+
+    source
 }
 
 pub(crate) fn sorted_subjects(

@@ -38,6 +38,7 @@ pub(crate) struct UiState {
     pub(crate) library_grid: Cell<bool>,
     pub(crate) library_cloud: Cell<bool>,
     pub(crate) library_sort: Cell<u32>,
+    pub(crate) library_render_generation: Cell<u64>,
     pub(crate) logs: RefCell<Vec<String>>,
     pub(crate) scan_message: RefCell<String>,
     pub(crate) scan_fraction: Cell<f64>,

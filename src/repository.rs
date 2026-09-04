@@ -2969,6 +2969,7 @@ mod tests {
                 &crate::metadata::provider::SubjectDetail {
                     provider: "bangumi".to_string(),
                     provider_subject_id: "123".to_string(),
+                    subject_type: Some(2),
                     title: "Cached title".to_string(),
                     title_cn: Some("缓存标题".to_string()),
                     summary: Some("Cached summary".to_string()),

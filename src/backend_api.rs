@@ -660,7 +660,11 @@ pub fn snapshot(context: &AppContext) -> AppResult<BackendSnapshot> {
     let tentative = context.metadata.tentative_count()?;
     let flags = context.media.settings_flags();
     let bangumi_auth = context.bangumi.auth_status()?;
-    let bangumi_collections = context.bangumi.cached_subject_collections()?;
+    let mut bangumi_collections = context.bangumi.cached_subject_collections()?;
+    context
+        .bangumi
+        .repair_cached_subject_metadata(&mut bangumi_collections)?;
+    bangumi_collections.retain(is_bangumi_anime_collection);
     let bangumi_by_subject_id = bangumi_collections
         .iter()
         .map(|collection| (collection.subject_id, collection.clone()))
@@ -714,6 +718,15 @@ pub fn snapshot(context: &AppContext) -> AppResult<BackendSnapshot> {
             dandanplay_configured: flags.dandanplay_configured,
         },
     })
+}
+
+fn is_bangumi_anime_collection(collection: &BangumiSubjectCollection) -> bool {
+    collection
+        .subject_json
+        .as_deref()
+        .and_then(subject_json_to_summary)
+        .map(|summary| summary.subject_type == Some(2))
+        .unwrap_or(false)
 }
 
 pub fn scan(context: &AppContext) -> AppResult<ScanResponse> {
@@ -2129,9 +2142,9 @@ fn frontend_subject_from_bangumi_collection(
         .and_then(|summary| summary.images.as_ref())
         .and_then(|images| {
             images
-                .get("large")
-                .or_else(|| images.get("common"))
+                .get("common")
                 .or_else(|| images.get("medium"))
+                .or_else(|| images.get("large"))
                 .cloned()
         })
         .unwrap_or_default();
@@ -2526,8 +2539,9 @@ pub fn export_types(output_path: impl AsRef<Path>) -> AppResult<()> {
 #[cfg(test)]
 mod identity_tests {
     use super::{
-        FrontendEpisode, FrontendMatchStatus, FrontendSubject, canonical_subject_key,
-        merged_episode_watched, subject_detail_cache_ready,
+        BangumiSubjectCollection, FrontendEpisode, FrontendMatchStatus, FrontendSubject,
+        canonical_subject_key, is_bangumi_anime_collection, merged_episode_watched,
+        subject_detail_cache_ready,
     };
 
     fn detail_fixture(source: &str, local: bool) -> FrontendSubject {
@@ -2616,6 +2630,50 @@ mod identity_tests {
         assert!(merged_episode_watched(true, Some(0)));
         assert!(merged_episode_watched(false, Some(2)));
         assert!(!merged_episode_watched(false, Some(0)));
+    }
+
+    fn collection_fixture(
+        subject_id: i64,
+        subject_type: i64,
+        subject_json: Option<&str>,
+    ) -> BangumiSubjectCollection {
+        BangumiSubjectCollection {
+            subject_id,
+            subject_type,
+            collection_type: 3,
+            rate: 0,
+            comment: None,
+            tags: Vec::new(),
+            ep_status: 0,
+            vol_status: 0,
+            private: false,
+            subject_json: subject_json.map(str::to_string),
+            updated_at: 0,
+            synced_at: 0,
+            pending: false,
+        }
+    }
+
+    #[test]
+    fn cloud_library_exposes_only_explicitly_typed_anime_collections() {
+        assert!(is_bangumi_anime_collection(&collection_fixture(
+            1,
+            2,
+            Some(r#"{"id":1,"type":2}"#),
+        )));
+        assert!(!is_bangumi_anime_collection(&collection_fixture(
+            44,
+            2,
+            Some(r#"{"id":44,"type":4}"#),
+        )));
+        assert!(!is_bangumi_anime_collection(&collection_fixture(
+            99,
+            2,
+            Some(r#"{"id":99}"#),
+        )));
+        assert!(!is_bangumi_anime_collection(&collection_fixture(
+            100, 2, None
+        )));
     }
 
     #[test]

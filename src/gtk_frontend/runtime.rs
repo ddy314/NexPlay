@@ -12,8 +12,13 @@ use crate::task::AppEvent;
 const WORKER_COUNT: usize = 4;
 const JOB_QUEUE_CAPACITY: usize = 32;
 const RESULT_QUEUE_CAPACITY: usize = 64;
+const IMAGE_WORKER_COUNT: usize = 4;
+const IMAGE_JOB_QUEUE_CAPACITY: usize = 1024;
+const IMAGE_RESULT_QUEUE_CAPACITY: usize = 128;
+const MAX_IMAGE_RESULTS_PER_POLL: usize = 12;
 
 type Job = Box<dyn FnOnce(&AppContext) -> WorkerCompletion + Send + 'static>;
+type ImageJob = Box<dyn FnOnce() -> WorkerCompletion + Send + 'static>;
 type CompletionCallback = Box<dyn FnOnce(Result<Box<dyn Any + Send>, String>) + 'static>;
 
 struct WorkerCompletion {
@@ -26,6 +31,8 @@ struct WorkerCompletion {
 pub struct BackendRuntime {
     jobs: mpsc::SyncSender<Job>,
     results: Arc<Mutex<mpsc::Receiver<WorkerCompletion>>>,
+    image_jobs: mpsc::SyncSender<ImageJob>,
+    image_results: Arc<Mutex<mpsc::Receiver<WorkerCompletion>>>,
     events: Arc<Mutex<mpsc::Receiver<BackendEvent>>>,
     callbacks: RefCell<HashMap<u64, CompletionCallback>>,
     next_id: Cell<u64>,
@@ -62,6 +69,34 @@ impl BackendRuntime {
                 });
         }
 
+        let (image_jobs, image_job_receiver) =
+            mpsc::sync_channel::<ImageJob>(IMAGE_JOB_QUEUE_CAPACITY);
+        let image_job_receiver = Arc::new(Mutex::new(image_job_receiver));
+        let (image_result_sender, image_result_receiver) =
+            mpsc::sync_channel::<WorkerCompletion>(IMAGE_RESULT_QUEUE_CAPACITY);
+        let image_results = Arc::new(Mutex::new(image_result_receiver));
+        for index in 0..IMAGE_WORKER_COUNT {
+            let image_job_receiver = image_job_receiver.clone();
+            let image_result_sender = image_result_sender.clone();
+            let _ = thread::Builder::new()
+                .name(format!("nexplay-gtk-image-{index}"))
+                .spawn(move || {
+                    loop {
+                        let job = {
+                            let receiver = image_job_receiver
+                                .lock()
+                                .expect("GTK image job receiver mutex poisoned");
+                            receiver.recv()
+                        };
+                        let Ok(job) = job else { break };
+                        let completion = job();
+                        if image_result_sender.send(completion).is_err() {
+                            break;
+                        }
+                    }
+                });
+        }
+
         let (event_sender, event_receiver) = mpsc::sync_channel(RESULT_QUEUE_CAPACITY);
         if let Some(receiver) = context
             .event_receiver
@@ -84,6 +119,8 @@ impl BackendRuntime {
         Self {
             jobs,
             results,
+            image_jobs,
+            image_results,
             events: Arc::new(Mutex::new(event_receiver)),
             callbacks: RefCell::new(HashMap::new()),
             next_id: Cell::new(1),
@@ -136,12 +173,23 @@ impl BackendRuntime {
     /// Dispatch completed jobs.  Call this from a GLib timeout on the GTK
     /// main context; no GTK object is ever touched by a worker.
     pub fn poll(&self) {
+        self.dispatch_results(&self.results, None);
+        self.dispatch_results(&self.image_results, Some(MAX_IMAGE_RESULTS_PER_POLL));
+    }
+
+    fn dispatch_results(
+        &self,
+        results: &Arc<Mutex<mpsc::Receiver<WorkerCompletion>>>,
+        limit: Option<usize>,
+    ) {
         let mut completions = Vec::new();
-        let receiver = self
-            .results
+        let receiver = results
             .lock()
             .expect("GTK backend result receiver mutex poisoned");
         loop {
+            if limit.is_some_and(|limit| completions.len() >= limit) {
+                break;
+            }
             match receiver.try_recv() {
                 Ok(completion) => completions.push(completion),
                 Err(mpsc::TryRecvError::Empty | mpsc::TryRecvError::Disconnected) => break,
@@ -153,6 +201,47 @@ impl BackendRuntime {
             let callback = { self.callbacks.borrow_mut().remove(&completion.id) };
             if let Some(callback) = callback {
                 callback(completion.result);
+            }
+        }
+    }
+
+    pub fn submit_image<T, F, C>(&self, work: F, callback: C)
+    where
+        T: Send + 'static,
+        F: FnOnce() -> AppResult<T> + Send + 'static,
+        C: FnOnce(Result<T, String>) + 'static,
+    {
+        let id = self.next_id.get();
+        self.next_id.set(id.saturating_add(1));
+        self.callbacks.borrow_mut().insert(
+            id,
+            Box::new(move |result| {
+                let result = result.and_then(|value| {
+                    value
+                        .downcast::<T>()
+                        .map(|value| *value)
+                        .map_err(|_| "GTK image worker returned an unexpected result".to_string())
+                });
+                callback(result);
+            }),
+        );
+
+        let job = Box::new(move || WorkerCompletion {
+            id,
+            result: work()
+                .map(|value| Box::new(value) as Box<dyn Any + Send>)
+                .map_err(|error| error.to_string()),
+        });
+        if let Err(error) = self.image_jobs.try_send(job) {
+            let message = match error {
+                mpsc::TrySendError::Full(_) => {
+                    "GTK image worker queue is full; try again shortly".to_string()
+                }
+                mpsc::TrySendError::Disconnected(_) => "GTK image worker pool stopped".to_string(),
+            };
+            let callback = { self.callbacks.borrow_mut().remove(&id) };
+            if let Some(callback) = callback {
+                callback(Err(message));
             }
         }
     }

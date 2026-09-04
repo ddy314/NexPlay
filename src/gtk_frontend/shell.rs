@@ -8,6 +8,7 @@ use super::{
 };
 
 pub(crate) fn build_main_ui(context: AppContext, window: &adw::ApplicationWindow) -> gtk::Widget {
+    let image_cache_dir = ImageLoader::cache_root(&context.media.config_snapshot().database.path);
     let runtime = Rc::new(BackendRuntime::new(context));
     let stack = adw::ViewStack::new();
     stack.set_vexpand(true);
@@ -101,7 +102,7 @@ pub(crate) fn build_main_ui(context: AppContext, window: &adw::ApplicationWindow
         stack: stack.clone(),
         navigation,
         toast,
-        images: ImageLoader::new(),
+        images: ImageLoader::new(image_cache_dir),
         snapshot: RefCell::new(empty),
         home,
         discover,
@@ -132,6 +133,7 @@ pub(crate) fn build_main_ui(context: AppContext, window: &adw::ApplicationWindow
         library_grid: Cell::new(true),
         library_cloud: Cell::new(false),
         library_sort: Cell::new(0),
+        library_render_generation: Cell::new(0),
         logs: RefCell::new(Vec::new()),
         scan_message: RefCell::new(String::new()),
         scan_fraction: Cell::new(0.0),

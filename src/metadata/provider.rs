@@ -21,6 +21,7 @@ pub struct SubjectSearchResult {
 pub struct SubjectDetail {
     pub provider: String,
     pub provider_subject_id: String,
+    pub subject_type: Option<i64>,
     pub title: String,
     pub title_cn: Option<String>,
     pub summary: Option<String>,

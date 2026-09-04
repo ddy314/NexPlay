@@ -44,6 +44,21 @@ pub(crate) const SKELETON_CSS: &str = r#"
   border-radius: 14px;
 }
 
+.nx-source-switch {
+  min-width: 96px;
+  min-height: 36px;
+}
+
+.nx-poster-placeholder {
+  border-radius: 14px;
+  background-color: alpha(@window_fg_color, 0.08);
+}
+
+.nx-poster-placeholder label {
+  font-size: 12px;
+  font-weight: 600;
+}
+
 /*
  * The poster is the interactive surface.  Keep the title and metadata as
  * ordinary content below it instead of turning the whole media item into a

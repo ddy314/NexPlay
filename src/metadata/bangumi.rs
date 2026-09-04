@@ -354,6 +354,8 @@ struct SearchResponse {
 #[derive(Debug, Deserialize)]
 struct BangumiSubject {
     id: i64,
+    #[serde(rename = "type")]
+    subject_type: Option<i64>,
     name: String,
     name_cn: Option<String>,
     summary: Option<String>,
@@ -391,6 +393,7 @@ impl BangumiSubject {
         SubjectDetail {
             provider: "bangumi".to_string(),
             provider_subject_id: self.id.to_string(),
+            subject_type: self.subject_type,
             title: self.name,
             title_cn: non_empty(self.name_cn),
             summary: non_empty(self.summary),

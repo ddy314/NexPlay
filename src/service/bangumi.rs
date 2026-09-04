@@ -12,6 +12,8 @@ use crate::domain::{
     BangumiAccount, BangumiEpisodeCollection, BangumiSubjectCollection, BangumiSyncQueueItem,
 };
 use crate::error::{AppError, AppResult};
+use crate::metadata::bangumi::BangumiProvider;
+use crate::metadata::provider::SubjectDetail;
 use crate::repository::Repository;
 use crate::task::AppEvent;
 
@@ -156,6 +158,47 @@ impl BangumiService {
             grouped.entry(episode.subject_id).or_default().push(episode);
         }
         Ok(grouped)
+    }
+
+    /// Repair older collection rows that were saved without the subject
+    /// payload.  The collections endpoint can return such a row even when a
+    /// subject-type filter was requested, so the cached type must not be
+    /// trusted until the subject has been inspected.
+    pub fn repair_cached_subject_metadata(
+        &self,
+        collections: &mut [BangumiSubjectCollection],
+    ) -> AppResult<()> {
+        if !collections
+            .iter()
+            .any(collection_subject_metadata_needs_repair)
+        {
+            return Ok(());
+        }
+
+        let config = self.config.snapshot().bangumi;
+        let Ok(provider) = BangumiProvider::new(config) else {
+            return Ok(());
+        };
+
+        for collection in collections
+            .iter_mut()
+            .filter(|collection| collection_subject_metadata_needs_repair(collection))
+        {
+            let subject_id = collection.subject_id.to_string();
+            let Ok(detail) = provider.get_subject_public(&subject_id) else {
+                continue;
+            };
+            let Some(subject_type) = detail.subject_type else {
+                continue;
+            };
+            let subject_json = subject_detail_to_cached_json(&detail)?;
+            collection.subject_type = subject_type;
+            collection.subject_json = Some(subject_json);
+            self.repository
+                .upsert_bangumi_subject_collection(collection)?;
+        }
+
+        Ok(())
     }
 
     pub fn start_login(&self) -> AppResult<BangumiLoginStartData> {
@@ -324,6 +367,7 @@ impl BangumiService {
             let page_len = page.data.len();
             for item in page.data {
                 let collection = subject_collection_from_api(item, now_seconds())?;
+                let collection = self.hydrate_collection_metadata(&client, &account, collection);
                 self.repository
                     .upsert_bangumi_subject_collection(&collection)?;
                 count += 1;
@@ -379,6 +423,7 @@ impl BangumiService {
             )?
             .json()?;
         let collection = subject_collection_from_api(collection, now_seconds())?;
+        let collection = self.hydrate_collection_metadata(&client, &account, collection);
         self.repository
             .upsert_bangumi_subject_collection(&collection)?;
 
@@ -781,6 +826,39 @@ impl BangumiService {
         Ok(())
     }
 
+    fn hydrate_collection_metadata(
+        &self,
+        client: &Client,
+        account: &BangumiAccount,
+        mut collection: BangumiSubjectCollection,
+    ) -> BangumiSubjectCollection {
+        if !collection_subject_metadata_needs_repair(&collection) {
+            return collection;
+        }
+
+        let Ok(response) = self.request(
+            client,
+            account,
+            Method::GET,
+            &format!("/v0/subjects/{}", collection.subject_id),
+            Option::<&()>::None,
+        ) else {
+            return collection;
+        };
+        let Ok(subject) = response.json::<serde_json::Value>() else {
+            return collection;
+        };
+        let Some(subject_type) = subject_type_from_json_value(&subject) else {
+            return collection;
+        };
+        let Ok(subject_json) = serde_json::to_string(&subject) else {
+            return collection;
+        };
+        collection.subject_type = subject_type;
+        collection.subject_json = Some(subject_json);
+        collection
+    }
+
     fn send_episode_update(
         &self,
         episode_id: i64,
@@ -1006,9 +1084,16 @@ fn subject_collection_from_api(
     synced_at: i64,
 ) -> AppResult<BangumiSubjectCollection> {
     validate_subject_collection_type(item.collection_type)?;
+    let subject_json = item
+        .subject
+        .map(|subject| serde_json::to_string(&subject))
+        .transpose()?;
     Ok(BangumiSubjectCollection {
         subject_id: item.subject_id,
-        subject_type: item.subject_type.unwrap_or(2),
+        subject_type: item
+            .subject_type
+            .or_else(|| subject_json.as_deref().and_then(subject_type_from_json))
+            .unwrap_or(2),
         collection_type: item.collection_type,
         rate: item.rate.unwrap_or_default(),
         comment: item.comment,
@@ -1016,14 +1101,74 @@ fn subject_collection_from_api(
         ep_status: item.ep_status.unwrap_or_default(),
         vol_status: item.vol_status.unwrap_or_default(),
         private: item.private.unwrap_or(false),
-        subject_json: item
-            .subject
-            .map(|subject| serde_json::to_string(&subject))
-            .transpose()?,
+        subject_json,
         updated_at: api_timestamp(item.updated_at.as_ref()),
         synced_at,
         pending: false,
     })
+}
+
+fn collection_subject_metadata_needs_repair(collection: &BangumiSubjectCollection) -> bool {
+    collection
+        .subject_json
+        .as_deref()
+        .and_then(subject_type_from_json)
+        .is_none()
+}
+
+fn subject_type_from_json(raw: &str) -> Option<i64> {
+    serde_json::from_str::<serde_json::Value>(raw)
+        .ok()
+        .and_then(|subject| subject_type_from_json_value(&subject))
+}
+
+fn subject_type_from_json_value(subject: &serde_json::Value) -> Option<i64> {
+    subject.get("type").and_then(serde_json::Value::as_i64)
+}
+
+fn subject_detail_to_cached_json(detail: &SubjectDetail) -> AppResult<String> {
+    let mut images = serde_json::Map::new();
+    if let Some(image) = detail
+        .images
+        .large
+        .as_deref()
+        .filter(|image| !image.trim().is_empty())
+    {
+        images.insert(
+            "large".to_string(),
+            serde_json::Value::String(image.to_string()),
+        );
+    }
+    if let Some(image) = detail
+        .images
+        .common
+        .as_deref()
+        .filter(|image| !image.trim().is_empty())
+    {
+        images.insert(
+            "common".to_string(),
+            serde_json::Value::String(image.to_string()),
+        );
+    }
+    let tags = detail
+        .tags
+        .iter()
+        .map(|tag| serde_json::json!({ "name": tag }))
+        .collect::<Vec<_>>();
+    Ok(serde_json::to_string(&serde_json::json!({
+        "id": detail.provider_subject_id.parse::<i64>().unwrap_or_default(),
+        "type": detail.subject_type,
+        "name": detail.title,
+        "name_cn": detail.title_cn,
+        "summary": detail.summary,
+        "date": detail.air_date,
+        "images": images,
+        "rating": { "score": detail.rating },
+        "rank": detail.rank,
+        "tags": tags,
+        "eps": detail.episode_count,
+        "total_episodes": detail.episode_count,
+    }))?)
 }
 
 fn episode_collection_from_api(
@@ -1201,6 +1346,8 @@ pub fn subject_json_to_summary(value: &str) -> Option<CachedSubjectSummary> {
 #[derive(Debug, Clone, Deserialize)]
 pub struct CachedSubjectSummary {
     pub id: i64,
+    #[serde(rename = "type")]
+    pub subject_type: Option<i64>,
     pub name: Option<String>,
     pub name_cn: Option<String>,
     pub summary: Option<String>,
@@ -1237,6 +1384,14 @@ mod tests {
             validate_episode_collection_type(value).expect("valid episode type");
         }
         assert!(validate_episode_collection_type(4).is_err());
+    }
+
+    #[test]
+    fn reads_subject_type_from_cached_bangumi_metadata() {
+        assert_eq!(subject_type_from_json(r#"{"type":2}"#), Some(2));
+        assert_eq!(subject_type_from_json(r#"{"type":4}"#), Some(4));
+        assert_eq!(subject_type_from_json(r#"{"id":44}"#), None);
+        assert_eq!(subject_type_from_json("not json"), None);
     }
 
     #[test]
