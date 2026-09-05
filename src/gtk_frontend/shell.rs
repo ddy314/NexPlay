@@ -262,9 +262,10 @@ pub(crate) fn build_main_ui(context: AppContext, window: &adw::ApplicationWindow
         let Some(state) = downloads_timer.upgrade() else {
             return glib::ControlFlow::Break;
         };
-        *state.downloads_data.borrow_mut() = None;
-        state.downloads_requested.set(false);
-        pages::downloads::render_downloads(&state);
+        if !state.downloads_requested.get() {
+            pages::downloads::request_downloads(&state);
+            pages::downloads::render_downloads(&state);
+        }
         glib::ControlFlow::Continue
     });
 

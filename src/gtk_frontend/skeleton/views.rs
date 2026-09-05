@@ -84,12 +84,28 @@ pub fn detail() -> gtk::Box {
 }
 
 pub(crate) fn downloads() -> gtk::Box {
-    let root = vertical(0);
+    let root = vertical(16);
+
+    let overview = horizontal(12);
+    overview.add_css_class("nx-skeleton-download-overview");
+    for _ in 0..4 {
+        let card = vertical(4);
+        card.add_css_class("nx-skeleton-stat");
+        card.set_width_request(180);
+        card.set_hexpand(true);
+        card.append(&line(82, 12));
+        card.append(&line(54, 24));
+        overview.append(&card);
+    }
+    root.append(&overview);
+    root.append(&section_heading(130, 13));
+
+    let list = vertical(0);
     for (title_width, subtitle_width) in [(420, 260), (520, 330), (380, 290), (470, 240)] {
         let row = vertical(10);
-        row.add_css_class("nx-skeleton-row");
-
+        row.add_css_class("nx-skeleton-download-row");
         let heading = horizontal(10);
+        heading.append(&action(32, 32));
         heading.append(&line(title_width, 18));
         let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         spacer.set_hexpand(true);
@@ -98,11 +114,10 @@ pub(crate) fn downloads() -> gtk::Box {
         heading.append(&action(30, 30));
         row.append(&heading);
         row.append(&line(subtitle_width, 13));
-        // A download progress track is one of the few loading elements that
-        // should actually follow the width of its row.
-        row.append(&progress(0));
-        root.append(&row);
+        row.append(&download_progress());
+        list.append(&row);
     }
+    root.append(&list);
     root
 }
 
@@ -241,6 +256,14 @@ fn progress(width: i32) -> gtk::Box {
     } else {
         progress.set_halign(gtk::Align::Start);
     }
+    progress
+}
+
+fn download_progress() -> gtk::Box {
+    let progress = block(1, 3);
+    progress.set_hexpand(true);
+    progress.set_halign(gtk::Align::Fill);
+    progress.add_css_class("nx-skeleton-download-progress");
     progress
 }
 

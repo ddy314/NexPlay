@@ -123,18 +123,67 @@ pub(crate) const SKELETON_CSS: &str = r#"
   border-bottom: 1px solid alpha(@window_fg_color, 0.10);
 }
 
-.nx-episode-list,
-.nx-download-list {
+.nx-episode-list {
   background-color: transparent;
 }
 
-.nx-episode-list > row,
-.nx-download-list > row {
+.nx-download-stat {
+  min-height: 72px;
+}
+
+.nx-download-stat-content {
+  padding: 8px 14px;
+}
+
+.nx-download-task-row {
+  min-height: 0;
+  padding: 0;
+}
+
+.nx-download-status-icon {
+  min-width: 32px;
+  min-height: 32px;
+  border-radius: 999px;
+  background-color: alpha(@window_fg_color, 0.08);
+}
+
+.nx-download-progress {
+  min-height: 3px;
+  border-radius: 999px;
+}
+
+.nx-download-progress trough,
+.nx-download-progress progress {
+  min-height: 3px;
+  border-radius: 999px;
+}
+
+.nx-skeleton-download-overview {
+  min-height: 72px;
+}
+
+.nx-skeleton-stat {
+  min-height: 72px;
+  padding: 8px 14px;
+  border-radius: 12px;
+}
+
+.nx-skeleton-download-row {
+  min-height: 72px;
+  padding: 10px 16px;
+  border-bottom: 1px solid alpha(@window_fg_color, 0.10);
+}
+
+.nx-skeleton-download-progress {
+  min-height: 3px;
+  border-radius: 999px;
+}
+
+.nx-episode-list > row {
   background-color: transparent;
 }
 
-.nx-episode-list > row:hover,
-.nx-download-list > row:hover {
+.nx-episode-list > row:hover {
   background-color: alpha(@window_fg_color, 0.06);
 }
 
